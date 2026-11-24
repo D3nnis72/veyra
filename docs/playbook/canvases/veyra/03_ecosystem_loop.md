@@ -24,5 +24,5 @@ Overarching context lives in [00_overview.md](00_overview.md) and [docs/VISION.m
 ## Remaining Scope {#scope updated=2026-11-24}
 
 - **T3 Code Focus Mode Filter:** When a focus block starts (`focus.started`), a targeted update in T3 Code reacts to the event and filters visible projects and threads to the active project so parallel workstreams stop competing for attention.
-- **Teams, Outlook, and macOS Focus Presence Write-Back:** Optional automatic status updates in Teams, Outlook, and macOS Focus Mode while a focus block is running (read-only Outlook/ICS meeting sync already ships in Step 02 MVP).
+- **macOS Focus Mode Presence:** Optional automatic macOS Focus / Do Not Disturb toggle while a focus block is running (for example via macOS Shortcuts CLI on `focus.started` / `focus.ended`). Teams and Outlook presence write-back are intentionally out of scope.
 - **Dedicated iOS App:** Mobile client (native SwiftUI or Expo) talking to the same Step 02 server API with a local offline cache.
