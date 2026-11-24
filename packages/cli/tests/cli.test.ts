@@ -159,7 +159,7 @@ describe('@veyra/cli integration', () => {
     expect(done.block.outcomeNote).toBe('Fixed retries');
     expect(done.totalBlockMinutes).toBe(50);
 
-    // Summary set
+    // Summary set & clear
     const sumRes = await execCli(
       ['summary', 'set', added.id, 'Audited all 3 retry queues', '--json'],
       baseEnv(),
@@ -167,6 +167,11 @@ describe('@veyra/cli integration', () => {
     expect(sumRes.exitCode).toBe(0);
     const summarized = JSON.parse(sumRes.stdout) as { id: string; autoSummary: string };
     expect(summarized.autoSummary).toBe('Audited all 3 retry queues');
+
+    const clearSumRes = await execCli(['summary', 'clear', added.id, '--json'], baseEnv());
+    expect(clearSumRes.exitCode).toBe(0);
+    const cleared = JSON.parse(clearSumRes.stdout) as { id: string; autoSummary: string | null };
+    expect(cleared.autoSummary).toBeNull();
 
     // Verify X-Veyra-Actor: cli was recorded in activity log
     const activityResp = await fetch(`${serverUrl}/api/activity?actor=cli`);

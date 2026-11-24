@@ -12,6 +12,7 @@ groundedIn:
   - packages/cli/src/commands.ts
   - packages/cli/src/client.ts
   - packages/cli/src/config.ts
+  - packages/cli/src/hook-listener.ts
   - skills/veyra/SKILL.md
 updateWhen:
   - CLI commands, flags, config resolution, or error format change
@@ -38,8 +39,9 @@ Full option signatures live in `packages/cli/src/commands.ts` and `skills/veyra/
 - **Configuration:** `veyra config show` (alias `get`), `veyra config set --url <url> [--token <token>] [--clear-token]`
 - **Read views:** `veyra today`, `veyra plan`, `veyra calendar`, `veyra inbox`, `veyra later`, `veyra projects`, `veyra goals`, `veyra review`, `veyra show <blockId>`, `veyra focus status`
 - **Plan and prune:** `veyra add`, `veyra update`, `veyra move` (supports `--date`, `--start`, `--end`), `veyra reorder`, `veyra park --revisit <horizon|YYYY-MM-DD>`, `veyra drop [--stop-series]`, `veyra reopen`, `veyra project create/update` (`--keywords <csv>` sets calendar `matchKeywords`), `veyra goal create/update`
-- **Focus and retroactive session edits:** `veyra start`, `veyra pause [--note]`, `veyra resume`, `veyra stop`, `veyra done [--energy] [--outcome]`, `veyra summary set`, `veyra session log`, `veyra session trim`, `veyra session split --at <ISO> --gap <min>`, `veyra session delete <sessionId>`
+- **Focus and retroactive session edits:** `veyra start`, `veyra pause [--note]`, `veyra resume`, `veyra stop`, `veyra done [--energy] [--outcome]`, `veyra summary set <id> <text>`, `veyra summary clear <id>`, `veyra session log`, `veyra session trim`, `veyra session split --at <ISO> --gap <min>`, `veyra session delete <sessionId>`
 - **Daily notes, review, and meetings:** `veyra note add`, `veyra notes [--week]`, `veyra review set-rule`, `veyra events`, `veyra events sync`, `veyra events auto-match`, `veyra events upsert`, `veyra events assign`
+- **Event hooks listener:** `veyra hook listen [--port 4174] [--host 127.0.0.1] [--path /webhook] [--on-focus-start <cmd>] [--on-focus-end <cmd>] [--on-complete <cmd>] [--on-any <cmd>] [--secret <secret>] [--timeout <ms>]` (streams NDJSON records when `--json` is passed)
 
 ## Bundled Agent Skill
 

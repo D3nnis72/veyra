@@ -32,6 +32,7 @@ import {
   useProjectsQuery,
 } from '../api/queries';
 import { useAppShell } from '../app/AppShellContext';
+import { AutoSummarySection } from '../components/AutoSummarySection';
 import { Button } from '../components/Button';
 import { DockedDrawer } from '../components/DockedDrawer';
 import { LinkChip, inferLinkSource, inferLinkTitle } from '../components/LinkChip';
@@ -564,6 +565,15 @@ export function SessionDetailDrawer({ sessionId, onClose }: SessionDetailDrawerP
                 className="w-full h-9 px-3 rounded-[8px] bg-[#171717] border border-[#2A2A2A] focus:border-[#5566F2] text-[13px] text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none"
               />
             </section>
+          ) : null}
+
+          {/* AUTO SUMMARY */}
+          {block ? (
+            <AutoSummarySection
+              summary={block.autoSummary}
+              onSave={(next) => updateBlockMutation.mutate({ autoSummary: next })}
+              saving={updateBlockMutation.isPending}
+            />
           ) : null}
 
           {/* LINKS */}

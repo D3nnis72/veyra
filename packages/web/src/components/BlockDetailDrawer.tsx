@@ -38,6 +38,7 @@ import {
   useGoalsQuery,
   useProjectsQuery,
 } from '../api/queries';
+import { AutoSummarySection } from './AutoSummarySection';
 import { Button } from './Button';
 import { DockedDrawer } from './DockedDrawer';
 import { LinkChip, inferLinkSource, inferLinkTitle } from './LinkChip';
@@ -1146,6 +1147,13 @@ export function BlockDetailDrawer({ blockId, onClose, onStartFocus }: BlockDetai
               </Button>
             </div>
           )}
+
+          {/* Quiet Hairline AUTO SUMMARY (rendered when block.autoSummary is present) */}
+          <AutoSummarySection
+            summary={block.autoSummary}
+            onSave={(next) => updateMutation.mutate({ autoSummary: next })}
+            saving={updateMutation.isPending}
+          />
 
           {/* Open Borderless Freeform NOTES & AI CONTEXT Canvas (zero nested box!) */}
           <div className="space-y-3 pt-4 border-t border-[#2A2A2A]">

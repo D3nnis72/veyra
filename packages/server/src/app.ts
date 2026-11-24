@@ -356,7 +356,13 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
     },
   });
 
-  const webhooks = new WebhookDispatcher(db, options.webhookOptions);
+  const webhooks = new WebhookDispatcher(db, {
+    ...options.webhookOptions,
+    onDelivery: (ev) => {
+      emitSse(ev.action, 'activity', undefined, new Date(ev.timestamp));
+      options.webhookOptions?.onDelivery?.(ev);
+    },
+  });
 
   /** Retro-matches unassigned meetings to Projects and notifies clients when anything changed. */
   const runMeetingAutoMatch = (now: Date | undefined, actor: ActivityActor) => {

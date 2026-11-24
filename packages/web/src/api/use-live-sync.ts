@@ -91,6 +91,10 @@ function getKeysToInvalidate(payload: SseEventPayload | null): string[][] {
     return keys;
   }
 
+  if (entity === 'activity' || type.startsWith('webhook.')) {
+    return [['activity']];
+  }
+
   return [
     ['today'],
     ['plan'],

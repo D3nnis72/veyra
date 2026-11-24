@@ -474,6 +474,7 @@ export function getWeeklyReview(
       isOps: blk.isOps,
       timestamp: blk.updatedAt,
       outcomeNote: blk.outcomeNote,
+      autoSummary: blk.autoSummary,
       energySignal: blk.energySignal,
       totalFocusMinutes: msToRoundedMinutes(allTimeMsByBlock.get(blk.id) ?? 0),
     })),
@@ -516,20 +517,30 @@ export function getWeeklyReview(
       goalId: string | null;
       isGoalLinked: boolean;
       totalMs: number;
+      autoSummaries: string[];
     }
   >();
 
-  for (const blkId of opsCandidateBlockIds) {
-    const blk = blockById.get(blkId);
-    if (!blk) continue;
+  // Sort candidate blocks oldest-to-newest so blockIds preserves chronological order
+  // (latestBlockId at the end) while autoSummaries are collected newest-first.
+  const sortedOpsBlocks = Array.from(opsCandidateBlockIds)
+    .map((id) => blockById.get(id))
+    .filter((blk): blk is Block => blk !== undefined)
+    .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+
+  for (const blk of sortedOpsBlocks) {
     const isGoalLinked = blk.goalId !== null;
     const key = `${blk.seriesId ?? blk.id}:${isGoalLinked ? 'goal' : 'pure'}`;
-    const ms = weekMsByBlock.get(blkId) ?? 0;
+    const ms = weekMsByBlock.get(blk.id) ?? 0;
+    const trimmedSummary = blk.autoSummary?.trim() || null;
 
     const existingGroup = opsGroups.get(key);
     if (existingGroup) {
       existingGroup.blockIds.push(blk.id);
       existingGroup.totalMs += ms;
+      if (trimmedSummary && !existingGroup.autoSummaries.includes(trimmedSummary)) {
+        existingGroup.autoSummaries.unshift(trimmedSummary);
+      }
     } else {
       opsGroups.set(key, {
         key,
@@ -540,6 +551,7 @@ export function getWeeklyReview(
         goalId: blk.goalId,
         isGoalLinked,
         totalMs: ms,
+        autoSummaries: trimmedSummary ? [trimmedSummary] : [],
       });
     }
   }
@@ -555,6 +567,7 @@ export function getWeeklyReview(
       isGoalLinked: group.isGoalLinked,
       occurrenceCount: group.blockIds.length,
       totalMinutes: msToRoundedMinutes(group.totalMs),
+      autoSummaries: group.autoSummaries,
     }))
     .sort((a, b) => b.totalMinutes - a.totalMinutes || a.title.localeCompare(b.title));
 

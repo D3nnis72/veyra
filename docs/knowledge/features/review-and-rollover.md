@@ -38,10 +38,10 @@ Rollover logic lives in `@veyra/core` (`runDailyRolloverAndRecurrence` in `packa
 - **`Goal Alignment`:** Percentage of logged `FocusSession` minutes tied to a `Goal` (`goalLinkedMs / totalFocusMs`); goal-linked meetings appear in `progressFeed` only.
 - **`Build vs. Ops`:** Split of focus minutes where `isOps = false` (`buildMinutes`) vs. `isOps = true` (`opsMinutes`).
 - **`Energy`:** Raw counts of completed blocks by signal (`up`, `neutral`, `down`, rendered as `9+ · 3· · 1−`), never collapsed into a gamified score.
-- **`Progress Feed`:** Completed blocks and goal-linked meetings for the week showing project badge, duration, energy pill, `Ops` tag, and one-line `outcomeNote`.
+- **`Progress Feed`:** Completed blocks and goal-linked meetings for the week showing project badge, duration, energy pill, `Ops` tag, one-line `outcomeNote`, and (when present) the post-block `autoSummary` beneath a quiet hairline divider.
 
 ## Ops Automation Radar And Hygiene Check-Ins
 
-- **`Ops & Automation Radar`:** Groups `isOps` work into recurring series rollups (aggregated by `seriesId` across occurrences) and separates pure `Ops` (no `Goal`) from Goal-linked `Ops` so recurring reactive drag stands out as candidates for automation, product fixes, or delegation.
+- **`Ops & Automation Radar`:** Groups `isOps` work into recurring series rollups (aggregated by `seriesId` across occurrences), separates pure `Ops` (no `Goal`) from Goal-linked `Ops`, and surfaces deduplicated `autoSummaries` captured on those `Ops` blocks so recurring reactive patterns stand out as candidates for automation, product fixes, or delegation.
 - **`Daily Notes This Week`:** Lists all `DailyNote` bullets captured during the week via `Today`, global `⌘⇧P`, or `veyra note add`.
 - **`Backlog, Carryovers & Later Check-In`:** Surfaces unfinished non-recurring blocks with `carryoverCount >= 3` and `Later` blocks whose `revisitAt` date is on or before today, each with direct `Plan next week`, `Revisit`, or `Drop` actions.

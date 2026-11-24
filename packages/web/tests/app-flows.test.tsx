@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom/vitest';
 import type {
+  ActivityLog,
   Block,
   BlockDetail,
   DailyNote,
@@ -18,7 +19,9 @@ import type {
   TodayResponse,
 } from '../src/api/client';
 import { App } from '../src/app/App';
+import { AppShellContext } from '../src/app/AppShellContext';
 import { ProjectModal } from '../src/views/ProjectModal';
+import { SessionDetailDrawer } from '../src/views/SessionDetailDrawer';
 
 const GOAL_1_ID = '11111111-1111-4111-8111-111111111111';
 const GOAL_2_ID = '22222222-2222-4222-8222-222222222222';
@@ -175,12 +178,46 @@ const BASE_CALENDAR: CalendarResponse = {
   startDate: '2026-11-23',
   endDate: '2026-11-23',
   timezone: 'Europe/Berlin',
-  sessions: [],
+  sessions: [
+    {
+      id: SESSION_2_ID,
+      blockId: BLOCK_1_ID,
+      startedAt: '2026-11-23T08:00:00.000Z',
+      endedAt: '2026-11-23T09:00:00.000Z',
+      note: 'Day 2 wrap-up',
+      updatedAt: '2026-11-23T09:00:00.000Z',
+      deletedAt: null,
+      blockTitle: BASE_BLOCK.title,
+      projectId: PROJ_1_ID,
+      goalId: GOAL_1_ID,
+      isOps: false,
+      blockStatus: 'todo',
+    },
+  ],
   plannedBlocks: [],
   events: [],
   projects: BASE_PROJECTS,
   goals: BASE_GOALS,
 };
+
+const BASE_HOOK_ACTIVITY: ActivityLog[] = [
+  {
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    actor: 'hook',
+    action: 'webhook.delivered',
+    summary:
+      "Delivered webhook 'block.completed' to http://127.0.0.1:4174/webhook (HTTP 202, attempts: 1)",
+    createdAt: '2026-11-23T11:31:00.000Z',
+  },
+  {
+    id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    actor: 'hook',
+    action: 'webhook.failed',
+    summary:
+      "Failed to deliver webhook 'focus.started' to http://127.0.0.1:4174/webhook after 2 attempt(s): fetch failed",
+    createdAt: '2026-11-23T09:01:00.000Z',
+  },
+];
 
 const BASE_REVIEW: ReviewResponse = {
   weekStartDate: '2026-11-23',
@@ -201,6 +238,7 @@ const BASE_REVIEW: ReviewResponse = {
       isOps: false,
       timestamp: '2026-11-23T11:30:00.000Z',
       outcomeNote: 'Outlook CLI + ICS runner tested',
+      autoSummary: 'Verified ICS recurrence expansion and Outlook CLI timezone normalization.',
       energySignal: 'up',
       totalFocusMinutes: 95,
     },
@@ -221,6 +259,9 @@ const BASE_REVIEW: ReviewResponse = {
         isGoalLinked: false,
         occurrenceCount: 3,
         totalMinutes: 75,
+        autoSummaries: [
+          'Flaky webhook retry test required manual rerun twice this week.',
+        ],
       },
     ],
     goalLinkedOpsItems: [],
@@ -270,11 +311,15 @@ function createTestQueryClient() {
 describe('Veyra Web App Flows', () => {
   let goalsState: Goal[];
   let projectsState: ProjectWithStats[];
+  let blockDetailState: BlockDetail;
+  let hookActivityState: ActivityLog[];
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     goalsState = [...BASE_GOALS];
     projectsState = [...BASE_PROJECTS];
+    blockDetailState = { ...BASE_BLOCK_DETAIL };
+    hookActivityState = [...BASE_HOOK_ACTIVITY];
 
     fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
@@ -284,6 +329,23 @@ describe('Veyra Web App Flows', () => {
 
       if (path === '/api/settings' && method === 'GET') {
         return jsonResponse(BASE_SETTINGS_RESPONSE);
+      }
+      if (path === '/api/settings/test-hook' && method === 'POST') {
+        const entry: ActivityLog = {
+          id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+          actor: 'hook',
+          action: 'webhook.delivered',
+          summary:
+            "Delivered webhook 'webhook.test' to http://127.0.0.1:4174/webhook (HTTP 200, attempts: 1)",
+          createdAt: '2026-11-23T12:00:00.000Z',
+        };
+        hookActivityState = [entry, ...hookActivityState];
+        return jsonResponse({
+          result: { delivered: true, skipped: false, attempts: 1, statusCode: 200 },
+        });
+      }
+      if (path === '/api/activity' && method === 'GET') {
+        return jsonResponse({ activity: hookActivityState });
       }
       if (path === '/api/today' && method === 'GET') {
         return jsonResponse(BASE_TODAY);
@@ -339,7 +401,16 @@ describe('Veyra Web App Flows', () => {
         return jsonResponse({ goal: created }, 201);
       }
       if (path === `/api/blocks/${BLOCK_1_ID}` && method === 'GET') {
-        return jsonResponse({ block: BASE_BLOCK_DETAIL });
+        return jsonResponse({ block: blockDetailState });
+      }
+      if (path === `/api/blocks/${BLOCK_1_ID}` && method === 'PATCH') {
+        const body = JSON.parse(String(init?.body ?? '{}'));
+        blockDetailState = {
+          ...blockDetailState,
+          ...body,
+          updatedAt: '2026-11-23T12:05:00.000Z',
+        };
+        return jsonResponse({ block: blockDetailState });
       }
       if (path === '/api/notes' && method === 'GET') {
         return jsonResponse({ notes: BASE_DAILY_NOTES });
@@ -565,5 +636,143 @@ describe('Veyra Web App Flows', () => {
 
     // Confirm full-page (no modal dialog / backdrop rendered)
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    // Webhook listener snippet and recent webhook delivery logs surface in Integrations
+    expect(screen.getByText(/veyra hook listen --port 4174/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Delivered webhook 'block\.completed'/i)).toBeInTheDocument();
+    expect(screen.getByText(/Failed to deliver webhook 'focus\.started'/i)).toBeInTheDocument();
+
+    // Clicking Test Hook reports HTTP 200 delivery and refreshes the delivery log
+    await user.click(screen.getByRole('button', { name: /Test Hook/i }));
+    expect(await screen.findByText(/Test webhook delivered \(HTTP 200\)/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Delivered webhook 'webhook\.test'/i)).toBeInTheDocument();
+  });
+
+  it('BlockDetailDrawer renders editable and clearable AUTO SUMMARY when present and omits it when null', async () => {
+    const user = userEvent.setup();
+    const qc = createTestQueryClient();
+
+    // First verify AUTO SUMMARY is omitted when block.autoSummary is null
+    const { unmount } = render(
+      <QueryClientProvider client={qc}>
+        <App />
+      </QueryClientProvider>,
+    );
+    await user.click(await screen.findByText('Wire Weekly Review metrics'));
+    const emptyDialog = await screen.findByRole('dialog', { name: 'Block detail' });
+    expect(within(emptyDialog).queryByRole('region', { name: 'Auto Summary' })).not.toBeInTheDocument();
+    unmount();
+
+    // Now populate autoSummary and verify display, inline edit, and clear
+    blockDetailState = {
+      ...BASE_BLOCK_DETAIL,
+      autoSummary: 'Summarized 2 focus sessions and verified SQLite metrics.',
+    };
+
+    const qc2 = createTestQueryClient();
+    render(
+      <QueryClientProvider client={qc2}>
+        <App />
+      </QueryClientProvider>,
+    );
+    await user.click(await screen.findByText('Wire Weekly Review metrics'));
+    const dialog = await screen.findByRole('dialog', { name: 'Block detail' });
+    const summarySection = await within(dialog).findByRole('region', { name: 'Auto Summary' });
+    expect(summarySection).toHaveTextContent(
+      'Summarized 2 focus sessions and verified SQLite metrics.',
+    );
+
+    // Edit inline
+    await user.click(within(summarySection).getByRole('button', { name: 'Edit auto summary' }));
+    const textarea = within(summarySection).getByRole('textbox', { name: 'Auto summary' });
+    await user.clear(textarea);
+    await user.type(textarea, 'Edited post-block summary');
+    await user.click(within(summarySection).getByRole('button', { name: 'Save' }));
+    expect(await within(dialog).findByText('Edited post-block summary')).toBeInTheDocument();
+
+    // Clear autoSummary
+    await user.click(within(dialog).getByRole('button', { name: 'Clear auto summary' }));
+    await waitFor(() => {
+      expect(within(dialog).queryByRole('region', { name: 'Auto Summary' })).not.toBeInTheDocument();
+    });
+  });
+
+  it('SessionDetailDrawer displays AUTO SUMMARY when present and lets users clear it', async () => {
+    const user = userEvent.setup();
+    blockDetailState = {
+      ...BASE_BLOCK_DETAIL,
+      autoSummary: 'Completed review metrics wiring in 60m.',
+    };
+
+    const qc = createTestQueryClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <AppShellContext.Provider
+          value={{
+            route: 'calendar',
+            previousRoute: 'today',
+            activeProjectId: null,
+            settingsSection: 'goals',
+            activeDrawer: { kind: 'session', sessionId: SESSION_2_ID },
+            liveSyncStatus: 'connected',
+            focusStatus: null,
+            liveElapsedSeconds: 0,
+            projects: BASE_PROJECTS,
+            goals: BASE_GOALS,
+            settings: BASE_SETTINGS,
+            navigate: vi.fn(),
+            openProject: vi.fn(),
+            setSettingsSection: vi.fn(),
+            openBlockDrawer: vi.fn(),
+            openDailyNotesDrawer: vi.fn(),
+            openMeetingDrawer: vi.fn(),
+            openSessionDrawer: vi.fn(),
+            closeDrawer: vi.fn(),
+            openCommandPalette: vi.fn(),
+            openQuickCapture: vi.fn(),
+            openCreateBlock: vi.fn(),
+            openEditProject: vi.fn(),
+            startFocusAndNavigate: vi.fn(async () => {}),
+          }}
+        >
+          <SessionDetailDrawer sessionId={SESSION_2_ID} onClose={vi.fn()} />
+        </AppShellContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    const dialog = await screen.findByRole('dialog', { name: 'Session detail' });
+    const summarySection = await within(dialog).findByRole('region', { name: 'Auto Summary' });
+    expect(summarySection).toHaveTextContent('Completed review metrics wiring in 60m.');
+
+    await user.click(within(summarySection).getByRole('button', { name: 'Clear auto summary' }));
+    await waitFor(() => {
+      expect(within(dialog).queryByRole('region', { name: 'Auto Summary' })).not.toBeInTheDocument();
+    });
+  });
+
+  it('ReviewView surfaces autoSummary in Progress Feed and recurring Ops pattern summaries in Ops & Automation Radar', async () => {
+    const user = userEvent.setup();
+    const qc = createTestQueryClient();
+
+    render(
+      <QueryClientProvider client={qc}>
+        <App />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText(/2h 15m focused today/i);
+    await user.click(screen.getByRole('button', { name: 'Review' }));
+
+    const feed = await screen.findByRole('region', { name: 'Progress Feed' });
+    expect(
+      within(feed).getByText(
+        /Verified ICS recurrence expansion and Outlook CLI timezone normalization\./i,
+      ),
+    ).toBeInTheDocument();
+
+    const opsRadar = screen.getByRole('region', { name: 'Ops and Automation Radar' });
+    expect(
+      within(opsRadar).getByText(/Flaky webhook retry test required manual rerun twice this week\./i),
+    ).toBeInTheDocument();
   });
 });

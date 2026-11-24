@@ -149,6 +149,12 @@ describe('Task 4: Calendar Upsert, Daily Notes, Weekly Review Rollups & Settings
       endedAt: `${mon}T11:00:00.000Z`, // 120m
     });
     completeBlock(veyraDb, build1.id, { energySignal: 'up', outcomeNote: 'Solid' }, `${mon}T11:00:00.000Z`);
+    updateBlock(
+      veyraDb,
+      build1.id,
+      { autoSummary: 'Added SQLite WAL pragmas and migration smoke tests.' },
+      { now: `${mon}T11:05:00.000Z`, actor: 'hook' },
+    );
 
     const build2 = createBlock(
       veyraDb,
@@ -189,6 +195,12 @@ describe('Task 4: Calendar Upsert, Daily Notes, Weekly Review Rollups & Settings
       endedAt: `${mon}T13:30:00.000Z`, // 30m
     });
     completeBlock(veyraDb, opsMon.id, { energySignal: 'neutral' }, `${mon}T13:30:00.000Z`);
+    updateBlock(
+      veyraDb,
+      opsMon.id,
+      { autoSummary: 'Recurring CI flake in webhook timeout retry test' },
+      { now: `${mon}T13:35:00.000Z`, actor: 'hook' },
+    );
 
     // Rollover to Tue to materialize second occurrence of the same seriesId (and carryover stuckBlock -> 1)
     const tueRoll = runDailyRolloverAndRecurrence(veyraDb, `${tue}T08:00:00.000Z`);
@@ -199,6 +211,12 @@ describe('Task 4: Calendar Upsert, Daily Notes, Weekly Review Rollups & Settings
       startedAt: `${tue}T13:00:00.000Z`,
       endedAt: `${tue}T13:15:00.000Z`, // 15m
     });
+    updateBlock(
+      veyraDb,
+      opsTueId,
+      { autoSummary: 'Manual retry needed for flaky staging deploy queue' },
+      { now: `${tue}T13:20:00.000Z`, actor: 'hook' },
+    );
 
     // 4. Goal-linked Ops block (15m)
     const goalOps = createBlock(
@@ -279,6 +297,10 @@ describe('Task 4: Calendar Upsert, Daily Notes, Weekly Review Rollups & Settings
     expect(review.progressFeed).toHaveLength(4);
     expect(review.progressFeed.filter((i) => i.kind === 'block')).toHaveLength(3);
     expect(review.progressFeed.filter((i) => i.kind === 'meeting')).toHaveLength(1);
+    const build1Feed = review.progressFeed.find((i) => i.kind === 'block' && i.id === build1.id);
+    expect(build1Feed && build1Feed.kind === 'block' ? build1Feed.autoSummary : null).toBe(
+      'Added SQLite WAL pragmas and migration smoke tests.',
+    );
 
     // Ops radar: recurring series rolled up into 1 item (45m, 2 occurrences) + 1 goal-linked Ops item (15m)
     expect(review.opsRadar.totalOpsMinutes).toBe(60);
@@ -290,6 +312,10 @@ describe('Task 4: Calendar Upsert, Daily Notes, Weekly Review Rollups & Settings
       occurrenceCount: 2,
       totalMinutes: 45,
       isGoalLinked: false,
+      autoSummaries: [
+        'Manual retry needed for flaky staging deploy queue',
+        'Recurring CI flake in webhook timeout retry test',
+      ],
     });
     expect(review.opsRadar.goalLinkedOpsItems).toHaveLength(1);
     expect(review.opsRadar.goalLinkedOpsItems[0]).toMatchObject({

@@ -29,6 +29,7 @@ import {
 } from '../api/client';
 import {
   invalidateAllVeyraData,
+  useActivityQuery,
   useGoalsQuery,
   useProjectsQuery,
   useSettingsQuery,
@@ -37,7 +38,7 @@ import type { SettingsSection } from '../app/AppShellContext';
 import { Button } from '../components/Button';
 import { Pill } from '../components/Pill';
 import { ToggleSwitch } from '../components/ToggleSwitch';
-import { formatLocalTime, getTodayDateString } from '../components/icons';
+import { formatLocalTime, formatShortDate, getTodayDateString } from '../components/icons';
 
 export interface SettingsViewProps {
   section: SettingsSection;
@@ -292,13 +293,25 @@ function GoalRow({ goal, onChanged }: { goal: Goal; onChanged: () => void }) {
 // 2. Integrations & Outlook Sync Section
 // ---------------------------------------------------------------------------
 
+const HOOK_LISTEN_SNIPPET = `veyra hook listen --port 4174 \\
+  --on-complete './scripts/summarize-block.sh'`;
+
+function formatActivityTimestamp(iso: string): string {
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return '';
+  const dateStr = getTodayDateString(dt);
+  return `${formatShortDate(dateStr)} · ${formatLocalTime(iso)}`;
+}
+
 function IntegrationsSettingsSection() {
   const queryClient = useQueryClient();
   const settingsQuery = useSettingsQuery();
   const projectsQuery = useProjectsQuery({ includeArchived: false });
+  const hookActivityQuery = useActivityQuery({ actor: 'hook', limit: 10 });
 
   const settings = settingsQuery.data?.settings;
   const syncStatus = settingsQuery.data?.calendarSyncStatus;
+  const hookLogs = hookActivityQuery.data?.activity ?? [];
   const projectsWithNotion = (projectsQuery.data?.projects ?? []).filter((p) => Boolean(p.notionUrl));
 
   const [syncMode, setSyncMode] = useState<CalendarSyncMode>('outlook_cli');
@@ -316,6 +329,7 @@ function IntegrationsSettingsSection() {
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
   const [hookNotice, setHookNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const [copiedHookSnippet, setCopiedHookSnippet] = useState(false);
 
   useEffect(() => {
     if (!settings) return;
@@ -358,25 +372,39 @@ function IntegrationsSettingsSection() {
   const testHookMutation = useMutation({
     mutationFn: () => apiClient.testHook(),
     onSuccess: (res) => {
-      if (res.result.ok) {
+      void queryClient.invalidateQueries({ queryKey: ['activity'] });
+      if (res.result.delivered) {
         setHookNotice({
           ok: true,
-          text: `Test webhook delivered (HTTP ${res.result.status ?? 200})`,
+          text: `Test webhook delivered (HTTP ${res.result.statusCode ?? 200})`,
         });
       } else {
         setHookNotice({
           ok: false,
-          text: res.result.error ?? `Delivery failed (status ${res.result.status ?? 'none'})`,
+          text:
+            res.result.error ??
+            `Delivery failed (HTTP ${res.result.statusCode ?? 'none'})`,
         });
       }
     },
     onError: (err) => {
+      void queryClient.invalidateQueries({ queryKey: ['activity'] });
       setHookNotice({
         ok: false,
         text: err instanceof Error ? err.message : 'Test webhook failed',
       });
     },
   });
+
+  const handleCopyHookSnippet = async () => {
+    try {
+      await navigator.clipboard.writeText(HOOK_LISTEN_SNIPPET);
+      setCopiedHookSnippet(true);
+      window.setTimeout(() => setCopiedHookSnippet(false), 1600);
+    } catch {
+      // Clipboard unavailable in headless test environments
+    }
+  };
 
   const handleSaveSync = (e: FormEvent) => {
     e.preventDefault();
@@ -579,73 +607,161 @@ function IntegrationsSettingsSection() {
       </form>
 
       {/* Event Webhooks Card */}
-      <form onSubmit={handleSaveWebhook} className="veyra-card space-y-4">
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            <div className="text-[14px] font-semibold text-[#EDEDED]">Event Webhooks</div>
-            <div className="text-[12px] text-[#9A9A9A]">
-              POST signed JSON payloads to n8n, Slack bots, or local automation scripts.
-            </div>
-          </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            leftIcon={<Send size={12} />}
-            onClick={() => testHookMutation.mutate()}
-            disabled={testHookMutation.isPending}
-          >
-            Test Hook
-          </Button>
-        </div>
-
-        <div className="space-y-1.5">
-          <label htmlFor="webhook-url-input" className="text-[11.5px] text-[#9A9A9A] block">
-            Webhook Endpoint URL
-          </label>
-          <input
-            id="webhook-url-input"
-            type="text"
-            value={webhookUrl}
-            onChange={(e) => setWebhookUrl(e.target.value)}
-            placeholder="https://hooks.example.com/veyra"
-            className="w-full h-9 px-3 rounded-[8px] bg-[#262626] border border-[#3C3C3C] focus:border-[#5566F2] text-[13px] text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none"
-          />
-        </div>
-
-        <div className="space-y-2.5 pt-2 border-t border-[#2A2A2A]">
-          {WEBHOOK_EVENTS.map((ev) => (
-            <div key={ev.id} className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-[12.5px] font-mono text-[#EDEDED]">{ev.label}</div>
-                <div className="text-[11.5px] text-[#9A9A9A]">{ev.description}</div>
+      <div className="veyra-card space-y-5">
+        <form onSubmit={handleSaveWebhook} className="space-y-4">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="text-[14px] font-semibold text-[#EDEDED]">Event Webhooks</div>
+              <div className="text-[12px] text-[#9A9A9A]">
+                POST structured JSON payloads to local CLI listeners, agent scripts, or external
+                workflows.
               </div>
-              <ToggleSwitch
-                checked={webhookEvents.includes(ev.id)}
-                onChange={() => toggleWebhookEvent(ev.id)}
-                size="sm"
-              />
             </div>
-          ))}
+            <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={<Send size={12} />}
+              onClick={() => testHookMutation.mutate()}
+              disabled={testHookMutation.isPending}
+            >
+              Test Hook
+            </Button>
+          </div>
+
+          <div className="space-y-1.5">
+            <label htmlFor="webhook-url-input" className="text-[11.5px] text-[#9A9A9A] block">
+              Webhook Endpoint URL
+            </label>
+            <input
+              id="webhook-url-input"
+              type="text"
+              value={webhookUrl}
+              onChange={(e) => setWebhookUrl(e.target.value)}
+              placeholder="http://127.0.0.1:4174/webhook"
+              className="w-full h-9 px-3 rounded-[8px] bg-[#262626] border border-[#3C3C3C] focus:border-[#5566F2] text-[13px] text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none"
+            />
+          </div>
+
+          <div className="space-y-2.5 pt-2 border-t border-[#2A2A2A]">
+            {WEBHOOK_EVENTS.map((ev) => (
+              <div key={ev.id} className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-[12.5px] font-mono text-[#EDEDED]">{ev.label}</div>
+                  <div className="text-[11.5px] text-[#9A9A9A]">{ev.description}</div>
+                </div>
+                <ToggleSwitch
+                  checked={webhookEvents.includes(ev.id)}
+                  onChange={() => toggleWebhookEvent(ev.id)}
+                  size="sm"
+                />
+              </div>
+            ))}
+          </div>
+
+          <div className="flex items-center justify-between gap-2 pt-2 border-t border-[#2A2A2A]">
+            <div className="text-[12px]">
+              {hookNotice ? (
+                <span className={hookNotice.ok ? 'text-[#7BE0A0]' : 'text-[#FF9EC5]'}>
+                  {hookNotice.text}
+                </span>
+              ) : null}
+            </div>
+            <Button
+              type="submit"
+              variant="primary"
+              size="sm"
+              disabled={updateSettingsMutation.isPending}
+            >
+              Save Webhook
+            </Button>
+          </div>
+        </form>
+
+        {/* Copyable CLI Hook Listener Snippet */}
+        <div className="pt-4 border-t border-[#2A2A2A] space-y-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-[#6E6E6E] inline-flex items-center gap-1.5">
+              <Terminal size={12} className="text-[#AEB8FF]" />
+              <span>Local Listener (CLI)</span>
+            </span>
+            <Button
+              variant="secondary"
+              size="xs"
+              leftIcon={copiedHookSnippet ? <Check size={11} /> : <Copy size={11} />}
+              onClick={() => void handleCopyHookSnippet()}
+            >
+              {copiedHookSnippet ? 'Copied' : 'Copy snippet'}
+            </Button>
+          </div>
+          <pre className="px-3 py-2.5 rounded-[8px] bg-[#171717] border border-[#2A2A2A] text-[12px] font-mono text-[#C4C4C4] overflow-x-auto leading-relaxed">
+            {HOOK_LISTEN_SNIPPET}
+          </pre>
+          <p className="text-[11.5px] text-[#9A9A9A]">
+            Receives lifecycle JSON on stdin plus <code className="text-[#C4C4C4]">VEYRA_BLOCK_ID</code>{' '}
+            and <code className="text-[#C4C4C4]">VEYRA_SESSION_*</code> env vars so agent scripts can
+            write back via <code className="text-[#AEB8FF]">veyra summary set</code>.
+          </p>
         </div>
 
-        <div className="flex items-center justify-between gap-2 pt-2 border-t border-[#2A2A2A]">
-          <div className="text-[12px]">
-            {hookNotice ? (
-              <span className={hookNotice.ok ? 'text-[#7BE0A0]' : 'text-[#FF9EC5]'}>
-                {hookNotice.text}
+        {/* Recent Webhook Deliveries */}
+        <div className="pt-4 border-t border-[#2A2A2A] space-y-2.5" aria-label="Webhook Delivery Diagnostics">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-[#6E6E6E]">
+                Recent Deliveries
               </span>
-            ) : null}
+              <span className="text-[11px] text-[#6E6E6E] tabular-nums">{hookLogs.length}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => void hookActivityQuery.refetch()}
+              disabled={hookActivityQuery.isFetching}
+              aria-label="Refresh webhook deliveries"
+              className="text-[11.5px] text-[#9A9A9A] hover:text-[#EDEDED] inline-flex items-center gap-1 transition-colors disabled:opacity-50"
+            >
+              <RefreshCw size={11} className={hookActivityQuery.isFetching ? 'animate-spin' : ''} />
+              <span>Refresh</span>
+            </button>
           </div>
-          <Button
-            type="submit"
-            variant="primary"
-            size="sm"
-            disabled={updateSettingsMutation.isPending}
-          >
-            Save Webhook
-          </Button>
+
+          {hookActivityQuery.isLoading ? (
+            <div className="text-[12px] text-[#6E6E6E]">Loading delivery logs…</div>
+          ) : hookLogs.length === 0 ? (
+            <div className="text-[12px] text-[#6E6E6E]">
+              No webhook deliveries recorded yet. Save a URL above and click Test Hook.
+            </div>
+          ) : (
+            <ul className="divide-y divide-[#262626]">
+              {hookLogs.map((entry) => {
+                const isDelivered = entry.action === 'webhook.delivered';
+                const isFailed = entry.action === 'webhook.failed';
+                return (
+                  <li
+                    key={entry.id}
+                    className="py-2 first:pt-0 last:pb-0 flex items-start justify-between gap-3"
+                  >
+                    <div className="flex items-start gap-2 min-w-0">
+                      <Pill
+                        tone={isDelivered ? 'energy-up' : isFailed ? 'energy-down' : 'neutral'}
+                        dot
+                        className="mt-0.5 shrink-0"
+                      >
+                        {isDelivered ? 'Delivered' : isFailed ? 'Failed' : entry.action}
+                      </Pill>
+                      <span className="text-[12px] text-[#C4C4C4] leading-snug break-words min-w-0">
+                        {entry.summary}
+                      </span>
+                    </div>
+                    <span className="text-[11px] text-[#6E6E6E] tabular-nums shrink-0 mt-0.5">
+                      {formatActivityTimestamp(entry.createdAt)}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
-      </form>
+      </div>
 
       {/* Notion Link Status Card */}
       <div className="veyra-card flex items-center justify-between gap-4">

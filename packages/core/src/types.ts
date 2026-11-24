@@ -630,6 +630,7 @@ export type ProgressFeedItem =
       isOps: boolean;
       timestamp: string;
       outcomeNote: string | null;
+      autoSummary: string | null;
       energySignal: EnergySignal | null;
       totalFocusMinutes: number;
     }
@@ -656,6 +657,7 @@ export interface OpsRadarItem {
   isGoalLinked: boolean;
   occurrenceCount: number;
   totalMinutes: number;
+  autoSummaries: string[];
 }
 
 export interface OpsRadarSummary {

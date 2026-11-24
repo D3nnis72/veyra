@@ -210,10 +210,11 @@ export interface SyncEventsResponse {
 }
 
 export interface WebhookDispatchResult {
-  ok: boolean;
-  status: number | null;
+  delivered: boolean;
+  skipped: boolean;
   attempts: number;
-  error: string | null;
+  statusCode?: number;
+  error?: string;
 }
 
 export interface TestHookResponse {
