@@ -19,6 +19,7 @@ import { LinkChip } from '../components/LinkChip';
 import { Pill } from '../components/Pill';
 import { useBlockContextMenu } from '../components/entityMenus';
 import { ProjectBadge } from '../components/ProjectBadge';
+import { activeCardStyle } from '../components/goalTint';
 import { formatDuration, formatShortDate } from '../components/icons';
 import { ProjectModal } from './ProjectModal';
 
@@ -230,11 +231,10 @@ export function ProjectDetailView({ projectId }: { projectId: string }) {
                       openBlockDrawer(block.id);
                     }
                   }}
+                  style={selected ? activeCardStyle(project.color) : undefined}
                   className={[
                     'veyra-card group transition-colors cursor-pointer flex items-start gap-3 focus:outline-none focus-visible:border-[#5566F2]',
-                    selected
-                      ? 'border-[#5566F2] bg-[#1C1F33]'
-                      : 'hover:border-[#3C3C3C] hover:bg-[#1F1F1F]',
+                    selected ? '' : 'hover:border-[#3C3C3C] hover:bg-[#1F1F1F]',
                   ].join(' ')}
                 >
                   <button

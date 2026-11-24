@@ -95,3 +95,19 @@ export function goalChipStyle(color: string | null | undefined): {
   const t = goalTint(color);
   return { backgroundColor: t.bg, borderColor: t.border, color: t.text };
 }
+
+/**
+ * Subtle project-colored tint for active / selected block and meeting cards
+ * (~12% project hue mixed into #1C1C1C surface, ~48% project hue border).
+ */
+export function activeCardStyle(color: string | null | undefined): {
+  backgroundColor: string;
+  borderColor: string;
+} {
+  const rgb = parseHex(color ?? '') ?? parseHex('#3B4BD8')!;
+  const base = toHex(rgb);
+  return {
+    backgroundColor: toHex(mix(rgb, SURFACE, 0.13)),
+    borderColor: `${base}${alphaHex(0.48)}`,
+  };
+}

@@ -23,6 +23,7 @@ import { Button } from '../components/Button';
 import { Pill } from '../components/Pill';
 import { useBlockContextMenu, useMeetingContextMenu } from '../components/entityMenus';
 import { ProjectBadge } from '../components/ProjectBadge';
+import { activeCardStyle, goalTint } from '../components/goalTint';
 import {
   formatDateHeading,
   formatDuration,
@@ -242,29 +243,42 @@ export function TodayView() {
         </header>
 
       {/* Active Focus Banner when a timer is running */}
-      {focusStatus?.activeSession && focusStatus.activeBlock ? (
-        <div className="veyra-card border-[#5566F2]/45 bg-[#1C1F33] flex items-center justify-between gap-4">
-          <div className="min-w-0 flex items-center gap-3">
-            <span className="w-2.5 h-2.5 rounded-full bg-[#4DA3FF] animate-pulse shrink-0" />
-            <div className="min-w-0">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.07em] text-[#AEB8FF]">
-                Focusing Now
-              </div>
-              <div className="text-[14px] font-medium text-[#EDEDED] truncate">
-                {focusStatus.activeBlock.title}
+      {focusStatus?.activeSession && focusStatus.activeBlock ? (() => {
+        const activeColor = projectsById.get(focusStatus.activeBlock.projectId)?.color ?? '#3B4BD8';
+        const tint = goalTint(activeColor);
+        return (
+          <div
+            style={activeCardStyle(activeColor)}
+            className="veyra-card flex items-center justify-between gap-4"
+          >
+            <div className="min-w-0 flex items-center gap-3">
+              <span
+                className="w-2.5 h-2.5 rounded-full animate-pulse shrink-0"
+                style={{ backgroundColor: activeColor }}
+              />
+              <div className="min-w-0">
+                <div
+                  className="text-[11px] font-semibold uppercase tracking-[0.07em]"
+                  style={{ color: tint.text }}
+                >
+                  Focusing Now
+                </div>
+                <div className="text-[14px] font-medium text-[#EDEDED] truncate">
+                  {focusStatus.activeBlock.title}
+                </div>
               </div>
             </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <span className="font-display text-[17px] font-semibold text-[#EDEDED] tabular-nums">
+                {formatElapsedTimer(liveElapsedSeconds)}
+              </span>
+              <Button variant="primary" size="sm" onClick={() => navigate('focus')}>
+                Open Focus
+              </Button>
+            </div>
           </div>
-          <div className="flex items-center gap-3 shrink-0">
-            <span className="font-display text-[17px] font-semibold text-[#D6DCFF] tabular-nums">
-              {formatElapsedTimer(liveElapsedSeconds)}
-            </span>
-            <Button variant="primary" size="sm" onClick={() => navigate('focus')}>
-              Open Focus
-            </Button>
-          </div>
-        </div>
-      ) : null}
+        );
+      })() : null}
 
       {/* Quiet Upcoming Meeting Bar */}
       {nextEvent ? (
@@ -279,10 +293,17 @@ export function TodayView() {
               openMeetingDrawer(nextEvent.id);
             }
           }}
+          style={
+            drawerSelectedEventId === nextEvent.id
+              ? activeCardStyle(
+                  nextEvent.projectId ? projectsById.get(nextEvent.projectId)?.color : undefined,
+                )
+              : undefined
+          }
           className={[
             'flex items-center justify-between gap-3 px-5 py-3.5 rounded-[10px] bg-[#181818] border transition-colors cursor-pointer focus:outline-none focus-visible:border-[#5566F2]',
             drawerSelectedEventId === nextEvent.id
-              ? 'border-[#5566F2] bg-[#1C1F33]'
+              ? ''
               : 'border-[#2A2A2A] hover:border-[#3C3C3C]',
           ].join(' ')}
         >
@@ -521,6 +542,9 @@ function TodayBlockCard({
   onPlay,
   onContextMenu,
 }: TodayBlockCardProps) {
+  const highlighted = isSelected || isRunning;
+  const projectColor = project?.color ?? '#3B4BD8';
+
   return (
     <div
       role="button"
@@ -533,11 +557,10 @@ function TodayBlockCard({
           onSelect();
         }
       }}
+      style={highlighted ? activeCardStyle(projectColor) : undefined}
       className={[
         'veyra-card group transition-colors cursor-pointer focus:outline-none focus-visible:border-[#5566F2]',
-        isSelected
-          ? 'border-[#3C3C3C] bg-[#1E1F2A]'
-          : 'hover:border-[#3C3C3C] hover:bg-[#1F1F1F]',
+        highlighted ? '' : 'hover:border-[#3C3C3C] hover:bg-[#1F1F1F]',
       ].join(' ')}
     >
       <div className="flex items-start gap-3">
@@ -548,10 +571,15 @@ function TodayBlockCard({
             e.stopPropagation();
             onPlay();
           }}
+          style={
+            isRunning
+              ? { backgroundColor: projectColor, borderColor: projectColor }
+              : undefined
+          }
           className={[
             'mt-0.5 w-8 h-8 rounded-[8px] inline-flex items-center justify-center shrink-0 transition-colors border',
             isRunning
-              ? 'bg-[#3B4BD8] border-[#5566F2] text-white'
+              ? 'text-white'
               : 'bg-[#262626] border-[#3C3C3C] text-[#EDEDED] hover:bg-[#3B4BD8] hover:border-[#5566F2] hover:text-white',
           ].join(' ')}
         >

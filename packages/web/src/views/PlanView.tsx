@@ -35,6 +35,7 @@ import { Pill } from '../components/Pill';
 import { useBlockContextMenu, useMeetingContextMenu } from '../components/entityMenus';
 import { ProjectBadge } from '../components/ProjectBadge';
 import { SelectPopover } from '../components/SelectPopover';
+import { activeCardStyle } from '../components/goalTint';
 import {
   addDaysDateString,
   formatLocalTime,
@@ -409,10 +410,17 @@ export function PlanView() {
                           type="button"
                           onClick={() => openMeetingDrawer(ev.id)}
                           onContextMenu={(e) => meetingMenu.open(e, ev)}
+                          style={
+                            selectedEventId === ev.id
+                              ? activeCardStyle(
+                                  ev.projectId ? projectsById.get(ev.projectId)?.color : undefined,
+                                )
+                              : undefined
+                          }
                           className={[
                             'w-full px-3 py-2 rounded-[8px] bg-[#181818] border text-left transition-colors flex items-center gap-2',
                             selectedEventId === ev.id
-                              ? 'border-[#5566F2] bg-[#1C1F33]'
+                              ? ''
                               : 'border-[#2A2A2A] hover:border-[#3C3C3C]',
                           ].join(' ')}
                         >
@@ -585,12 +593,11 @@ function PlanCardContent({
           onClick();
         }
       }}
+      style={selected ? activeCardStyle(project?.color) : undefined}
       className={[
         'veyra-card p-4 group flex flex-col gap-2.5 transition-colors cursor-pointer select-none focus:outline-none focus-visible:border-[#5566F2]',
         isDone ? 'bg-[#171717] opacity-80' : '',
-        selected
-          ? 'border-[#5566F2] bg-[#1C1F33]'
-          : 'hover:border-[#3C3C3C] hover:bg-[#202020]',
+        selected ? '' : 'hover:border-[#3C3C3C] hover:bg-[#202020]',
       ].join(' ')}
     >
       {/* Row 1: project identity left, actionable tags right */}
