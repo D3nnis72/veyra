@@ -1,4 +1,10 @@
-import type { BlockBucket, FocusStatus, Goal, ProjectWithStats, Settings } from '@veyra/core/types';
+import type {
+  BlockBucket,
+  FocusStatus,
+  Goal,
+  ProjectWithStats,
+  PublicSettings,
+} from '@veyra/core/types';
 import { createContext, useContext } from 'react';
 import type { LiveSyncStatus } from '../api/use-live-sync';
 
@@ -43,7 +49,7 @@ export interface AppShellContextValue {
   liveElapsedSeconds: number;
   projects: ProjectWithStats[];
   goals: Goal[];
-  settings: Settings | null;
+  settings: PublicSettings | null;
   navigate: (route: AppRoute, opts?: { projectId?: string; settingsSection?: SettingsSection }) => void;
   openProject: (projectId: string) => void;
   setSettingsSection: (section: SettingsSection) => void;

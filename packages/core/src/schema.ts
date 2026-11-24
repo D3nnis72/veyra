@@ -160,6 +160,7 @@ export const settings = sqliteTable('settings', {
     .$type<WebhookEventName[]>()
     .notNull()
     .default([]),
+  notionToken: text('notion_token'),
   globalCaptureShortcut: text('global_capture_shortcut')
     .notNull()
     .default('CommandOrControl+Shift+P'),

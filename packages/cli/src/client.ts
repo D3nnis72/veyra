@@ -25,8 +25,8 @@ import {
   type Project,
   type ProjectStatus,
   type ProjectWithStats,
+  type PublicSettings,
   type ReorderBlockInput,
-  type Settings,
   type SplitSessionInput,
   type SplitSessionResult,
   type TrimSessionInput,
@@ -100,8 +100,9 @@ export interface ReviewResponse extends WeeklyReviewSummary {
 }
 
 export interface SettingsResponse {
-  settings: Settings;
+  settings: PublicSettings;
   calendarSyncStatus: CalendarSyncStatus;
+  notionConfigured: boolean;
 }
 
 export interface SyncEventsResponse {

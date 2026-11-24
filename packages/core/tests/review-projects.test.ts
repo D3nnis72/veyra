@@ -22,8 +22,10 @@ import {
   logManualSession,
   openVeyraDb,
   parkBlock,
+  resolveNotionToken,
   runDailyRolloverAndRecurrence,
   setWeeklyRule,
+  toPublicSettings,
   updateBlock,
   updateCalendarEvent,
   updateDailyNote,
@@ -560,5 +562,43 @@ describe('Task 4: Calendar Upsert, Daily Notes, Weekly Review Rollups & Settings
     expect(() => updateSettings(veyraDb, { timezone: 'Mars/Olympus_Mons' })).toThrow(
       ValidationError,
     );
+  });
+
+  it('stores, preserves, clears, and masks notionToken across settings and env fallback', () => {
+    expect(getSettings(veyraDb).notionToken).toBeNull();
+    expect(toPublicSettings(getSettings(veyraDb))).toMatchObject({
+      notionConfigured: false,
+      notionTokenSource: null,
+    });
+
+    // Env fallback works when DB token is null
+    expect(resolveNotionToken(getSettings(veyraDb), 'ntn_env_123')).toEqual({
+      token: 'ntn_env_123',
+      source: 'env',
+    });
+    const envPublic = toPublicSettings(getSettings(veyraDb), 'ntn_env_123');
+    expect(envPublic.notionConfigured).toBe(true);
+    expect(envPublic.notionTokenSource).toBe('env');
+    expect('notionToken' in envPublic).toBe(false);
+
+    // Persisting a settings token trims whitespace and takes precedence over env
+    const saved = updateSettings(veyraDb, { notionToken: '  ntn_saved_secret  ' });
+    expect(saved.notionToken).toBe('ntn_saved_secret');
+    expect(resolveNotionToken(saved, 'ntn_env_123')).toEqual({
+      token: 'ntn_saved_secret',
+      source: 'settings',
+    });
+    const savedPublic = toPublicSettings(saved, 'ntn_env_123');
+    expect(savedPublic.notionConfigured).toBe(true);
+    expect(savedPublic.notionTokenSource).toBe('settings');
+    expect('notionToken' in savedPublic).toBe(false);
+
+    // Unrelated update preserves notionToken
+    const afterTz = updateSettings(veyraDb, { timezone: 'UTC' });
+    expect(afterTz.notionToken).toBe('ntn_saved_secret');
+
+    // Explicit null or whitespace clears notionToken
+    const cleared = updateSettings(veyraDb, { notionToken: null });
+    expect(cleared.notionToken).toBeNull();
   });
 });

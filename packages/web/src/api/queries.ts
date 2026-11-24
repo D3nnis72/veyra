@@ -144,3 +144,12 @@ export function useActivityQuery(filter?: ListActivityFilter, enabled = true) {
     enabled,
   });
 }
+
+export function useNotionSearchQuery(q: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.notionSearch(q),
+    queryFn: () => apiClient.searchNotion(q),
+    enabled,
+    staleTime: 15_000,
+  });
+}

@@ -9,7 +9,7 @@ import type {
   DailyNote,
   Goal,
   ProjectWithStats,
-  Settings,
+  PublicSettings,
 } from '@veyra/core/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
@@ -135,7 +135,7 @@ const BASE_DAILY_NOTES: DailyNote[] = [
   },
 ];
 
-const BASE_SETTINGS: Settings = {
+const BASE_SETTINGS: PublicSettings = {
   id: 'default',
   theme: 'dark',
   timezone: 'Europe/Berlin',
@@ -149,6 +149,8 @@ const BASE_SETTINGS: Settings = {
   lastCalendarSyncAt: '2026-11-23T09:15:00.000Z',
   webhookUrl: null,
   webhookEvents: ['focus.started', 'focus.ended', 'block.completed'],
+  notionConfigured: false,
+  notionTokenSource: null,
   globalCaptureShortcut: 'CommandOrControl+Shift+P',
   runInMenuBar: true,
   updatedAt: '2026-11-23T09:15:00.000Z',
@@ -285,6 +287,7 @@ const BASE_SETTINGS_RESPONSE: SettingsResponse = {
     lastCount: 4,
     lastError: null,
   },
+  notionConfigured: false,
 };
 
 function jsonResponse(body: unknown, status = 200): Response {

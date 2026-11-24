@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { createVeyraServer } from './app.js';
 
 export * from './app.js';
+export * from './notion.js';
 export * from './sse.js';
 export * from './webhooks.js';
 export * from './sync/types.js';
@@ -29,6 +30,7 @@ async function runCli(): Promise<void> {
   const dbPath =
     process.env.VEYRA_DB_PATH ?? path.join(os.homedir(), '.veyra', 'veyra.db');
   const bearerToken = process.env.VEYRA_TOKEN;
+  const notionToken = process.env.VEYRA_NOTION_TOKEN;
   const webDistDir = process.env.VEYRA_WEB_DIST_DIR;
   const enableTestClock = process.env.VEYRA_ENABLE_TEST_CLOCK === '1';
 
@@ -37,6 +39,7 @@ async function runCli(): Promise<void> {
     port: Number.isNaN(port) ? 4173 : port,
     host,
     bearerToken,
+    notionToken,
     webDistDir,
     enableTestClock,
   });

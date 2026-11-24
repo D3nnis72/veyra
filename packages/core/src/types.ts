@@ -254,6 +254,9 @@ export const weeklyReviewSchema = z.object({
 });
 export type WeeklyReview = z.infer<typeof weeklyReviewSchema>;
 
+export const notionTokenSourceSchema = z.enum(['settings', 'env']);
+export type NotionTokenSource = z.infer<typeof notionTokenSourceSchema>;
+
 export const settingsSchema = z.object({
   id: z.literal(DEFAULT_SETTINGS_ID),
   theme: themeModeSchema,
@@ -268,11 +271,43 @@ export const settingsSchema = z.object({
   lastCalendarSyncAt: z.string().nullable(),
   webhookUrl: z.string().nullable(),
   webhookEvents: z.array(webhookEventNameSchema),
+  notionToken: z.string().nullable(),
   globalCaptureShortcut: z.string().min(1),
   runInMenuBar: z.boolean(),
   updatedAt: z.string(),
 });
 export type Settings = z.infer<typeof settingsSchema>;
+
+export const publicSettingsSchema = settingsSchema.omit({ notionToken: true }).extend({
+  notionConfigured: z.boolean(),
+  notionTokenSource: notionTokenSourceSchema.nullable(),
+});
+export type PublicSettings = z.infer<typeof publicSettingsSchema>;
+
+export const notionObjectTypeSchema = z.enum(['page', 'database']);
+export type NotionObjectType = z.infer<typeof notionObjectTypeSchema>;
+
+export const notionSearchResultSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  url: z.string().url(),
+  objectType: notionObjectTypeSchema,
+  lastEditedTime: z.string(),
+});
+export type NotionSearchResult = z.infer<typeof notionSearchResultSchema>;
+
+export interface NotionSearchResponse {
+  configured: boolean;
+  results: NotionSearchResult[];
+}
+
+export interface NotionTestConnectionResult {
+  ok: boolean;
+  statusCode: number | null;
+  workspaceName: string | null;
+  botName: string | null;
+  error: string | null;
+}
 
 export const activityLogSchema = z.object({
   id: z.string().uuid(),
@@ -492,6 +527,7 @@ export const updateSettingsInputSchema = z.object({
   lastCalendarSyncAt: z.string().nullable().optional(),
   webhookUrl: z.string().nullable().optional(),
   webhookEvents: z.array(webhookEventNameSchema).optional(),
+  notionToken: z.string().nullable().optional(),
   globalCaptureShortcut: z.string().min(1).optional(),
   runInMenuBar: z.boolean().optional(),
 });

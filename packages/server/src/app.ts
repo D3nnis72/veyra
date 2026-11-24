@@ -15,7 +15,9 @@ import {
   type FocusStatus,
   type Goal,
   type NormalizedCalendarEvent,
+  type NotionTestConnectionResult,
   type ProjectWithStats,
+  type PublicSettings,
   type Settings,
   ValidationError,
   VeyraError,
@@ -71,6 +73,7 @@ import {
   splitSession,
   startFocus,
   stopFocus,
+  toPublicSettings,
   trimSession,
   updateBlock,
   updateCalendarEvent,
@@ -84,6 +87,7 @@ import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { z } from 'zod';
+import { NotionApiError, NotionClient, type NotionClientOptions } from './notion.js';
 import { SseHub } from './sse.js';
 import { CalendarSyncRunner, type CalendarSyncRunnerOptions } from './sync/sync-runner.js';
 import { CalendarSyncError, type CalendarSyncRunResult } from './sync/types.js';
@@ -106,6 +110,8 @@ export interface CreateVeyraServerOptions {
   sseHeartbeatIntervalMs?: number;
   syncRunnerOptions?: CalendarSyncRunnerOptions;
   webhookOptions?: WebhookDispatcherOptions;
+  notionToken?: string;
+  notionOptions?: Omit<NotionClientOptions, 'envToken'>;
 }
 
 export interface VeyraServerInstance {
@@ -113,6 +119,7 @@ export interface VeyraServerInstance {
   db: VeyraDb;
   syncRunner: CalendarSyncRunner;
   webhooks: WebhookDispatcher;
+  notion: NotionClient;
   sseHub: SseHub;
   start: () => Promise<{ port: number; host: string; url: string }>;
   stop: () => Promise<void>;
@@ -186,8 +193,13 @@ export interface ReviewResponse extends WeeklyReviewSummary {
 }
 
 export interface SettingsResponse {
-  settings: Settings;
+  settings: PublicSettings;
   calendarSyncStatus: CalendarSyncStatus;
+  notionConfigured: boolean;
+}
+
+export interface NotionTestResponse {
+  result: NotionTestConnectionResult;
 }
 
 export interface SyncEventsResponse {
@@ -231,6 +243,10 @@ const setWeeklyRuleBodySchema = z.object({
 const upsertEventsBodySchema = z.object({
   source: calendarEventSourceSchema.optional().default('manual'),
   events: z.array(normalizedCalendarEventSchema),
+});
+
+const notionTestBodySchema = z.object({
+  token: z.string().optional(),
 });
 
 function constantTimeTokenMatch(provided: string, expected: string): boolean {
@@ -364,6 +380,26 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
     },
   });
 
+  const envNotionToken =
+    (options.notionToken !== undefined
+      ? options.notionToken
+      : process.env.VEYRA_NOTION_TOKEN
+    )?.trim() || undefined;
+
+  const notion = new NotionClient(db, {
+    ...options.notionOptions,
+    envToken: envNotionToken,
+  });
+
+  const buildSettingsResponse = (row: Settings): SettingsResponse => {
+    const publicSettings = toPublicSettings(row, envNotionToken);
+    return {
+      settings: publicSettings,
+      calendarSyncStatus: syncRunner.getStatus(),
+      notionConfigured: publicSettings.notionConfigured,
+    };
+  };
+
   /** Retro-matches unassigned meetings to Projects and notifies clients when anything changed. */
   const runMeetingAutoMatch = (now: Date | undefined, actor: ActivityActor) => {
     const result = autoMatchUnassignedCalendarEvents(db, now, { actor });
@@ -402,6 +438,9 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
       );
     }
     if (err instanceof CalendarSyncError) {
+      return c.json({ error: { code: err.code, message: err.message } }, 502);
+    }
+    if (err instanceof NotionApiError) {
       return c.json({ error: { code: err.code, message: err.message } }, 502);
     }
     return c.json(
@@ -1358,11 +1397,7 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
   // -------------------------------------------------------------------------
 
   app.get('/api/settings', (c) => {
-    const payload: SettingsResponse = {
-      settings: getSettings(db),
-      calendarSyncStatus: syncRunner.getStatus(),
-    };
-    return c.json(payload);
+    return c.json(buildSettingsResponse(getSettings(db)));
   });
 
   app.patch('/api/settings', async (c) => {
@@ -1386,17 +1421,44 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
     }
 
     emitSse('settings.updated', 'settings', updated.id, now);
-    const payload: SettingsResponse = {
-      settings: updated,
-      calendarSyncStatus: syncRunner.getStatus(),
-    };
-    return c.json(payload);
+    return c.json(buildSettingsResponse(updated));
   });
 
   app.post('/api/settings/test-hook', async (c) => {
     const now = getNow(c);
     const result = await webhooks.sendTestHook({ now });
     const payload: TestHookResponse = { result };
+    return c.json(payload);
+  });
+
+  // -------------------------------------------------------------------------
+  // Integrations: Notion Search Proxy & Connection Test
+  // -------------------------------------------------------------------------
+
+  app.get('/api/integrations/notion/search', async (c) => {
+    const q = c.req.query('q') ?? '';
+    const rawLimit = c.req.query('limit');
+    let limit: number | undefined;
+    if (rawLimit !== undefined) {
+      const parsed = Number.parseInt(rawLimit, 10);
+      if (Number.isNaN(parsed) || parsed < 1 || parsed > 50) {
+        throw new ValidationError('limit must be an integer between 1 and 50');
+      }
+      limit = parsed;
+    }
+
+    const result = await notion.search(q, { limit });
+    return c.json(result);
+  });
+
+  app.post('/api/integrations/notion/test', async (c) => {
+    const raw = await readJsonBody(c, true);
+    const parsed = notionTestBodySchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid Notion connection test payload');
+    }
+    const result = await notion.testConnection(parsed.data.token);
+    const payload: NotionTestResponse = { result };
     return c.json(payload);
   });
 
@@ -1582,6 +1644,7 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
     db,
     syncRunner,
     webhooks,
+    notion,
     sseHub,
     start,
     stop,
