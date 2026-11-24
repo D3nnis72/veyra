@@ -161,6 +161,11 @@ export const settings = sqliteTable('settings', {
     .notNull()
     .default([]),
   notionToken: text('notion_token'),
+  macosFocusEnabled: integer('macos_focus_enabled', { mode: 'boolean' })
+    .notNull()
+    .default(false),
+  macosFocusStartShortcut: text('macos_focus_start_shortcut'),
+  macosFocusEndShortcut: text('macos_focus_end_shortcut'),
   globalCaptureShortcut: text('global_capture_shortcut')
     .notNull()
     .default('CommandOrControl+Shift+P'),

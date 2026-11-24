@@ -1,9 +1,15 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ContextMenu } from '../src/components/ContextMenu';
 import { Pill } from '../src/components/Pill';
+import {
+  ShortcutBinding,
+  ShortcutRecorder,
+  keyboardEventToAccelerator,
+  parseAcceleratorToKeys,
+} from '../src/components/ShortcutKeys';
 import { goalTint } from '../src/components/goalTint';
 
 afterEach(() => cleanup());
@@ -108,5 +114,86 @@ describe('ContextMenu', () => {
       </div>,
     );
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+});
+
+describe('ShortcutKeys & ShortcutRecorder', () => {
+  it('parses Electron accelerators into ordered individual macOS keycap labels', () => {
+    expect(parseAcceleratorToKeys('CommandOrControl+Shift+P')).toEqual(['⌘', '⇧', 'P']);
+    expect(parseAcceleratorToKeys('Shift+Alt+Space')).toEqual(['⌥', '⇧', 'Space']);
+    expect(parseAcceleratorToKeys('Control+O')).toEqual(['⌃', 'O']);
+    expect(parseAcceleratorToKeys('CommandOrControl+Return')).toEqual(['⌘', '↵']);
+  });
+
+  it('converts keyboard events to Electron accelerators using physical codes and requires a primary modifier', () => {
+    const bareKey = new KeyboardEvent('keydown', { key: 'p', code: 'KeyP' });
+    expect(keyboardEventToAccelerator(bareKey)).toEqual({ kind: 'needs-modifier' });
+
+    const optionCombo = new KeyboardEvent('keydown', {
+      key: '˚',
+      code: 'KeyK',
+      altKey: true,
+    });
+    expect(keyboardEventToAccelerator(optionCombo)).toEqual({
+      kind: 'captured',
+      accelerator: 'Alt+K',
+    });
+
+    const cmdShiftSpace = new KeyboardEvent('keydown', {
+      key: ' ',
+      code: 'Space',
+      metaKey: true,
+      shiftKey: true,
+    });
+    expect(keyboardEventToAccelerator(cmdShiftSpace)).toEqual({
+      kind: 'captured',
+      accelerator: 'CommandOrControl+Shift+Space',
+    });
+
+    const esc = new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape' });
+    expect(keyboardEventToAccelerator(esc)).toEqual({ kind: 'cancel' });
+  });
+
+  it('renders separate keycaps per chord with an "or" separator between alternatives', () => {
+    render(<ShortcutBinding chords={[['⌘', '⇧', 'O'], ['⌃', 'O']]} separator="or" />);
+    expect(screen.getByText('⌘')).toBeInTheDocument();
+    expect(screen.getByText('⇧')).toBeInTheDocument();
+    expect(screen.getByText('⌃')).toBeInTheDocument();
+    expect(screen.getByText('or')).toBeInTheDocument();
+    expect(screen.getAllByText('O')).toHaveLength(2);
+  });
+
+  it('records a new shortcut, rejects bare keys, cancels on Escape, and resets to default', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+
+    const { rerender } = render(
+      <ShortcutRecorder value="CommandOrControl+Shift+P" onChange={onChange} />,
+    );
+
+    // Displays parsed keycaps instead of raw accelerator string
+    expect(screen.queryByText('CommandOrControl+Shift+P')).not.toBeInTheDocument();
+    expect(screen.getByText('⌘')).toBeInTheDocument();
+    expect(screen.getByText('⇧')).toBeInTheDocument();
+    expect(screen.getByText('P')).toBeInTheDocument();
+
+    // Enter recording mode
+    await user.click(screen.getByRole('button', { name: /Record global capture shortcut/i }));
+    expect(screen.getByText(/Press keys/i)).toBeInTheDocument();
+
+    // Bare key shows hint and stays recording
+    fireEvent.keyDown(window, { key: 'p', code: 'KeyP' });
+    expect(screen.getByText(/Include ⌘, ⌥, or ⌃/i)).toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+
+    // Pressing a valid shortcut emits Electron accelerator and exits recording
+    fireEvent.keyDown(window, { key: ' ', code: 'Space', metaKey: true, shiftKey: true });
+    expect(onChange).toHaveBeenCalledWith('CommandOrControl+Shift+Space');
+    expect(screen.queryByText(/Press keys/i)).not.toBeInTheDocument();
+
+    // Custom shortcut shows Reset button
+    rerender(<ShortcutRecorder value="CommandOrControl+Shift+Space" onChange={onChange} />);
+    await user.click(screen.getByRole('button', { name: /Reset shortcut to default/i }));
+    expect(onChange).toHaveBeenLastCalledWith('CommandOrControl+Shift+P');
   });
 });

@@ -272,6 +272,9 @@ export const settingsSchema = z.object({
   webhookUrl: z.string().nullable(),
   webhookEvents: z.array(webhookEventNameSchema),
   notionToken: z.string().nullable(),
+  macosFocusEnabled: z.boolean(),
+  macosFocusStartShortcut: z.string().nullable(),
+  macosFocusEndShortcut: z.string().nullable(),
   globalCaptureShortcut: z.string().min(1),
   runInMenuBar: z.boolean(),
   updatedAt: z.string(),
@@ -307,6 +310,23 @@ export interface NotionTestConnectionResult {
   workspaceName: string | null;
   botName: string | null;
   error: string | null;
+}
+
+export const macOsFocusPhaseSchema = z.enum(['start', 'end']);
+export type MacOsFocusPhase = z.infer<typeof macOsFocusPhaseSchema>;
+
+export interface MacOsFocusRunResult {
+  ok: boolean;
+  phase: MacOsFocusPhase;
+  shortcutName: string | null;
+  skipped: boolean;
+  reason?: string;
+  error?: string;
+}
+
+export interface MacOsFocusShortcutsResponse {
+  supported: boolean;
+  shortcuts: string[];
 }
 
 export const activityLogSchema = z.object({
@@ -528,6 +548,9 @@ export const updateSettingsInputSchema = z.object({
   webhookUrl: z.string().nullable().optional(),
   webhookEvents: z.array(webhookEventNameSchema).optional(),
   notionToken: z.string().nullable().optional(),
+  macosFocusEnabled: z.boolean().optional(),
+  macosFocusStartShortcut: z.string().nullable().optional(),
+  macosFocusEndShortcut: z.string().nullable().optional(),
   globalCaptureShortcut: z.string().min(1).optional(),
   runInMenuBar: z.boolean().optional(),
 });

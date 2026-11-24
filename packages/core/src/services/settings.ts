@@ -99,6 +99,15 @@ export function updateSettings(
       parsed.notionToken !== undefined
         ? parsed.notionToken?.trim() || null
         : existing.notionToken,
+    macosFocusEnabled: parsed.macosFocusEnabled ?? existing.macosFocusEnabled,
+    macosFocusStartShortcut:
+      parsed.macosFocusStartShortcut !== undefined
+        ? parsed.macosFocusStartShortcut?.trim() || null
+        : existing.macosFocusStartShortcut,
+    macosFocusEndShortcut:
+      parsed.macosFocusEndShortcut !== undefined
+        ? parsed.macosFocusEndShortcut?.trim() || null
+        : existing.macosFocusEndShortcut,
     globalCaptureShortcut:
       parsed.globalCaptureShortcut ?? existing.globalCaptureShortcut,
     runInMenuBar: parsed.runInMenuBar ?? existing.runInMenuBar,
@@ -122,6 +131,9 @@ export function updateSettings(
         webhookUrl: updated.webhookUrl,
         webhookEvents: updated.webhookEvents,
         notionToken: updated.notionToken,
+        macosFocusEnabled: updated.macosFocusEnabled,
+        macosFocusStartShortcut: updated.macosFocusStartShortcut,
+        macosFocusEndShortcut: updated.macosFocusEndShortcut,
         globalCaptureShortcut: updated.globalCaptureShortcut,
         runInMenuBar: updated.runInMenuBar,
         updatedAt: updated.updatedAt,

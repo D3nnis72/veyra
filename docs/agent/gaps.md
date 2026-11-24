@@ -5,7 +5,7 @@ Open post-MVP items and known non-blocking improvements. Remove each item once r
 ## Step 03 Ecosystem Loop (Remaining Scope)
 
 - **Area:** `docs/playbook/canvases/veyra/03_ecosystem_loop.md`
-- **Detail:** `T3 Code Focus Mode Filter` (`focus.started` thread/project filter), `macOS Focus Mode Presence`, and `Dedicated iOS App` remain intentionally open in Step 03. (Teams/Outlook status write-back was explicitly dropped; menu bar active project icon & controls, inline Notion search & link picker, and the event hooks listener + post-block auto-summary & `Ops` pattern runner have shipped.)
+- **Detail:** `T3 Code Focus Mode Filter` (`focus.started` thread/project filter) and `Dedicated iOS App` remain intentionally open in Step 03. (Teams/Outlook status write-back was explicitly dropped; menu bar active project icon & controls, inline Notion search & link picker, the event hooks listener + post-block auto-summary & `Ops` pattern runner, and macOS Focus Mode presence have shipped.)
 
 ## Web Bundle Code-Splitting
 

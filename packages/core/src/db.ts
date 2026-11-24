@@ -137,6 +137,9 @@ CREATE TABLE IF NOT EXISTS settings (
   webhook_url TEXT,
   webhook_events TEXT NOT NULL DEFAULT '[]',
   notion_token TEXT,
+  macos_focus_enabled INTEGER NOT NULL DEFAULT 0,
+  macos_focus_start_shortcut TEXT,
+  macos_focus_end_shortcut TEXT,
   global_capture_shortcut TEXT NOT NULL DEFAULT 'CommandOrControl+Shift+P',
   run_in_menu_bar INTEGER NOT NULL DEFAULT 1,
   updated_at TEXT NOT NULL
@@ -194,6 +197,21 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{ table: string; column: string; ddl: stri
     column: 'notion_token',
     ddl: 'ALTER TABLE settings ADD COLUMN notion_token TEXT',
   },
+  {
+    table: 'settings',
+    column: 'macos_focus_enabled',
+    ddl: 'ALTER TABLE settings ADD COLUMN macos_focus_enabled INTEGER NOT NULL DEFAULT 0',
+  },
+  {
+    table: 'settings',
+    column: 'macos_focus_start_shortcut',
+    ddl: 'ALTER TABLE settings ADD COLUMN macos_focus_start_shortcut TEXT',
+  },
+  {
+    table: 'settings',
+    column: 'macos_focus_end_shortcut',
+    ddl: 'ALTER TABLE settings ADD COLUMN macos_focus_end_shortcut TEXT',
+  },
 ];
 
 function applyAdditiveColumnMigrations(sqlite: Database.Database): void {
@@ -237,8 +255,10 @@ function seedBootstrapRows(sqlite: Database.Database): void {
       id, theme, timezone, onboarding_completed, server_url,
       calendar_sync_mode, outlook_cli_command, ics_feed_url,
       calendar_sync_interval_min, skip_declined_and_all_day, last_calendar_sync_at,
-      webhook_url, webhook_events, notion_token, global_capture_shortcut, run_in_menu_bar, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      webhook_url, webhook_events, notion_token,
+      macos_focus_enabled, macos_focus_start_shortcut, macos_focus_end_shortcut,
+      global_capture_shortcut, run_in_menu_bar, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   insertDefaultSettings.run(
@@ -255,6 +275,9 @@ function seedBootstrapRows(sqlite: Database.Database): void {
     null,
     null,
     '[]',
+    null,
+    0,
+    null,
     null,
     DEFAULT_GLOBAL_CAPTURE_SHORTCUT,
     1,

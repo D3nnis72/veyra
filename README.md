@@ -4,6 +4,49 @@ A calm, open-source focus and progress cockpit built for modern work across para
 
 Veyra separates **thinking** from **execution**: use your AI coding environment (such as T3 Code or Claude Code) as the conversational planning and review interface via the `veyra` CLI (`--json`), while Veyra gives you a pure neutral dark macOS desktop and web cockpit that protects focus, measures real work with a count-up stopwatch, aligns blocks to overarching `Goals`, and surfaces recurring `Ops` drag in Weekly `Review`.
 
+![Veyra Today Cockpit](docs/assets/today.png)
+
+## Interface
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/assets/focus.png" alt="Veyra Focus Mode" />
+      <br />
+      <strong>Focus Mode</strong> — Count-up stopwatch with the backlog hidden and one-key controls (<code>P</code> pause, <code>C</code> complete, <code>N</code> notes).
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/assets/plan.png" alt="Veyra Plan Board" />
+      <br />
+      <strong>Plan &amp; Triage</strong> — Drag coarse blocks across the week alongside synced meetings, curated <code>Inbox</code>, and <code>Later</code> checkpoints.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/assets/calendar.png" alt="Veyra Calendar View" />
+      <br />
+      <strong>Calendar</strong> — Solid logged focus sessions next to synced calendar meetings and optional dashed <code>Planned</code> slots.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/assets/review.png" alt="Veyra Weekly Review" />
+      <br />
+      <strong>Weekly Review</strong> — Goal alignment, build vs. <code>Ops</code> split, energy signals, daily notes, and recurring <code>Ops</code> automation radar.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/assets/quick-capture.png" alt="Veyra Quick Capture Overlay" />
+      <br />
+      <strong>Global Quick Capture (<code>⌘⇧P</code>)</strong> — Floating capture bar from any macOS app for Daily Notes, Inbox items, or instant Focus Now.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/assets/shortcuts.png" alt="Veyra Keyboard Shortcuts Settings" />
+      <br />
+      <strong>Keyboard Shortcuts</strong> — Full keyboard control with inline shortcut recording for the global macOS Quick Capture hotkey.
+    </td>
+  </tr>
+</table>
+
 ## Core Principles
 
 1. **Protect the brain:** Hide the backlog during active work and count time *up* like a stopwatch instead of down, so important tasks get the time they need to be done right.

@@ -23,6 +23,9 @@ import type {
   ListGoalsFilter,
   ListProjectsFilter,
   LogSessionInput,
+  MacOsFocusPhase,
+  MacOsFocusRunResult,
+  MacOsFocusShortcutsResponse,
   MoveBlockInput,
   NormalizedCalendarEvent,
   NotionSearchResponse,
@@ -202,6 +205,10 @@ export interface SettingsResponse {
 
 export interface NotionTestResponse {
   result: NotionTestConnectionResult;
+}
+
+export interface MacOsFocusTestResponse {
+  result: MacOsFocusRunResult;
 }
 
 export interface SyncEventsResponse {
@@ -706,6 +713,25 @@ export const apiClient = {
       'POST',
       '/api/integrations/notion/test',
       token !== undefined ? { token } : {},
+    );
+  },
+
+  // Integrations: macOS Focus Mode Presence
+  listMacOsFocusShortcuts(): Promise<MacOsFocusShortcutsResponse> {
+    return request<MacOsFocusShortcutsResponse>(
+      'GET',
+      '/api/integrations/macos-focus/shortcuts',
+    );
+  },
+
+  testMacOsFocus(
+    phase: MacOsFocusPhase,
+    shortcutName?: string,
+  ): Promise<MacOsFocusTestResponse> {
+    return request<MacOsFocusTestResponse>(
+      'POST',
+      '/api/integrations/macos-focus/test',
+      shortcutName !== undefined ? { phase, shortcutName } : { phase },
     );
   },
 

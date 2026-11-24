@@ -1,28 +1,34 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   type CalendarSyncMode,
   type Goal,
   type GoalStatus,
+  type MacOsFocusPhase,
   PROJECT_ACCENT_COLORS,
   type UpdateSettingsInput,
   type WebhookEventName,
 } from '@veyra/core/types';
 import {
   Check,
+  Compass,
   Copy,
   FileText,
+  Globe,
   Monitor,
   Moon,
+  Pencil,
   PlugZap,
   Plus,
   RefreshCw,
   Send,
   Server,
   Sun,
+  Target,
   Terminal,
   Trash2,
+  Zap,
 } from 'lucide-react';
-import { type FormEvent, useEffect, useState } from 'react';
+import { type FormEvent, type ReactNode, useEffect, useRef, useState } from 'react';
 import {
   apiClient,
   isElectronDesktop,
@@ -38,6 +44,12 @@ import {
 import type { SettingsSection } from '../app/AppShellContext';
 import { Button } from '../components/Button';
 import { Pill } from '../components/Pill';
+import {
+  DEFAULT_CAPTURE_SHORTCUT,
+  ShortcutBinding,
+  type ShortcutBindingSpec,
+  ShortcutRecorder,
+} from '../components/ShortcutKeys';
 import { ToggleSwitch } from '../components/ToggleSwitch';
 import { formatLocalTime, formatShortDate, getTodayDateString } from '../components/icons';
 
@@ -142,22 +154,7 @@ function GoalsSettingsSection() {
         </div>
 
         <div className="flex items-center justify-between gap-3 flex-wrap pt-1">
-          <div className="flex items-center gap-1.5">
-            {PROJECT_ACCENT_COLORS.map((swatch) => (
-              <button
-                key={swatch}
-                type="button"
-                aria-label={`Color ${swatch}`}
-                onClick={() => setNewColor(swatch)}
-                style={{ backgroundColor: swatch }}
-                className={`w-5 h-5 rounded-full transition-transform ${
-                  newColor === swatch
-                    ? 'ring-2 ring-offset-2 ring-offset-[#1C1C1C] ring-white scale-105'
-                    : 'opacity-75 hover:opacity-100'
-                }`}
-              />
-            ))}
-          </div>
+          <ColorPicker value={newColor} onChange={setNewColor} label="Goal color" />
           <Button
             type="submit"
             variant="primary"
@@ -184,14 +181,80 @@ function GoalsSettingsSection() {
   );
 }
 
+const GOAL_STATUS_OPTIONS: Array<{ id: GoalStatus; label: string; active: string }> = [
+  { id: 'active', label: 'Active', active: 'bg-[#1F2759] border-[#5566F2]/55 text-[#D6DCFF]' },
+  { id: 'achieved', label: 'Achieved', active: 'bg-[#14331F] border-[#2FB463]/60 text-[#7BE0A0]' },
+  { id: 'archived', label: 'Archived', active: 'bg-[#3A2410] border-[#D9772B]/60 text-[#F5B27A]' },
+];
+
+const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
+
+/** Preset swatches plus a custom color (native color input) with generous spacing. */
+function ColorPicker({
+  value,
+  onChange,
+  label,
+}: {
+  value: string;
+  onChange: (color: string) => void;
+  label: string;
+}) {
+  const isPreset = PROJECT_ACCENT_COLORS.some((c) => c.toLowerCase() === value.toLowerCase());
+  const customValue = HEX_COLOR_REGEX.test(value) ? value : '#5566F2';
+  const ring = 'ring-2 ring-offset-2 ring-offset-[#1C1C1C] ring-white';
+  return (
+    <div className="flex items-center gap-3 flex-wrap" role="group" aria-label={label}>
+      {PROJECT_ACCENT_COLORS.map((swatch) => (
+        <button
+          key={swatch}
+          type="button"
+          aria-label={`${label} ${swatch}`}
+          aria-pressed={value.toLowerCase() === swatch.toLowerCase()}
+          onClick={() => onChange(swatch)}
+          style={{ backgroundColor: swatch }}
+          className={`w-6 h-6 rounded-full transition-transform ${
+            value.toLowerCase() === swatch.toLowerCase()
+              ? `${ring} scale-105`
+              : 'opacity-75 hover:opacity-100'
+          }`}
+        />
+      ))}
+      <label
+        title="Custom color"
+        className={`relative w-6 h-6 rounded-full cursor-pointer transition-transform ${
+          !isPreset ? `${ring} scale-105` : 'opacity-75 hover:opacity-100'
+        }`}
+        style={{
+          background: isPreset
+            ? 'conic-gradient(from 0deg, #ef4444, #eab308, #22c55e, #06b6d4, #6366f1, #d946ef, #ef4444)'
+            : value,
+        }}
+      >
+        <span className="sr-only">Custom {label.toLowerCase()}</span>
+        <input
+          type="color"
+          value={customValue}
+          onChange={(e) => onChange(e.target.value.toUpperCase())}
+          aria-label={`Custom ${label.toLowerCase()}`}
+          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+        />
+      </label>
+    </div>
+  );
+}
+
 function GoalRow({ goal, onChanged }: { goal: Goal; onChanged: () => void }) {
+  const [editing, setEditing] = useState(false);
   const [name, setName] = useState(goal.name);
   const [description, setDescription] = useState(goal.description);
+  const [color, setColor] = useState(goal.color);
 
   useEffect(() => {
+    if (editing) return;
     setName(goal.name);
     setDescription(goal.description);
-  }, [goal.id, goal.name, goal.description]);
+    setColor(goal.color);
+  }, [editing, goal.name, goal.description, goal.color]);
 
   const updateMutation = useMutation({
     mutationFn: (input: Parameters<typeof apiClient.updateGoal>[1]) =>
@@ -204,60 +267,101 @@ function GoalRow({ goal, onChanged }: { goal: Goal; onChanged: () => void }) {
     onSuccess: onChanged,
   });
 
-  const flushText = () => {
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    if (trimmed !== goal.name || description !== goal.description) {
-      updateMutation.mutate({ name: trimmed, description });
-    }
+  const canSave = name.trim().length > 0 && !updateMutation.isPending;
+
+  const save = () => {
+    if (!canSave) return;
+    updateMutation.mutate(
+      { name: name.trim(), description: description.trim(), color },
+      { onSuccess: () => setEditing(false) },
+    );
   };
 
+  const cancel = () => {
+    setName(goal.name);
+    setDescription(goal.description);
+    setColor(goal.color);
+    setEditing(false);
+  };
+
+  const inputClass =
+    'h-9 px-3 rounded-[8px] bg-[#262626] border border-[#3C3C3C] focus:border-[#5566F2] text-[13px] text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none';
+
   return (
-    <div className="veyra-card space-y-3">
+    <div className={`veyra-card space-y-3 ${goal.status === 'archived' ? 'opacity-70' : ''}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-2.5 flex-1 min-w-0">
           <span
             className="w-3 h-3 rounded-full mt-1.5 shrink-0"
-            style={{ backgroundColor: goal.color }}
+            style={{ backgroundColor: editing ? color : goal.color }}
           />
-          <div className="flex-1 min-w-0 space-y-1">
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onBlur={flushText}
-              aria-label={`Edit goal ${goal.name}`}
-              className="w-full bg-transparent text-[14.5px] font-medium text-[#EDEDED] focus:outline-none"
-            />
-            <input
-              type="text"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              onBlur={flushText}
-              placeholder="Add description…"
-              className="w-full bg-transparent text-[12.5px] text-[#9A9A9A] placeholder:text-[#6E6E6E] focus:outline-none"
-            />
-          </div>
+          {editing ? (
+            <div className="flex-1 min-w-0 space-y-2">
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') save();
+                  if (e.key === 'Escape') cancel();
+                }}
+                aria-label={`Edit goal ${goal.name}`}
+                autoFocus
+                className={`w-full ${inputClass}`}
+              />
+              <input
+                type="text"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') save();
+                  if (e.key === 'Escape') cancel();
+                }}
+                placeholder="Add description…"
+                aria-label={`Edit description of ${goal.name}`}
+                className={`w-full ${inputClass}`}
+              />
+            </div>
+          ) : (
+            <div className="flex-1 min-w-0 space-y-1">
+              <div className="text-[14.5px] font-medium text-[#EDEDED]">{goal.name}</div>
+              {goal.description ? (
+                <div className="text-[12.5px] text-[#9A9A9A]">{goal.description}</div>
+              ) : null}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
-          {(['active', 'achieved'] as GoalStatus[]).map((st) => (
+          {GOAL_STATUS_OPTIONS.map((opt) => (
             <button
-              key={st}
+              key={opt.id}
               type="button"
-              onClick={() => updateMutation.mutate({ status: st })}
+              aria-pressed={goal.status === opt.id}
+              onClick={() => updateMutation.mutate({ status: opt.id })}
               className={[
-                'h-6 px-2 rounded-[6px] border text-[11px] font-medium capitalize transition-colors',
-                goal.status === st
-                  ? st === 'achieved'
-                    ? 'bg-[#14331F] border-[#2FB463]/60 text-[#7BE0A0]'
-                    : 'bg-[#1F2759] border-[#5566F2]/55 text-[#D6DCFF]'
+                'h-6 px-2 rounded-[6px] border text-[11px] font-medium transition-colors',
+                goal.status === opt.id
+                  ? opt.active
                   : 'bg-[#262626] border-[#3C3C3C] text-[#9A9A9A] hover:text-[#EDEDED]',
               ].join(' ')}
             >
-              {st}
+              {opt.label}
             </button>
           ))}
+          <button
+            type="button"
+            aria-label={`Edit goal ${goal.name} details`}
+            title="Edit"
+            onClick={() => setEditing((v) => !v)}
+            className={`h-6 w-6 rounded-[6px] inline-flex items-center justify-center transition-colors ${
+              editing
+                ? 'text-[#D6DCFF] bg-[#1F2759]'
+                : 'text-[#6E6E6E] hover:text-[#EDEDED] hover:bg-[#2A2A2A]'
+            }`}
+          >
+            <Pencil size={12} />
+          </button>
           <button
             type="button"
             aria-label={`Delete goal ${goal.name}`}
@@ -270,22 +374,27 @@ function GoalRow({ goal, onChanged }: { goal: Goal; onChanged: () => void }) {
         </div>
       </div>
 
-      <div className="flex items-center gap-1.5 pt-2 border-t border-[#2A2A2A]">
-        {PROJECT_ACCENT_COLORS.map((swatch) => (
-          <button
-            key={swatch}
-            type="button"
-            aria-label={`Set ${goal.name} color ${swatch}`}
-            onClick={() => updateMutation.mutate({ color: swatch })}
-            style={{ backgroundColor: swatch }}
-            className={`w-4 h-4 rounded-full ${
-              goal.color.toUpperCase() === swatch.toUpperCase()
-                ? 'ring-2 ring-offset-1 ring-offset-[#1C1C1C] ring-white'
-                : 'opacity-65 hover:opacity-100'
-            }`}
-          />
-        ))}
-      </div>
+      {editing ? (
+        <div className="flex items-center justify-between gap-3 flex-wrap pt-3 border-t border-[#2A2A2A]">
+          <ColorPicker value={color} onChange={setColor} label={`${goal.name} color`} />
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="ghost" size="sm" onClick={cancel}>
+              Cancel
+            </Button>
+            <Button type="button" variant="primary" size="sm" onClick={save} disabled={!canSave}>
+              Save
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {updateMutation.isError ? (
+        <div className="text-[12px] text-[#FF9EC5]">
+          {updateMutation.error instanceof Error
+            ? updateMutation.error.message
+            : 'Could not update goal.'}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -335,6 +444,19 @@ function IntegrationsSettingsSection() {
   const [hookNotice, setHookNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [copiedHookSnippet, setCopiedHookSnippet] = useState(false);
   const [notionNotice, setNotionNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const [macosFocusEnabled, setMacosFocusEnabled] = useState(false);
+  const [macosFocusStartShortcut, setMacosFocusStartShortcut] = useState('');
+  const [macosFocusEndShortcut, setMacosFocusEndShortcut] = useState('');
+  const [macosFocusNotice, setMacosFocusNotice] = useState<{
+    ok: boolean;
+    text: string;
+  } | null>(null);
+
+  const macosShortcutsQuery = useQuery({
+    queryKey: ['macos-focus-shortcuts'],
+    queryFn: () => apiClient.listMacOsFocusShortcuts(),
+    staleTime: 60_000,
+  });
 
   useEffect(() => {
     if (!settings) return;
@@ -345,6 +467,9 @@ function IntegrationsSettingsSection() {
     setSkipDeclined(settings.skipDeclinedAndAllDay);
     setWebhookUrl(settings.webhookUrl ?? '');
     setWebhookEvents(settings.webhookEvents);
+    setMacosFocusEnabled(settings.macosFocusEnabled);
+    setMacosFocusStartShortcut(settings.macosFocusStartShortcut ?? '');
+    setMacosFocusEndShortcut(settings.macosFocusEndShortcut ?? '');
   }, [settings?.updatedAt]);
 
   const updateSettingsMutation = useMutation({
@@ -460,6 +585,53 @@ function IntegrationsSettingsSection() {
       webhookUrl: webhookUrl.trim() || null,
       webhookEvents,
     });
+  };
+
+  const testMacOsFocusMutation = useMutation({
+    mutationFn: (vars: { phase: MacOsFocusPhase; shortcutName?: string }) =>
+      apiClient.testMacOsFocus(vars.phase, vars.shortcutName),
+    onSuccess: (res) => {
+      void queryClient.invalidateQueries({ queryKey: ['activity'] });
+      if (res.result.ok) {
+        setMacosFocusNotice({
+          ok: true,
+          text: `Ran "${res.result.shortcutName}" (${res.result.phase})`,
+        });
+      } else {
+        setMacosFocusNotice({
+          ok: false,
+          text: res.result.error ?? res.result.reason ?? 'macOS Focus shortcut test failed',
+        });
+      }
+    },
+    onError: (err) => {
+      setMacosFocusNotice({
+        ok: false,
+        text: err instanceof Error ? err.message : 'macOS Focus shortcut test failed',
+      });
+    },
+  });
+
+  const handleSaveMacOsFocus = (e: FormEvent) => {
+    e.preventDefault();
+    setMacosFocusNotice(null);
+    updateSettingsMutation.mutate(
+      {
+        macosFocusEnabled,
+        macosFocusStartShortcut: macosFocusStartShortcut.trim() || null,
+        macosFocusEndShortcut: macosFocusEndShortcut.trim() || null,
+      },
+      {
+        onSuccess: () => {
+          setMacosFocusNotice({
+            ok: true,
+            text: macosFocusEnabled
+              ? 'macOS Focus Mode presence saved'
+              : 'macOS Focus Mode presence disabled',
+          });
+        },
+      },
+    );
   };
 
   const handleSaveNotionToken = (e: FormEvent) => {
@@ -927,6 +1099,131 @@ function IntegrationsSettingsSection() {
           </div>
         </div>
       </form>
+
+      {/* macOS Focus Mode Presence Card */}
+      <form onSubmit={handleSaveMacOsFocus} className="veyra-card space-y-4">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="flex items-start gap-3 min-w-0 flex-1">
+            <span className="w-8 h-8 rounded-[8px] bg-[#262626] border border-[#3C3C3C] inline-flex items-center justify-center text-[#C4C4C4] shrink-0">
+              <Moon size={15} />
+            </span>
+            <div className="space-y-0.5 min-w-0">
+              <div className="text-[14px] font-semibold text-[#EDEDED]">macOS Focus Mode</div>
+              <div className="text-[12.5px] text-[#9A9A9A]">
+                Automatically toggle macOS Do Not Disturb or Work Focus via Apple Shortcuts when a
+                focus session starts or ends.
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <Pill tone={macosFocusEnabled ? 'energy-up' : 'neutral'} dot={macosFocusEnabled}>
+              {macosFocusEnabled ? 'Active' : 'Off'}
+            </Pill>
+            <ToggleSwitch
+              id="macos-focus-enabled-toggle"
+              checked={macosFocusEnabled}
+              onChange={setMacosFocusEnabled}
+              size="sm"
+            />
+          </div>
+        </div>
+
+        <datalist id="macos-shortcuts-datalist">
+          {(macosShortcutsQuery.data?.shortcuts ?? []).map((name) => (
+            <option key={name} value={name} />
+          ))}
+        </datalist>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <label htmlFor="macos-focus-start-input" className="text-[11.5px] text-[#9A9A9A] block">
+              Start Focus Shortcut
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                id="macos-focus-start-input"
+                type="text"
+                list="macos-shortcuts-datalist"
+                value={macosFocusStartShortcut}
+                onChange={(e) => setMacosFocusStartShortcut(e.target.value)}
+                placeholder="Veyra Focus On"
+                className="flex-1 min-w-0 h-9 px-3 rounded-[8px] bg-[#262626] border border-[#3C3C3C] focus:border-[#5566F2] text-[13px] text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none"
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() =>
+                  testMacOsFocusMutation.mutate({
+                    phase: 'start',
+                    shortcutName: macosFocusStartShortcut.trim() || undefined,
+                  })
+                }
+                disabled={testMacOsFocusMutation.isPending || !macosFocusStartShortcut.trim()}
+              >
+                Test
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label htmlFor="macos-focus-end-input" className="text-[11.5px] text-[#9A9A9A] block">
+              End Focus Shortcut
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                id="macos-focus-end-input"
+                type="text"
+                list="macos-shortcuts-datalist"
+                value={macosFocusEndShortcut}
+                onChange={(e) => setMacosFocusEndShortcut(e.target.value)}
+                placeholder="Veyra Focus Off"
+                className="flex-1 min-w-0 h-9 px-3 rounded-[8px] bg-[#262626] border border-[#3C3C3C] focus:border-[#5566F2] text-[13px] text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none"
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() =>
+                  testMacOsFocusMutation.mutate({
+                    phase: 'end',
+                    shortcutName: macosFocusEndShortcut.trim() || undefined,
+                  })
+                }
+                disabled={testMacOsFocusMutation.isPending || !macosFocusEndShortcut.trim()}
+              >
+                Test
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <p className="text-[11.5px] text-[#6E6E6E] leading-relaxed">
+          Create two 1-action shortcuts in Apple <span className="text-[#9A9A9A]">Shortcuts.app</span>
+          : <code className="text-[#9A9A9A]">Set Focus → Turn Do Not Disturb On</code> and{' '}
+          <code className="text-[#9A9A9A]">Set Focus → Turn Focus Off</code>. Switching directly
+          between focus blocks keeps macOS Focus active without flickering.
+        </p>
+
+        <div className="flex items-center justify-between gap-2 pt-2 border-t border-[#2A2A2A] flex-wrap">
+          <div className="text-[12px]">
+            {macosFocusNotice ? (
+              <span className={macosFocusNotice.ok ? 'text-[#7BE0A0]' : 'text-[#FF9EC5]'}>
+                {macosFocusNotice.text}
+              </span>
+            ) : null}
+          </div>
+          <Button
+            type="submit"
+            variant="primary"
+            size="sm"
+            disabled={updateSettingsMutation.isPending}
+          >
+            Save Focus Presence
+          </Button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -1165,15 +1462,13 @@ function ServerCliSettingsSection() {
           <div className="space-y-0.5">
             <div className="text-[13px] font-medium text-[#EDEDED]">Global Capture Shortcut</div>
             <div className="text-[12px] text-[#9A9A9A]">
-              Opens floating Quick Capture from any macOS space (default ⌘⇧P)
+              Opens floating Quick Capture from any macOS space
             </div>
           </div>
-          <input
-            type="text"
-            aria-label="Global capture shortcut"
+          <ShortcutRecorder
             value={shortcut}
-            onChange={(e) => setShortcut(e.target.value)}
-            className="w-56 h-8 px-2.5 rounded-[6px] bg-[#262626] border border-[#3C3C3C] focus:border-[#5566F2] text-[12px] font-mono text-[#EDEDED] focus:outline-none"
+            onChange={setShortcut}
+            ariaLabel="Global capture shortcut"
           />
         </div>
 
@@ -1307,87 +1602,125 @@ function AppearanceSettingsSection() {
 interface HotkeyRow {
   label: string;
   description: string;
-  keys: string[];
+  binding?: ShortcutBindingSpec;
+  control?: ReactNode;
 }
 
-const GLOBAL_MACOS_HOTKEYS: HotkeyRow[] = [
-  {
-    label: 'Quick Capture (Daily Note / Inbox)',
-    description: 'Opens the floating capture bar from any macOS app, even when Veyra is closed',
-    keys: ['⌘⇧P'],
-  },
-  {
-    label: 'Quick Focus (Create & Start Focus)',
-    description: 'Opens floating capture directly on Focus Now — type a title and hit Enter to focus',
-    keys: ['⌘⇧O', '⌃O'],
-  },
-  {
-    label: 'Global Command Palette',
-    description: 'Search blocks, projects, and actions from anywhere on macOS',
-    keys: ['⌥K'],
-  },
-];
-
 const NAVIGATION_HOTKEYS: HotkeyRow[] = [
-  { label: 'Command Palette (in-app)', description: 'Jump to views, projects, or start a block', keys: ['⌘K'] },
-  { label: 'New Block Composer', description: 'Open full composer sheet (⌘↵ create · ⌘⇧↵ create & focus)', keys: ['⌘N'] },
-  { label: 'Switch Primary Views', description: 'Today, Plan, Calendar, Projects, Review', keys: ['⌘1', '…', '⌘5'] },
-  { label: 'Save Active Drawer', description: 'Flush notes and edits in Block, Meeting, or Session drawer', keys: ['⌘S'] },
-  { label: 'Open Settings', description: 'Jump directly to Full-Page Settings', keys: ['⌘,'] },
-  { label: 'Close Overlay or Drawer', description: 'Dismiss active modal, palette, or right-side drawer', keys: ['Esc'] },
+  {
+    label: 'Command Palette',
+    description: 'Jump to views, projects, or start a block',
+    binding: { chords: [['⌘', 'K']] },
+  },
+  {
+    label: 'New Block Composer',
+    description: 'Open full composer sheet inside Veyra',
+    binding: { chords: [['⌘', 'N']] },
+  },
+  {
+    label: 'Switch Primary Views',
+    description: 'Today, Plan, Calendar, Projects, Review',
+    binding: { chords: [['⌘', '1'], ['⌘', '5']], separator: 'to' },
+  },
+  {
+    label: 'Save Active Drawer',
+    description: 'Flush notes and edits in Block, Meeting, or Session drawer',
+    binding: { chords: [['⌘', 'S']] },
+  },
+  {
+    label: 'Open Settings',
+    description: 'Jump directly to full-page Settings',
+    binding: { chords: [['⌘', ',']] },
+  },
+  {
+    label: 'Close Overlay or Drawer',
+    description: 'Dismiss active modal, palette, or side drawer',
+    binding: { chords: [['Esc']] },
+  },
 ];
 
-const CAPTURE_AND_FOCUS_HOTKEYS: HotkeyRow[] = [
-  { label: 'Switch Quick Capture Tabs', description: 'Cycle Daily Note → Inbox → Focus Now without leaving the input', keys: ['Tab', '⇧Tab'] },
-  { label: 'Cycle Project (Quick Capture)', description: 'Switch project directly via keyboard', keys: ['⌃P'] },
-  { label: 'Toggle Ops Flag (Quick Capture)', description: 'Mark note or block as Ops without touching the mouse', keys: ['⌥O'] },
-  { label: 'Create & Focus (from Inbox / Modal)', description: 'Immediately create block and enter Focus mode', keys: ['⌘↵', '⌘⇧↵'] },
-  { label: 'Focus Mode Actions', description: 'Pause with resume note, Complete block, or toggle Notes drawer', keys: ['P', 'C', 'N'] },
+const QUICK_CAPTURE_HOTKEYS: HotkeyRow[] = [
+  {
+    label: 'Switch Capture Tabs',
+    description: 'Cycle Daily Note, Inbox, and Focus Now without leaving the input',
+    binding: { chords: [['Tab'], ['⇧', 'Tab']], separator: 'or' },
+  },
+  {
+    label: 'Cycle Project',
+    description: 'Switch the active project directly from the keyboard',
+    binding: { chords: [['⌃', 'P']] },
+  },
+  {
+    label: 'Toggle Ops Flag',
+    description: 'Mark a note or block as Ops without touching the mouse',
+    binding: { chords: [['⌥', 'O']] },
+  },
+  {
+    label: 'Create & Focus',
+    description: 'Immediately create a block and enter Focus mode from Inbox or Composer',
+    binding: { chords: [['⌘', '↵'], ['⌘', '⇧', '↵']], separator: 'or' },
+  },
+];
+
+const FOCUS_MODE_HOTKEYS: HotkeyRow[] = [
+  {
+    label: 'Pause Focus',
+    description: 'Pause the active session with an optional resume note',
+    binding: { chords: [['P']] },
+  },
+  {
+    label: 'Complete Block',
+    description: 'Finish the current block and log outcome and energy',
+    binding: { chords: [['C'], ['⌘', '↵']], separator: 'or' },
+  },
+  {
+    label: 'Toggle Notes Drawer',
+    description: 'Open or close block notes without leaving Focus mode',
+    binding: { chords: [['N']] },
+  },
 ];
 
 function HotkeyListCard({
   heading,
   subtitle,
+  icon,
+  badge,
   rows,
 }: {
   heading: string;
   subtitle: string;
+  icon: ReactNode;
+  badge?: ReactNode;
   rows: HotkeyRow[];
 }) {
   return (
     <section className="veyra-card space-y-3">
-      <div className="space-y-0.5">
-        <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#9A9A9A]">
-          {heading}
-        </h2>
-        <p className="text-[12px] text-[#6E6E6E]">{subtitle}</p>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-2.5 min-w-0">
+          <span className="w-7 h-7 rounded-[7px] bg-[#242424] border border-[#323232] inline-flex items-center justify-center text-[#AEB8FF] shrink-0 mt-0.5">
+            {icon}
+          </span>
+          <div className="space-y-0.5 min-w-0">
+            <h2 className="text-[13.5px] font-semibold text-[#EDEDED] leading-snug">{heading}</h2>
+            <p className="text-[12px] text-[#7D7D7D]">{subtitle}</p>
+          </div>
+        </div>
+        {badge ? <div className="shrink-0">{badge}</div> : null}
       </div>
 
-      <div className="divide-y divide-[#2A2A2A] border-t border-[#2A2A2A]">
+      <div className="divide-y divide-[#262626] border-t border-[#2A2A2A]">
         {rows.map((row) => (
-          <div
-            key={row.label}
-            className="py-3 flex items-center justify-between gap-4"
-          >
-            <div className="min-w-0">
-              <div className="text-[13.5px] font-medium text-[#EDEDED]">{row.label}</div>
-              <div className="text-[12px] text-[#9A9A9A] mt-0.5">{row.description}</div>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              {row.keys.map((k) =>
-                k === '…' ? (
-                  <span key={k} className="text-[11px] text-[#6E6E6E] px-0.5">
-                    –
-                  </span>
-                ) : (
-                  <kbd
-                    key={k}
-                    className="h-7 min-w-[28px] px-2 rounded-[6px] bg-[#262626] border border-[#3C3C3C] text-[12px] font-medium text-[#EDEDED] inline-flex items-center justify-center tabular-nums"
-                  >
-                    {k}
-                  </kbd>
-                ),
-              )}
+          <div key={row.label} className="py-1 first:pt-1.5 last:pb-0">
+            <div className="py-2 -mx-2 px-2 rounded-[8px] flex items-center justify-between gap-4 hover:bg-white/[0.025] transition-colors">
+              <div className="min-w-0">
+                <div className="text-[13.5px] font-medium text-[#EDEDED]">{row.label}</div>
+                <div className="text-[12px] text-[#8E8E8E] mt-0.5">{row.description}</div>
+              </div>
+              {row.control ? (
+                row.control
+              ) : row.binding ? (
+                <ShortcutBinding {...row.binding} />
+              ) : null}
             </div>
           </div>
         ))}
@@ -1401,8 +1734,9 @@ function ShortcutsSettingsSection() {
   const settingsQuery = useSettingsQuery();
   const current = settingsQuery.data?.settings;
 
-  const [captureShortcut, setCaptureShortcut] = useState('CommandOrControl+Shift+P');
+  const [captureShortcut, setCaptureShortcut] = useState(DEFAULT_CAPTURE_SHORTCUT);
   const [saved, setSaved] = useState(false);
+  const savedTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (current?.globalCaptureShortcut) {
@@ -1410,9 +1744,17 @@ function ShortcutsSettingsSection() {
     }
   }, [current?.globalCaptureShortcut]);
 
+  useEffect(() => {
+    return () => {
+      if (savedTimerRef.current !== null) {
+        window.clearTimeout(savedTimerRef.current);
+      }
+    };
+  }, []);
+
   const saveShortcutMutation = useMutation({
-    mutationFn: async () => {
-      const next = captureShortcut.trim() || 'CommandOrControl+Shift+P';
+    mutationFn: async (nextRaw: string) => {
+      const next = nextRaw.trim() || DEFAULT_CAPTURE_SHORTCUT;
       await apiClient.updateSettings({ globalCaptureShortcut: next });
       if (isElectronDesktop() && window.veyraDesktop?.syncDesktopPreferences) {
         await window.veyraDesktop.syncDesktopPreferences({
@@ -1420,72 +1762,104 @@ function ShortcutsSettingsSection() {
           runInMenuBar: current?.runInMenuBar ?? true,
         });
       }
+      return next;
     },
-    onSuccess: () => {
+    onSuccess: (next) => {
+      setCaptureShortcut(next);
       setSaved(true);
       void queryClient.invalidateQueries({ queryKey: ['settings'] });
-      window.setTimeout(() => setSaved(false), 1800);
+      if (savedTimerRef.current !== null) {
+        window.clearTimeout(savedTimerRef.current);
+      }
+      savedTimerRef.current = window.setTimeout(() => setSaved(false), 1800);
+    },
+    onError: () => {
+      setCaptureShortcut(current?.globalCaptureShortcut ?? DEFAULT_CAPTURE_SHORTCUT);
     },
   });
+
+  const handleCaptureShortcutChange = (next: string) => {
+    setCaptureShortcut(next);
+    saveShortcutMutation.mutate(next);
+  };
+
+  const globalRows: HotkeyRow[] = [
+    {
+      label: 'Quick Capture',
+      description: 'Opens the floating capture bar for Daily Note or Inbox from any macOS app',
+      control: (
+        <ShortcutRecorder
+          value={captureShortcut}
+          onChange={handleCaptureShortcutChange}
+          disabled={saveShortcutMutation.isPending}
+          saved={saved}
+          ariaLabel="Customize Quick Capture shortcut"
+        />
+      ),
+    },
+    {
+      label: 'Quick Focus',
+      description: 'Opens floating capture directly on Focus Now. Type a title and hit Enter to start.',
+      binding: { chords: [['⌘', '⇧', 'O'], ['⌃', 'O']], separator: 'or' },
+    },
+    {
+      label: 'Global Command Palette',
+      description: 'Search blocks, projects, and actions from anywhere on macOS',
+      binding: { chords: [['⌥', 'K']] },
+    },
+  ];
 
   return (
     <div className="space-y-6">
       <header className="space-y-1">
-        <h1 className="font-display text-[22px] font-semibold text-[#EDEDED]">
+        <h1 className="font-display text-[24px] font-semibold text-[#EDEDED]">
           Keyboard Shortcuts
         </h1>
         <p className="text-[13px] text-[#9A9A9A]">
-          Drive Veyra without touching the mouse — global macOS hotkeys work from any app.
+          Drive Veyra without touching the mouse. Global macOS hotkeys work from any app.
         </p>
       </header>
 
       <HotkeyListCard
         heading="Global macOS Hotkeys"
-        subtitle="Active system-wide while Veyra runs in the menu bar."
-        rows={GLOBAL_MACOS_HOTKEYS}
+        subtitle="Active system-wide while Veyra runs in the menu bar. Click Quick Capture to rebind."
+        icon={<Globe size={14} />}
+        badge={
+          <Pill tone="accent" dot>
+            System-wide
+          </Pill>
+        }
+        rows={globalRows}
       />
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          saveShortcutMutation.mutate();
-        }}
-        className="veyra-card flex items-end justify-between gap-3 flex-wrap"
-      >
-        <label className="space-y-1 flex-1 min-w-[240px]">
-          <span className="text-[12px] font-medium text-[#C4C4C4] block">
-            Customize Global Quick Capture Accelerator
-          </span>
-          <input
-            type="text"
-            value={captureShortcut}
-            onChange={(e) => setCaptureShortcut(e.target.value)}
-            placeholder="CommandOrControl+Shift+P"
-            className="w-full h-9 px-3 rounded-[8px] bg-[#262626] border border-[#3C3C3C] focus:border-[#5566F2] text-[13px] font-mono text-[#EDEDED] focus:outline-none"
-          />
-        </label>
-        <div className="flex items-center gap-2">
-          {saved ? (
-            <span className="text-[12px] text-[#7BE0A0] inline-flex items-center gap-1">
-              <Check size={12} /> Saved
-            </span>
-          ) : null}
-          <Button type="submit" variant="primary" size="md" disabled={saveShortcutMutation.isPending}>
-            Save Shortcut
-          </Button>
+      {saveShortcutMutation.isError ? (
+        <div className="text-[12px] text-[#FF9EC5] px-1">
+          Could not save shortcut:{' '}
+          {saveShortcutMutation.error instanceof Error
+            ? saveShortcutMutation.error.message
+            : 'Unknown error'}
         </div>
-      </form>
+      ) : null}
 
       <HotkeyListCard
         heading="Navigation & Overlays"
         subtitle="Available anywhere inside the Veyra window."
+        icon={<Compass size={14} />}
         rows={NAVIGATION_HOTKEYS}
       />
 
       <HotkeyListCard
-        heading="Quick Capture & Focus Mode"
-        subtitle="Fast keyboard controls while capturing or focusing."
-        rows={CAPTURE_AND_FOCUS_HOTKEYS}
+        heading="Quick Capture"
+        subtitle="Keyboard controls inside the floating capture bar and composer."
+        icon={<Zap size={14} />}
+        rows={QUICK_CAPTURE_HOTKEYS}
+      />
+
+      <HotkeyListCard
+        heading="Focus Mode"
+        subtitle="Single-key controls while a focus session is running."
+        icon={<Target size={14} />}
+        rows={FOCUS_MODE_HOTKEYS}
       />
     </div>
   );

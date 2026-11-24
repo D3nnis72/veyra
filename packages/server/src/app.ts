@@ -14,6 +14,8 @@ import {
   type FocusSession,
   type FocusStatus,
   type Goal,
+  type MacOsFocusRunResult,
+  type MacOsFocusShortcutsResponse,
   type NormalizedCalendarEvent,
   type NotionTestConnectionResult,
   type ProjectWithStats,
@@ -59,6 +61,7 @@ import {
   listProjects,
   listSessions,
   logManualSession,
+  macOsFocusPhaseSchema,
   moveBlock,
   normalizedCalendarEventSchema,
   openVeyraDb,
@@ -87,6 +90,10 @@ import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { z } from 'zod';
+import {
+  MacOsFocusPresence,
+  type MacOsFocusPresenceOptions,
+} from './macos-focus.js';
 import { NotionApiError, NotionClient, type NotionClientOptions } from './notion.js';
 import { SseHub } from './sse.js';
 import { CalendarSyncRunner, type CalendarSyncRunnerOptions } from './sync/sync-runner.js';
@@ -112,6 +119,7 @@ export interface CreateVeyraServerOptions {
   webhookOptions?: WebhookDispatcherOptions;
   notionToken?: string;
   notionOptions?: Omit<NotionClientOptions, 'envToken'>;
+  macosFocusOptions?: MacOsFocusPresenceOptions;
 }
 
 export interface VeyraServerInstance {
@@ -120,6 +128,7 @@ export interface VeyraServerInstance {
   syncRunner: CalendarSyncRunner;
   webhooks: WebhookDispatcher;
   notion: NotionClient;
+  macosFocus: MacOsFocusPresence;
   sseHub: SseHub;
   start: () => Promise<{ port: number; host: string; url: string }>;
   stop: () => Promise<void>;
@@ -212,6 +221,10 @@ export interface TestHookResponse {
   result: WebhookDispatchResult;
 }
 
+export interface MacOsFocusTestResponse {
+  result: MacOsFocusRunResult;
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -247,6 +260,11 @@ const upsertEventsBodySchema = z.object({
 
 const notionTestBodySchema = z.object({
   token: z.string().optional(),
+});
+
+const macOsFocusTestBodySchema = z.object({
+  phase: macOsFocusPhaseSchema,
+  shortcutName: z.string().optional(),
 });
 
 function constantTimeTokenMatch(provided: string, expected: string): boolean {
@@ -390,6 +408,8 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
     ...options.notionOptions,
     envToken: envNotionToken,
   });
+
+  const macosFocus = new MacOsFocusPresence(db, options.macosFocusOptions);
 
   const buildSettingsResponse = (row: Settings): SettingsResponse => {
     const publicSettings = toPublicSettings(row, envNotionToken);
@@ -1032,6 +1052,10 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
       },
       { now },
     );
+    void macosFocus.onFocusStarted({
+      hadActiveSession: Boolean(result.closedSession),
+      now,
+    });
 
     return c.json({
       ...result,
@@ -1070,6 +1094,10 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
       },
       { now },
     );
+    void macosFocus.onFocusStarted({
+      hadActiveSession: Boolean(result.closedSession),
+      now,
+    });
 
     return c.json({
       ...result,
@@ -1098,6 +1126,7 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
       },
       { now },
     );
+    void macosFocus.onFocusEnded({ now });
 
     return c.json({
       ...result,
@@ -1120,6 +1149,7 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
       },
       { now },
     );
+    void macosFocus.onFocusEnded({ now });
 
     return c.json({
       ...result,
@@ -1158,6 +1188,7 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
         },
         { now },
       );
+      void macosFocus.onFocusEnded({ now });
     }
     void webhooks.emit(
       'block.completed',
@@ -1463,6 +1494,31 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
   });
 
   // -------------------------------------------------------------------------
+  // Integrations: macOS Focus Mode Presence (Shortcuts CLI)
+  // -------------------------------------------------------------------------
+
+  app.get('/api/integrations/macos-focus/shortcuts', async (c) => {
+    const payload: MacOsFocusShortcutsResponse = await macosFocus.listInstalledShortcuts();
+    return c.json(payload);
+  });
+
+  app.post('/api/integrations/macos-focus/test', async (c) => {
+    const now = getNow(c);
+    const raw = await readJsonBody(c);
+    const parsed = macOsFocusTestBodySchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new ValidationError("phase ('start' | 'end') is required");
+    }
+    const result = await macosFocus.testShortcut(
+      parsed.data.phase,
+      parsed.data.shortcutName,
+      now,
+    );
+    const payload: MacOsFocusTestResponse = { result };
+    return c.json(payload);
+  });
+
+  // -------------------------------------------------------------------------
   // Activity Log
   // -------------------------------------------------------------------------
 
@@ -1645,6 +1701,7 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
     syncRunner,
     webhooks,
     notion,
+    macosFocus,
     sseHub,
     start,
     stop,

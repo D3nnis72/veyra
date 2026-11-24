@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { createVeyraServer } from './app.js';
 
 export * from './app.js';
+export * from './macos-focus.js';
 export * from './notion.js';
 export * from './sse.js';
 export * from './webhooks.js';
