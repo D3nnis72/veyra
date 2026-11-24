@@ -39,3 +39,4 @@ Always pass `--json` in scripts and T3 Code sessions (full catalog in `interface
 - Plan & prune: `veyra add "..." --project "..." --date YYYY-MM-DD --json`, `veyra move <id> --date YYYY-MM-DD --json`, `veyra park <id> --revisit next-week --json`
 - Focus & sessions: `veyra start <id> --json`, `veyra pause --note "..." --json`, `veyra done --energy up --outcome "..." --json`, `veyra session split <sessionId> --at <ISO> --gap 15 --json`
 - Notes & calendar: `veyra note add "..." --json`, `veyra events sync --json`, `veyra review set-rule "..." --json`
+- Event hooks & auto-summary: `veyra hook listen --port 4174 --auto-summary --summarizer-cmd "claude -p"`, `veyra hook summarize <blockId> --cmd "claude -p" --dry-run --json`

@@ -294,8 +294,7 @@ function GoalRow({ goal, onChanged }: { goal: Goal; onChanged: () => void }) {
 // 2. Integrations & Outlook Sync Section
 // ---------------------------------------------------------------------------
 
-const HOOK_LISTEN_SNIPPET = `veyra hook listen --port 4174 \\
-  --on-complete './scripts/summarize-block.sh'`;
+const HOOK_LISTEN_SNIPPET = `veyra hook listen --port 4174 --auto-summary --summarizer-cmd "claude -p"`;
 
 function formatActivityTimestamp(iso: string): string {
   const dt = new Date(iso);
@@ -697,7 +696,7 @@ function IntegrationsSettingsSection() {
               type="text"
               value={webhookUrl}
               onChange={(e) => setWebhookUrl(e.target.value)}
-              placeholder="http://127.0.0.1:4174/webhook"
+              placeholder="http://127.0.0.1:4174/hooks/veyra"
               className="w-full h-9 px-3 rounded-[8px] bg-[#262626] border border-[#3C3C3C] focus:border-[#5566F2] text-[13px] text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none"
             />
           </div>
@@ -737,12 +736,12 @@ function IntegrationsSettingsSection() {
           </div>
         </form>
 
-        {/* Copyable CLI Hook Listener Snippet */}
+        {/* Copyable CLI Hook Listener & Auto-Summary One-Liner */}
         <div className="pt-4 border-t border-[#2A2A2A] space-y-2.5">
           <div className="flex items-center justify-between gap-2">
             <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-[#6E6E6E] inline-flex items-center gap-1.5">
               <Terminal size={12} className="text-[#AEB8FF]" />
-              <span>Local Listener (CLI)</span>
+              <span>Post-Block Auto-Summary Runner (CLI)</span>
             </span>
             <Button
               variant="secondary"
@@ -750,16 +749,22 @@ function IntegrationsSettingsSection() {
               leftIcon={copiedHookSnippet ? <Check size={11} /> : <Copy size={11} />}
               onClick={() => void handleCopyHookSnippet()}
             >
-              {copiedHookSnippet ? 'Copied' : 'Copy snippet'}
+              {copiedHookSnippet ? 'Copied' : 'Copy command'}
             </Button>
           </div>
           <pre className="px-3 py-2.5 rounded-[8px] bg-[#171717] border border-[#2A2A2A] text-[12px] font-mono text-[#C4C4C4] overflow-x-auto leading-relaxed">
             {HOOK_LISTEN_SNIPPET}
           </pre>
-          <p className="text-[11.5px] text-[#9A9A9A]">
-            Receives lifecycle JSON on stdin plus <code className="text-[#C4C4C4]">VEYRA_BLOCK_ID</code>{' '}
-            and <code className="text-[#C4C4C4]">VEYRA_SESSION_*</code> env vars so agent scripts can
-            write back via <code className="text-[#AEB8FF]">veyra summary set</code>.
+          <p className="text-[11.5px] text-[#9A9A9A] leading-relaxed">
+            Point the Webhook Endpoint URL above to{' '}
+            <code className="text-[#AEB8FF]">http://127.0.0.1:4174/hooks/veyra</code> (also
+            accepts <code className="text-[#C4C4C4]">/webhook</code>). Add optional{' '}
+            <code className="text-[#C4C4C4]">--workspace &lt;dir&gt;</code> or{' '}
+            <code className="text-[#C4C4C4]">--context-cmd &lt;cmd&gt;</code> flags to include git
+            commits or T3 Code / agent transcripts from the focus window; sessions under{' '}
+            <code className="text-[#C4C4C4]">--min-minutes 5</code> are skipped and{' '}
+            <code className="text-[#C4C4C4]">Ops</code> blocks automatically highlight recurring
+            automation candidates.
           </p>
         </div>
 

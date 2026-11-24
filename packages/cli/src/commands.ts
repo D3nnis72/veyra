@@ -48,6 +48,12 @@ import {
 } from './client.js';
 import { loadConfig, saveConfig } from './config.js';
 import {
+  DEFAULT_AUTO_SUMMARY_MIN_MINUTES,
+  DEFAULT_AUTO_SUMMARY_TIMEOUT_MS,
+  formatAutoSummaryHuman,
+  runAutoSummary,
+} from './auto-summary.js';
+import {
   DEFAULT_HOOK_HOST,
   DEFAULT_HOOK_PORT,
   DEFAULT_HOOK_TIMEOUT_MS,
@@ -323,6 +329,7 @@ export interface ProgramContext {
   writeOut: (text: string) => void;
   writeErr: (text: string) => void;
   getClient: () => VeyraClient;
+  getHookClient?: () => VeyraClient;
   env: NodeJS.ProcessEnv;
   configPath?: string;
   signal?: AbortSignal;
@@ -1144,30 +1151,58 @@ export function createProgram(ctx: ProgramContext): Command {
     });
 
   // -------------------------------------------------------------------------
-  // Event Hook Listener Command
+  // Event Hook Listener & Post-Block Auto-Summary Commands
   // -------------------------------------------------------------------------
 
-  const hookCmd = program.command('hook').description('Listen for Veyra lifecycle webhooks');
+  const hookCmd = program
+    .command('hook')
+    .description('Listen for Veyra lifecycle webhooks and run post-block auto-summaries');
 
   hookCmd
     .command('listen')
     .description(
-      'Run a local HTTP webhook listener that forwards Veyra events to shell commands or agent scripts',
+      'Run a local HTTP webhook listener that forwards Veyra events to shell commands or runs the built-in auto-summary pipeline',
     )
     .option('--port <port>', 'Port to listen on', String(DEFAULT_HOOK_PORT))
     .option('--host <host>', 'Host interface to bind', DEFAULT_HOOK_HOST)
-    .option('--path <path>', 'Webhook URL path (defaults to accepting / and /webhook)')
+    .option('--path <path>', 'Webhook URL path (defaults to accepting /, /webhook, and /hooks/veyra)')
     .option('--on-focus-start <cmd>', 'Shell command to execute on focus.started')
     .option('--on-focus-end <cmd>', 'Shell command to execute on focus.ended')
     .option('--on-complete <cmd>', 'Shell command to execute on block.completed')
     .option('--on-any <cmd>', 'Fallback shell command for any unhandled lifecycle event')
+    .option(
+      '--auto-summary',
+      'Enable built-in post-block auto-summary runner on focus.ended and block.completed',
+    )
+    .option(
+      '--summarizer-cmd <cmd>',
+      'Stdin-to-stdout LLM summarizer command for --auto-summary (e.g. "claude -p"; defaults to VEYRA_SUMMARIZER_CMD)',
+    )
+    .option(
+      '--workspace <dir>',
+      'Git workspace directory to inspect for commits during the focus window (repeatable)',
+      collectRepeatable,
+      [],
+    )
+    .option(
+      '--context-cmd <cmd>',
+      'Custom context collector command for --auto-summary (repeatable)',
+      collectRepeatable,
+      [],
+    )
+    .option(
+      '--min-minutes <minutes>',
+      'Minimum session duration in minutes to run --auto-summary',
+      String(DEFAULT_AUTO_SUMMARY_MIN_MINUTES),
+    )
+    .option('--dry-run', 'Run --auto-summary without writing autoSummary back to Veyra')
     .option(
       '--secret <secret>',
       'HMAC-SHA256 signing secret (defaults to VEYRA_WEBHOOK_SECRET env var)',
     )
     .option(
       '--timeout <ms>',
-      'Handler command timeout in milliseconds',
+      'Handler / summarizer command timeout in milliseconds',
       String(DEFAULT_HOOK_TIMEOUT_MS),
     )
     .action(
@@ -1179,6 +1214,12 @@ export function createProgram(ctx: ProgramContext): Command {
         onFocusEnd?: string;
         onComplete?: string;
         onAny?: string;
+        autoSummary?: boolean;
+        summarizerCmd?: string;
+        workspace: string[];
+        contextCmd: string[];
+        minMinutes: string;
+        dryRun?: boolean;
         secret?: string;
         timeout: string;
       }) => {
@@ -1190,6 +1231,21 @@ export function createProgram(ctx: ProgramContext): Command {
         if (Number.isNaN(timeoutMs) || timeoutMs < 100) {
           throw new CliUsageError(
             `Invalid --timeout '${opts.timeout}'. Expected an integer >= 100 (ms).`,
+          );
+        }
+        const minMinutes = Number(opts.minMinutes);
+        if (!Number.isFinite(minMinutes) || minMinutes < 0) {
+          throw new CliUsageError(
+            `Invalid --min-minutes '${opts.minMinutes}'. Expected a non-negative number.`,
+          );
+        }
+
+        const autoSummaryEnabled = Boolean(opts.autoSummary);
+        const summarizerCmd =
+          opts.summarizerCmd?.trim() || ctx.env.VEYRA_SUMMARIZER_CMD?.trim() || undefined;
+        if (autoSummaryEnabled && !opts.dryRun && !summarizerCmd) {
+          throw new CliUsageError(
+            '--auto-summary requires --summarizer-cmd <cmd> (e.g. --summarizer-cmd "claude -p") or VEYRA_SUMMARIZER_CMD (unless --dry-run is set).',
           );
         }
 
@@ -1206,6 +1262,20 @@ export function createProgram(ctx: ProgramContext): Command {
             onComplete: opts.onComplete,
             onAny: opts.onAny,
           },
+          ...(autoSummaryEnabled
+            ? {
+                autoSummary: {
+                  enabled: true,
+                  summarizerCmd,
+                  workspaceDirs: opts.workspace,
+                  contextCmds: opts.contextCmd,
+                  minMinutes,
+                  timeoutMs,
+                  dryRun: Boolean(opts.dryRun),
+                  client: (ctx.getHookClient ?? ctx.getClient)(),
+                },
+              }
+            : {}),
           secret,
           timeoutMs,
           env: ctx.env,
@@ -1238,6 +1308,105 @@ export function createProgram(ctx: ProgramContext): Command {
           process.once('SIGTERM', shutdown);
           ctx.signal?.addEventListener('abort', shutdown, { once: true });
         });
+      },
+    );
+
+  hookCmd
+    .command('summarize <blockId>')
+    .description(
+      'Collect local context for a focus block, generate a 1-2 sentence auto-summary (with Ops pattern analysis when flagged Ops), and write it back to Veyra',
+    )
+    .option('--from <iso>', 'Start of context window (ISO-8601; defaults to latest closed session start)')
+    .option('--to <iso>', 'End of context window (ISO-8601; defaults to latest closed session end)')
+    .option(
+      '--cmd <summarizerCmd>',
+      'Stdin-to-stdout LLM summarizer command (e.g. "claude -p"; defaults to VEYRA_SUMMARIZER_CMD)',
+    )
+    .option('--summarizer-cmd <summarizerCmd>', 'Alias for --cmd')
+    .option(
+      '--workspace <dir>',
+      'Git workspace directory to inspect for commits during the focus window (repeatable)',
+      collectRepeatable,
+      [],
+    )
+    .option(
+      '--context-cmd <cmd>',
+      'Custom context collector command (receives JSON metadata on stdin, outputs context on stdout; repeatable)',
+      collectRepeatable,
+      [],
+    )
+    .option(
+      '--min-minutes <minutes>',
+      'Minimum session duration in minutes before skipping summary (pass 0 to disable threshold)',
+      String(DEFAULT_AUTO_SUMMARY_MIN_MINUTES),
+    )
+    .option(
+      '--timeout <ms>',
+      'Summarizer / collector command timeout in milliseconds',
+      String(DEFAULT_AUTO_SUMMARY_TIMEOUT_MS),
+    )
+    .option(
+      '--dry-run',
+      'Collect context and print prompt/summary without writing autoSummary back to Veyra',
+    )
+    .action(
+      async (
+        blockId: string,
+        opts: {
+          from?: string;
+          to?: string;
+          cmd?: string;
+          summarizerCmd?: string;
+          workspace: string[];
+          contextCmd: string[];
+          minMinutes: string;
+          timeout: string;
+          dryRun?: boolean;
+        },
+      ) => {
+        const minMinutes = Number(opts.minMinutes);
+        if (!Number.isFinite(minMinutes) || minMinutes < 0) {
+          throw new CliUsageError(
+            `Invalid --min-minutes '${opts.minMinutes}'. Expected a non-negative number.`,
+          );
+        }
+        const timeoutMs = Number.parseInt(opts.timeout, 10);
+        if (Number.isNaN(timeoutMs) || timeoutMs < 100) {
+          throw new CliUsageError(
+            `Invalid --timeout '${opts.timeout}'. Expected an integer >= 100 (ms).`,
+          );
+        }
+        if ((opts.from && !opts.to) || (!opts.from && opts.to)) {
+          throw new CliUsageError('Provide both --from and --to together, or omit both to use the latest session.');
+        }
+
+        const summarizerCmd =
+          opts.cmd?.trim() || opts.summarizerCmd?.trim() || ctx.env.VEYRA_SUMMARIZER_CMD?.trim() || undefined;
+        if (!opts.dryRun && !summarizerCmd) {
+          throw new CliUsageError(
+            'Provide --cmd <summarizerCmd> (e.g. --cmd "claude -p") or set VEYRA_SUMMARIZER_CMD, or pass --dry-run.',
+          );
+        }
+
+        const result = await runAutoSummary({
+          blockId,
+          from: opts.from,
+          to: opts.to,
+          summarizerCmd,
+          workspaceDirs: opts.workspace,
+          contextCmds: opts.contextCmd,
+          minMinutes,
+          timeoutMs,
+          dryRun: Boolean(opts.dryRun),
+          client: ctx.getClient(),
+          env: ctx.env,
+        });
+
+        if (result.status === 'failed') {
+          throw new Error(result.error ?? 'Auto-summary failed');
+        }
+
+        emit(result, formatAutoSummaryHuman);
       },
     );
 
@@ -1636,11 +1805,27 @@ export async function runCli(argv: string[], io?: CliIo): Promise<number> {
     return cachedClient;
   };
 
+  let cachedHookClient: VeyraClient | null = null;
+  const getHookClient = (): VeyraClient => {
+    if (!cachedHookClient) {
+      const cfg = loadConfig({ env, configPath: io?.configPath });
+      cachedHookClient = new VeyraClient({
+        serverUrl: cfg.serverUrl,
+        token: cfg.token,
+        actor: env.VEYRA_ACTOR?.trim() ? cfg.actor : 'hook',
+        now: cfg.now,
+        fetchImpl: io?.fetchImpl,
+      });
+    }
+    return cachedHookClient;
+  };
+
   const program = createProgram({
     jsonMode,
     writeOut,
     writeErr,
     getClient,
+    getHookClient,
     env,
     configPath: io?.configPath,
     signal: io?.signal,
