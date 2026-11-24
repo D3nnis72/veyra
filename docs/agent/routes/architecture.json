@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 2,
+  "area": "architecture",
+  "routes": [
+    {
+      "id": "architecture-monorepo",
+      "priority": 100,
+      "taskTypes": ["workspace structure", "package boundaries", "dependency direction"],
+      "knowledge": ["architecture", "architecture.monorepo-boundaries"],
+      "codeAreas": [
+        "package.json",
+        "pnpm-workspace.yaml",
+        "packages/core/package.json",
+        "packages/server/package.json",
+        "packages/cli/package.json",
+        "packages/web/package.json",
+        "packages/desktop/package.json"
+      ],
+      "changeSignals": ["workspace packages", "package exports", "API boundary", "browser-safe types"],
+      "validation": ["pnpm typecheck", "pnpm build"],
+      "owner": "veyra-core"
+    },
+    {
+      "id": "architecture-domain",
+      "priority": 90,
+      "taskTypes": ["SQLite schema", "domain invariants", "core services"],
+      "knowledge": ["architecture.domain-invariants"],
+      "codeAreas": ["packages/core/src/**"],
+      "changeSignals": ["entities", "focus session invariant", "bucket transitions", "recurrence", "fractional ordering"],
+      "validation": ["pnpm --filter @veyra/core test", "pnpm build"],
+      "owner": "veyra-core"
+    },
+    {
+      "id": "architecture-design-tokens",
+      "priority": 95,
+      "taskTypes": ["design tokens", "shared UI primitives", "styling"],
+      "knowledge": ["architecture.design-system-tokens"],
+      "codeAreas": ["packages/web/src/styles/**", "packages/web/src/components/**"],
+      "changeSignals": ["neutral dark palette", "card padding", "pills", "drawers", "modals", "calendar visual styling"],
+      "validation": ["pnpm --filter @veyra/web typecheck", "pnpm --filter @veyra/web test"],
+      "owner": "veyra-ui"
+    }
+  ]
+}

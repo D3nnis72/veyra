@@ -1,0 +1,21 @@
+services:
+  veyra:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: veyra:latest
+    container_name: veyra
+    restart: unless-stopped
+    ports:
+      - "${VEYRA_PORT:-4173}:4173"
+    environment:
+      VEYRA_HOST: "0.0.0.0"
+      VEYRA_PORT: "4173"
+      VEYRA_DB_PATH: "/data/veyra.db"
+      VEYRA_WEB_DIST_DIR: "/app/packages/web/dist"
+      VEYRA_TOKEN: "${VEYRA_TOKEN:-}"
+    volumes:
+      - veyra_data:/data
+
+volumes:
+  veyra_data:

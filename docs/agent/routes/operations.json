@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 2,
+  "area": "operations",
+  "routes": [
+    {
+      "id": "operations-docker",
+      "priority": 90,
+      "taskTypes": ["Docker packaging", "self-hosting", "compose deployment"],
+      "knowledge": ["operations", "operations.docker-self-hosting"],
+      "codeAreas": ["Dockerfile", "docker-compose.yml", "packages/server/src/index.ts"],
+      "changeSignals": ["Dockerfile stages", "VEYRA_DB_PATH", "container healthcheck", "compose volume"],
+      "validation": ["docker compose build"],
+      "owner": "veyra-ops"
+    },
+    {
+      "id": "operations-testing",
+      "priority": 95,
+      "taskTypes": ["test infrastructure", "E2E verification", "CI scripts"],
+      "knowledge": ["operations.testing-and-verification"],
+      "codeAreas": ["vitest.config.ts", "tests/e2e/**"],
+      "changeSignals": ["Vitest projects", "E2E daily-driver suite", "workspace test scripts"],
+      "validation": ["pnpm typecheck", "pnpm build", "pnpm test", "pnpm test:e2e"],
+      "owner": "veyra-ops"
+    }
+  ]
+}

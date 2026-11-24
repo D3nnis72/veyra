@@ -1,0 +1,173 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
+@theme {
+  --font-display: var(--font-display);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  --color-canvas: var(--veyra-canvas);
+  --color-canvas-deep: var(--veyra-canvas-deep);
+  --color-surface: var(--veyra-surface);
+  --color-surface-2: var(--veyra-surface-2);
+  --color-surface-selected: var(--veyra-surface-selected);
+  --color-float: var(--veyra-float);
+  --color-border: var(--veyra-border);
+  --color-border-strong: var(--veyra-border-strong);
+  --color-primary: var(--veyra-primary);
+  --color-accent-soft: var(--veyra-accent-soft);
+  --color-accent-text: var(--veyra-accent-text);
+  --color-text: var(--veyra-text);
+  --color-text-secondary: var(--veyra-text-secondary);
+  --color-muted: var(--veyra-muted);
+  --color-faint: var(--veyra-faint);
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    border-color: var(--veyra-border);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    background-color: var(--veyra-canvas);
+    color: var(--veyra-text);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    color-scheme: dark;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--veyra-text);
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font-family: inherit;
+  }
+
+  button:not(:disabled) {
+    cursor: pointer;
+  }
+
+  ::selection {
+    background-color: rgba(59, 75, 216, 0.42);
+    color: #ffffff;
+  }
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Strict equal 18px card padding primitive — never nest cards inside cards.
+   Lives in the components layer so Tailwind utilities (selected borders, focus rings,
+   padding overrides) on a card can win over these defaults. */
+@layer components {
+  .veyra-card {
+    background-color: var(--veyra-surface);
+    border: 1px solid var(--veyra-border);
+    border-radius: var(--radius-lg);
+    padding: var(--space-card);
+  }
+}
+
+.veyra-glass-sidebar {
+  background-color: var(--veyra-sidebar-glass);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  border-right: 1px solid var(--veyra-glass-rim);
+  box-shadow: var(--shadow-glass);
+}
+
+.veyra-drag-region {
+  -webkit-app-region: drag;
+}
+
+.veyra-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Subtle dark scrollbars */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+@keyframes veyra-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes veyra-slide-in-right {
+  from {
+    transform: translateX(16px);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes veyra-modal-pop {
+  from {
+    transform: translateY(6px) scale(0.985);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-veyra-fade {
+  animation: veyra-fade-in 120ms ease-out;
+}
+
+.animate-veyra-drawer {
+  animation: veyra-slide-in-right 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.animate-veyra-modal {
+  animation: veyra-modal-pop 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}

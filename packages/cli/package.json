@@ -1,0 +1,27 @@
+{
+  "name": "@veyra/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "veyra": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@veyra/core": "workspace:*",
+    "commander": "^15.1.0",
+    "zod": "^3.24.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@veyra/server": "workspace:*",
+    "typescript": "^5.8.3",
+    "vitest": "^5.1.1"
+  }
+}

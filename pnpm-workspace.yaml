@@ -1,0 +1,9 @@
+packages:
+  - "packages/*"
+minimumReleaseAgeExclude:
+  - lucide-react@1.78.0
+allowBuilds:
+  better-sqlite3: true
+  electron: true
+  esbuild: true
+  electron-winstaller: false

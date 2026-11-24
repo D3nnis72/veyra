@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 2,
+  "area": "interfaces",
+  "routes": [
+    {
+      "id": "interfaces-http-sse",
+      "priority": 85,
+      "taskTypes": ["HTTP REST API", "SSE live sync", "bearer authentication"],
+      "knowledge": ["interfaces", "interfaces.http-sse-api"],
+      "codeAreas": [
+        "packages/server/src/app.ts",
+        "packages/server/src/sse.ts",
+        "packages/web/src/api/**"
+      ],
+      "changeSignals": ["REST routes", "VEYRA_TOKEN", "X-Veyra-Actor", "test clock", "SSE broadcast", "static SPA serving"],
+      "validation": ["pnpm --filter @veyra/server test"],
+      "owner": "veyra-server"
+    },
+    {
+      "id": "interfaces-cli-skill",
+      "priority": 90,
+      "taskTypes": ["veyra CLI", "agent skill", "CLI config"],
+      "knowledge": ["interfaces.cli-and-agent-skill", "interfaces.http-sse-api"],
+      "codeAreas": ["packages/cli/src/**", "skills/veyra/SKILL.md"],
+      "changeSignals": ["CLI subcommands", "--json output", "config resolution", "T3 Code skill"],
+      "validation": ["pnpm --filter @veyra/cli test", "pnpm --filter @veyra/cli build"],
+      "owner": "veyra-cli"
+    },
+    {
+      "id": "interfaces-calendar-webhooks",
+      "priority": 85,
+      "taskTypes": ["calendar sync adapters", "ICS feed", "Outlook CLI", "outgoing webhooks"],
+      "knowledge": ["interfaces.calendar-sync-webhooks", "architecture.domain-invariants"],
+      "codeAreas": ["packages/server/src/sync/**", "packages/server/src/webhooks.ts"],
+      "changeSignals": ["OutlookCliAdapter", "IcsFeedAdapter", "RRULE expansion", "sync window", "webhook delivery"],
+      "validation": ["pnpm --filter @veyra/server test"],
+      "owner": "veyra-server"
+    }
+  ]
+}

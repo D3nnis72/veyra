@@ -1,0 +1,142 @@
+/* ==========================================================================
+   Veyra Figma Design Tokens (verbatim from Veyra Theme & Veyra Scale, Screens 22:2)
+   ========================================================================== */
+
+:root {
+  /* Surfaces & Canvas */
+  --veyra-canvas: #131313;
+  --veyra-canvas-deep: #171717;
+  --veyra-completed-surface: #171717;
+  --veyra-meeting-surface: #181818;
+  --veyra-surface: #1c1c1c;
+  --veyra-surface-2: #242424;
+  --veyra-surface-selected: #1c1f33;
+  --veyra-float: #262626;
+
+  /* Spec / Scale Aliases */
+  --color-canvas: var(--veyra-canvas);
+  --color-canvas-deep: var(--veyra-canvas-deep);
+  --color-completed-surface: var(--veyra-completed-surface);
+  --color-meeting-surface: var(--veyra-meeting-surface);
+  --color-surface: var(--veyra-surface);
+  --color-surface-2: var(--veyra-surface-2);
+  --color-surface-selected: var(--veyra-surface-selected);
+  --color-float: var(--veyra-float);
+
+  /* Borders */
+  --veyra-border: #2a2a2a;
+  --veyra-border-strong: #3c3c3c;
+  --veyra-border-accent: #5566f258;
+
+  --color-border: var(--veyra-border);
+  --color-border-strong: var(--veyra-border-strong);
+  --color-border-accent: var(--veyra-border-accent);
+
+  /* Brand & Liquid Glass Sidebar */
+  --veyra-primary: #3b4bd8;
+  --veyra-primary-hover: #4758e6;
+  --veyra-primary-text: #ffffff;
+  --veyra-accent-soft: #1f2759;
+  --veyra-accent-text: #aeb8ff;
+
+  --veyra-sidebar-glass: rgba(30, 30, 30, 0.90);
+  --veyra-nav-active-bg: rgba(59, 75, 216, 0.23);
+  --veyra-nav-active-border: rgba(126, 144, 255, 0.30);
+  --veyra-nav-active-text: #d6dcff;
+  --veyra-glass-pill: rgba(255, 255, 255, 0.04);
+  --veyra-glass-rim: rgba(255, 255, 255, 0.08);
+
+  --color-primary: var(--veyra-primary);
+  --color-primary-text: var(--veyra-primary-text);
+  --color-accent-soft: var(--veyra-accent-soft);
+  --color-accent-text: var(--veyra-accent-text);
+  --color-sidebar-glass: var(--veyra-sidebar-glass);
+  --color-nav-active-bg: var(--veyra-nav-active-bg);
+  --color-nav-active-border: var(--veyra-nav-active-border);
+  --color-nav-active-text: var(--veyra-nav-active-text);
+  --color-glass-pill: var(--veyra-glass-pill);
+  --color-glass-rim: var(--veyra-glass-rim);
+
+  /* Text */
+  --veyra-text: #ededed;
+  --veyra-text-secondary: #c4c4c4;
+  --veyra-muted: #9a9a9a;
+  --veyra-faint: #6e6e6e;
+
+  --color-text: var(--veyra-text);
+  --color-text-secondary: var(--veyra-text-secondary);
+  --color-muted: var(--veyra-muted);
+  --color-faint: var(--veyra-faint);
+
+  /* Tag / Pill Tones (bg / dot / text) */
+  --pill-goal-bg: #152b47;
+  --pill-goal-dot: #4da3ff;
+  --pill-goal-text: #8fc7ff;
+
+  --pill-ops-bg: #3a3110;
+  --pill-ops-dot: #e8b417;
+  --pill-ops-text: #f2d06b;
+
+  --pill-due-bg: #3d2410;
+  --pill-due-dot: #f07c2a;
+  --pill-due-text: #f5a66b;
+
+  --pill-energy-up-bg: #14331f;
+  --pill-energy-up-dot: #2fb463;
+  --pill-energy-up-text: #7be0a0;
+
+  --pill-energy-down-bg: #3d1a2b;
+  --pill-energy-down-dot: #ec659b;
+  --pill-energy-down-text: #ff9ec5;
+
+  --pill-neutral-bg: #2a2a2a;
+  --pill-neutral-dot: #a3a3a3;
+  --pill-neutral-text: #a3a3a3;
+
+  --pill-cyan-bg: #123840;
+  --pill-cyan-dot: #22b8cf;
+  --pill-cyan-text: #7ee3f0;
+
+  --pill-violet-bg: #291f45;
+  --pill-violet-dot: #9d7ff7;
+  --pill-violet-text: #c9b6ff;
+
+  /* 8 Project Accent Colors + Very Dark Planned Washes */
+  --project-indigo: #3b4bd8;
+  --project-indigo-wash: #171a30;
+  --project-emerald: #2e9e6f;
+  --project-emerald-wash: #13261e;
+  --project-amber: #d9772b;
+  --project-amber-wash: #291c12;
+  --project-rose: #c94a6a;
+  --project-rose-wash: #29151c;
+  --project-cyan: #2a8fbd;
+  --project-cyan-wash: #12232c;
+  --project-violet: #8b5cf6;
+  --project-violet-wash: #1f1933;
+  --project-gold: #c49b2a;
+  --project-gold-wash: #272112;
+  --project-slate: #6e7280;
+  --project-slate-wash: #1d1e22;
+
+  /* Radii & Spacing */
+  --radius-sm: 6px;
+  --radius-badge: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  --space-card: 18px;
+  --sidebar-width: 236px;
+  --drawer-width: 520px;
+  --modal-width: 640px;
+
+  /* Typography */
+  --font-display: 'Outfit', -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+  --font-mono: 'SF Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Elevation */
+  --shadow-float: 0 12px 32px -4px rgba(0, 0, 0, 0.44);
+  --shadow-glass: 0 12px 36px -6px rgba(0, 0, 0, 0.33), inset 0 1px 1px 0 rgba(255, 255, 255, 0.08);
+}

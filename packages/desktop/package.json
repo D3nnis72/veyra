@@ -1,0 +1,88 @@
+{
+  "name": "@veyra/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/main.js --external:electron --external:better-sqlite3 && esbuild src/preload.ts --bundle --platform=node --format=cjs --target=node22 --outfile=dist/preload.cjs --external:electron",
+    "rebuild:native": "electron-rebuild -f -w better-sqlite3",
+    "dev": "pnpm build && electron ./dist/main.js",
+    "icon": "node scripts/generate-icon.mjs",
+    "package:mac": "pnpm --filter @veyra/core --filter @veyra/server --filter @veyra/web build && pnpm build && electron-builder --mac --arm64 --publish never",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.2.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.2.1",
+    "@types/node": "^22.15.0",
+    "@veyra/core": "workspace:*",
+    "@veyra/server": "workspace:*",
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.8.3",
+    "vitest": "^5.1.1"
+  },
+  "description": "Veyra desktop app for macOS",
+  "author": "Veyra",
+  "build": {
+    "appId": "ai.veyra.desktop",
+    "productName": "Veyra",
+    "copyright": "Copyright © 2026 Veyra",
+    "directories": {
+      "output": "release",
+      "buildResources": "assets"
+    },
+    "files": [
+      "dist/**",
+      "assets/**",
+      "package.json",
+      "!**/node_modules/better-sqlite3/{src,deps}/**",
+      "!**/node_modules/better-sqlite3/binding.gyp",
+      "!**/node_modules/better-sqlite3/prebuilds/{win32,linux,linuxmusl}-*.node",
+      "!**/node_modules/better-sqlite3/prebuilds/darwin-x64.node"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/dist",
+        "to": "web-dist",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/better-sqlite3/**"
+    ],
+    "npmRebuild": false,
+    "mac": {
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "category": "public.app-category.productivity",
+      "darkModeSupport": true,
+      "hardenedRuntime": false,
+      "identity": "-"
+    },
+    "dmg": {
+      "artifactName": "Veyra-${version}-${arch}.dmg"
+    }
+  }
+}
