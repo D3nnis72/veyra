@@ -12,11 +12,20 @@ const DEFAULT_MAX_RECONNECT_MS = 15_000;
 export interface MenuBarBlockSummary {
   id: string;
   title: string;
+  projectId?: string;
+}
+
+export interface MenuBarProjectSummary {
+  id: string;
+  name: string;
+  color: string;
+  icon: string | null;
 }
 
 export interface MenuBarFocusState {
   activeSession: FocusSession | null;
   activeBlock: MenuBarBlockSummary | null;
+  activeProject?: MenuBarProjectSummary | null;
   anchorElapsedSeconds: number;
   syncedAtMs: number | null;
   upNext: MenuBarBlockSummary[];
@@ -25,6 +34,7 @@ export interface MenuBarFocusState {
 export const EMPTY_MENUBAR_FOCUS_STATE: MenuBarFocusState = {
   activeSession: null,
   activeBlock: null,
+  activeProject: null,
   anchorElapsedSeconds: 0,
   syncedAtMs: null,
   upNext: [],
@@ -155,18 +165,46 @@ export function applyFocusStatus(
       ...prev,
       activeSession: null,
       activeBlock: null,
+      activeProject: null,
       anchorElapsedSeconds: 0,
       syncedAtMs: null,
     };
   }
+  const activeBlock = focusStatus.activeBlock
+    ? {
+        id: focusStatus.activeBlock.id,
+        title: focusStatus.activeBlock.title,
+        projectId: focusStatus.activeBlock.projectId,
+      }
+    : null;
+  const activeProject =
+    activeBlock?.projectId && prev.activeProject?.id === activeBlock.projectId
+      ? prev.activeProject
+      : null;
   return {
     ...prev,
     activeSession: focusStatus.activeSession,
-    activeBlock: focusStatus.activeBlock
-      ? { id: focusStatus.activeBlock.id, title: focusStatus.activeBlock.title }
-      : null,
+    activeBlock,
+    activeProject,
     anchorElapsedSeconds: Math.max(0, Math.floor(focusStatus.elapsedSeconds ?? 0)),
     syncedAtMs: nowMs,
+  };
+}
+
+export function applyTodayProjects(
+  prev: MenuBarFocusState,
+  projects: ReadonlyArray<MenuBarProjectSummary>,
+): MenuBarFocusState {
+  const projectId = prev.activeBlock?.projectId;
+  if (!prev.activeSession || !projectId) {
+    return prev.activeProject ? { ...prev, activeProject: null } : prev;
+  }
+  const found = projects.find((p) => p.id === projectId) ?? null;
+  return {
+    ...prev,
+    activeProject: found
+      ? { id: found.id, name: found.name, color: found.color, icon: found.icon ?? null }
+      : null,
   };
 }
 
@@ -270,6 +308,9 @@ export function shouldRefreshTrayForEvent(payload: SseEventPayload | null): bool
   if (entity === 'block' || type.startsWith('block.')) {
     return true;
   }
+  if (entity === 'project' || type.startsWith('project.')) {
+    return true;
+  }
   return false;
 }
 
@@ -310,6 +351,7 @@ export function parseSseChunk(
 interface TodayApiSubset {
   focusStatus?: FocusStatus;
   upNext?: Array<Pick<Block, 'id' | 'title'>>;
+  projects?: MenuBarProjectSummary[];
 }
 
 interface FocusMutationApiResponse {
@@ -463,6 +505,9 @@ export class MenuBarFocusController {
         }
         if (Array.isArray(todayResult.value.upNext)) {
           nextState = applyTodayUpNext(nextState, todayResult.value.upNext);
+        }
+        if (Array.isArray(todayResult.value.projects)) {
+          nextState = applyTodayProjects(nextState, todayResult.value.projects);
         }
         anySucceeded = true;
       } else {

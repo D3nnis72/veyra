@@ -26,12 +26,12 @@ import {
 } from './client-config.js';
 import {
   buildTrayMenuDescriptors,
-  formatMenuBarTitle,
   formatTrayToolTip,
   MenuBarFocusController,
   type MenuBarServerTarget,
   type TrayMenuAction,
 } from './menubar-focus.js';
+import { renderProjectTrayIconPng } from './tray-icon.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -76,7 +76,8 @@ let commandWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isTrayMenuOpen = false;
 let pendingTrayMenuRefresh = false;
-let lastTrayTitle: string | null = null;
+let defaultTrayImage: Electron.NativeImage | null = null;
+let lastTrayIconKey: string | null = null;
 let lastTrayToolTip: string | null = null;
 let embeddedServer: VeyraServerInstance | null = null;
 let localServerUrl = `http://${DEFAULT_HOST}:${DEFAULT_PORT}`;
@@ -633,15 +634,31 @@ function updateTrayDisplay(opts: { rebuildMenu?: boolean } = {}): void {
   const nowMs = Date.now();
   const state = menuBarFocus.getState();
 
-  const nextTitle = formatMenuBarTitle(state, nowMs);
-  if (nextTitle !== lastTrayTitle) {
-    lastTrayTitle = nextTitle;
-    if (process.platform === 'darwin') {
-      if (nextTitle) {
-        tray.setTitle(nextTitle, { fontType: 'monospacedDigit' });
-      } else {
-        tray.setTitle('');
-      }
+  // Keep the macOS menu bar compact: never render timer text next to the icon.
+  // Instead, swap the 18×18 tray icon to the active project's colored badge while focusing.
+  if (process.platform === 'darwin') {
+    tray.setTitle('');
+  }
+
+  const nextIconKey = state.activeSession
+    ? state.activeProject
+      ? `project:${state.activeProject.color}:${state.activeProject.icon ?? ''}:${state.activeProject.name}`
+      : 'active:default'
+    : 'idle';
+
+  if (nextIconKey !== lastTrayIconKey) {
+    lastTrayIconKey = nextIconKey;
+    if (state.activeSession) {
+      const png = renderProjectTrayIconPng({
+        name: state.activeProject?.name ?? state.activeBlock?.title ?? 'Veyra',
+        color: state.activeProject?.color ?? '#3B4BD8',
+        icon: state.activeProject?.icon ?? null,
+      });
+      const activeImg = nativeImage.createFromBuffer(png, { scaleFactor: 2 });
+      activeImg.setTemplateImage(false);
+      tray.setImage(activeImg);
+    } else if (defaultTrayImage) {
+      tray.setImage(defaultTrayImage);
     }
   }
 
@@ -679,8 +696,9 @@ function createTray(): void {
     image.setTemplateImage(true);
   }
 
+  defaultTrayImage = image;
   tray = new Tray(image);
-  lastTrayTitle = null;
+  lastTrayIconKey = 'idle';
   lastTrayToolTip = null;
   isTrayMenuOpen = false;
   pendingTrayMenuRefresh = false;
