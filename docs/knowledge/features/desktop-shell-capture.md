@@ -10,6 +10,7 @@ dependsOn:
   - interfaces.http-sse-api
 groundedIn:
   - packages/desktop/src/main.ts
+  - packages/desktop/src/menubar-focus.ts
   - packages/desktop/src/preload.ts
   - packages/desktop/src/client-config.ts
   - packages/desktop/package.json
@@ -40,10 +41,16 @@ Both `mainWindow` and `captureWindow` enforce strict Electron renderer isolation
 - `closeCaptureWindow()`: dismisses the floating capture overlay after submit or `Esc`.
 - `openExternalUrl(url)`: opens external links via `shell.openExternal` strictly limited to the same protocol allowlist (`http:`, `https:`, `msteams:`, `zoommtg:`, `notion:`).
 
-## Menu Bar Tray And Global `⌘⇧P` Capture
+## Menu Bar Live Focus Timer, Tray Controls, And Global Shortcuts
 
-- **Background presence:** When `runInMenuBar` is enabled (default `true`), closing the main window hides it instead of quitting, keeping the macOS template tray icon (`packages/desktop/assets/tray-template.png`) and global shortcut active. Tray menu exposes `Show Veyra`, `Quick Capture (<shortcut>)`, and `Quit`.
-- **Global shortcuts (`⌘⇧P`, `⌘⇧O` / `⌃O` & `⌥K`):** Registers `CommandOrControl+Shift+P` (configurable) for `captureWindow` (`580×204` at `/capture`, opening on `Daily Note`), `CommandOrControl+Shift+O` (`⌘⇧O`, plus `Control+O` alias) for `captureWindow` opening directly on `Focus Now` (create block and jump straight into `Focus`), and `Alt+K` (`⌥K`) for `commandWindow` (`600×420` at `/command`) via Electron `globalShortcut`, sharing one frameless macOS floating window factory with native glass bezel and `visibleOnFullScreen: true`. Pressing `⌥K` or `⌘⇧O` from any macOS application dispatches chosen actions (`navigate`, `start-focus`, `open-block`, `open-create-block`, `open-daily-notes`, `open-quick-capture`) back to the main window via IPC (`focusAndDispatchAction` / `veyra:command-action`). Tray menu exposes `Show Veyra`, `Quick Capture (<shortcut>)`, `Quick Focus (⌘⇧O)`, `Command Palette (⌥K)`, and `Quit`.
+- **Background presence:** When `runInMenuBar` is enabled (default `true`), closing the main window hides it instead of quitting, keeping the macOS template tray icon (`packages/desktop/assets/tray-template.png`) and global shortcuts active.
+- **Live focus sync (`packages/desktop/src/menubar-focus.ts`):** `MenuBarFocusController` runs in the Electron main process against the resolved API target (local embedded server or remote Docker server with `Authorization: Bearer <token>`). On startup and on server mode switches, it fetches `GET /api/focus` + `GET /api/today` and subscribes to `/api/events/stream` SSE updates with exponential-backoff reconnection so CLI, web, or agent mutations reflect immediately in the tray.
+- **Live macOS menu bar title:** While a focus session is active, the tray renders a tabular-digit stopwatch next to the icon via `tray.setTitle(' 00:47 · <short block title>', { fontType: 'monospacedDigit' })` (`MM:SS` under an hour, `H:MM:SS` at/over an hour, block title cleanly truncated to 20 characters), ticking every second. Pausing, stopping, completing, or switching servers clears the title immediately to `""` and stops the 1-second ticker.
+- **Dynamic tray menu:**
+  - *When focusing:* shows the active block title and elapsed time (disabled header), `Open Focus` (focuses main window and navigates to `Focus`), `Pause Session`, `Stop Session`, and `Complete Block`, followed by the standard app actions.
+  - *When idle:* shows up to 3 `Up Next` blocks from `Today` to start focus in one click directly from the menu bar, alongside `Show Veyra`, `Quick Capture (<shortcut>)`, `Quick Focus (⌘⇧O)`, `Command Palette (⌥K)`, and `Quit`.
+  - Menu rebuilds pause while the native tray menu is open (`menu-will-show` / `menu-will-close`) so live ticks never disrupt clicks.
+- **Global shortcuts (`⌘⇧P`, `⌘⇧O` / `⌃O` & `⌥K`):** Registers `CommandOrControl+Shift+P` (configurable) for `captureWindow` (`580×204` at `/capture`, opening on `Daily Note`), `CommandOrControl+Shift+O` (`⌘⇧O`, plus `Control+O` alias) for `captureWindow` opening directly on `Focus Now` (create block and jump straight into `Focus`), and `Alt+K` (`⌥K`) for `commandWindow` (`600×420` at `/command`) via Electron `globalShortcut`, sharing one frameless macOS floating window factory with native glass bezel and `visibleOnFullScreen: true`. Pressing `⌥K` or `⌘⇧O` from any macOS application dispatches chosen actions (`navigate`, `start-focus`, `open-block`, `open-create-block`, `open-daily-notes`, `open-quick-capture`) back to the main window via IPC (`focusAndDispatchAction` / `veyra:command-action`).
 - **Single-instance lock:** Acquires Electron's single-instance lock by default (bypassable for isolated test runs via `VEYRA_DESKTOP_CONFIG_PATH` or `VEYRA_ALLOW_MULTI_INSTANCE=1`) and guards lifecycle registration and `bootstrap` behind `hasSingleInstanceLock` so secondary instances quit without booting a second window or server.
 
 ## Native SQLite ABI And macOS `.app` Packaging
