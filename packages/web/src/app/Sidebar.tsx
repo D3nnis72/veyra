@@ -1,3 +1,4 @@
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
   Calendar,
@@ -14,8 +15,11 @@ import {
   Settings as SettingsIcon,
   Sun,
   Target,
+  X,
 } from 'lucide-react';
-import { isElectronDesktop } from '../api/client';
+import { useEffect, useState } from 'react';
+import { apiClient, isElectronDesktop } from '../api/client';
+import { invalidateBlockRelated } from '../api/queries';
 import { ProjectBadge } from '../components/ProjectBadge';
 import { useProjectContextMenu } from '../components/entityMenus';
 import { formatElapsedTimer } from '../components/icons';
@@ -48,6 +52,91 @@ const SETTINGS_NAV: SettingsNavItem[] = [
   { id: 'server', label: 'Server & CLI', icon: Server },
   { id: 'appearance', label: 'Appearance', icon: Palette },
 ];
+
+/**
+ * Running-focus pill. Click opens the Focus view; the X cancels the session and discards its
+ * time, behind a one-click confirmation so a stray click does not delete tracked work.
+ */
+function LiveFocusPill({
+  title,
+  blockId,
+  elapsedSeconds,
+  onOpen,
+}: {
+  title: string;
+  blockId: string;
+  elapsedSeconds: number;
+  onOpen: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+
+  useEffect(() => {
+    if (!confirming) return;
+    const timer = window.setTimeout(() => setConfirming(false), 4000);
+    return () => window.clearTimeout(timer);
+  }, [confirming]);
+
+  const cancelMutation = useMutation({
+    mutationFn: () => apiClient.cancelFocus(),
+    onSuccess: () => {
+      setConfirming(false);
+      invalidateBlockRelated(queryClient, blockId);
+    },
+  });
+
+  if (confirming) {
+    return (
+      <div className="veyra-no-drag w-full px-3 py-2 rounded-[9px] bg-[#3A2410] border border-[#D9772B]/50 flex items-center justify-between gap-2">
+        <span className="text-[12px] text-[#F5B27A] truncate">Discard this session?</span>
+        <span className="flex items-center gap-1.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => cancelMutation.mutate()}
+            disabled={cancelMutation.isPending}
+            className="h-6 px-2 rounded-[6px] text-[11px] font-medium bg-[#D9772B] text-[#1C1C1C] hover:bg-[#E48A42] transition-colors"
+          >
+            Discard
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirming(false)}
+            className="h-6 px-2 rounded-[6px] text-[11px] font-medium text-[#F5B27A] hover:bg-white/[0.08] transition-colors"
+          >
+            Keep
+          </button>
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="veyra-no-drag w-full rounded-[9px] bg-[#1F2759] border border-[#5566F2]/45 hover:bg-[#27316E] transition-colors flex items-center">
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex-1 min-w-0 pl-3 pr-1 py-2.5 flex items-center justify-between gap-2 text-left"
+      >
+        <span className="flex items-center gap-2 min-w-0">
+          <span className="w-2 h-2 rounded-full bg-[#4DA3FF] animate-pulse shrink-0" />
+          <span className="text-[12.5px] font-medium text-[#D6DCFF] truncate">{title}</span>
+        </span>
+        <span className="text-[12px] font-semibold text-[#AEB8FF] tabular-nums shrink-0">
+          {formatElapsedTimer(elapsedSeconds)}
+        </span>
+      </button>
+      <button
+        type="button"
+        aria-label="Cancel focus session"
+        title="Cancel focus (discards this session)"
+        onClick={() => setConfirming(true)}
+        className="h-6 w-6 mr-1.5 rounded-[6px] inline-flex items-center justify-center text-[#9AA4E8] hover:text-[#EDEDED] hover:bg-white/[0.1] transition-colors shrink-0"
+      >
+        <X size={12} />
+      </button>
+    </div>
+  );
+}
 
 export function Sidebar() {
   const {
@@ -135,21 +224,12 @@ export function Sidebar() {
 
         {showLiveFocusPill && focusStatus?.activeBlock ? (
           <div className="px-3.5 pb-3.5">
-            <button
-              type="button"
-              onClick={() => navigate('focus')}
-              className="veyra-no-drag w-full px-3 py-2.5 rounded-[9px] bg-[#1F2759] border border-[#5566F2]/40 flex items-center justify-between gap-2 hover:bg-[#26306C] transition-colors text-left"
-            >
-              <span className="flex items-center gap-2 min-w-0">
-                <span className="w-2 h-2 rounded-full bg-[#4DA3FF] animate-pulse shrink-0" />
-                <span className="text-[12.5px] font-medium text-[#D6DCFF] truncate">
-                  {focusStatus.activeBlock.title}
-                </span>
-              </span>
-              <span className="text-[12px] font-semibold text-[#AEB8FF] tabular-nums shrink-0">
-                {formatElapsedTimer(liveElapsedSeconds)}
-              </span>
-            </button>
+            <LiveFocusPill
+              title={focusStatus.activeBlock.title}
+              blockId={focusStatus.activeBlock.id}
+              elapsedSeconds={liveElapsedSeconds}
+              onOpen={() => navigate('focus')}
+            />
           </div>
         ) : null}
       </aside>
@@ -282,21 +362,12 @@ export function Sidebar() {
       {/* Live Focus Pill (when timer runs outside Focus view) */}
       {showLiveFocusPill && focusStatus?.activeBlock ? (
         <div className="px-3.5 pb-2.5">
-          <button
-            type="button"
-            onClick={() => navigate('focus')}
-            className="veyra-no-drag w-full px-3 py-2.5 rounded-[9px] bg-[#1F2759] border border-[#5566F2]/45 hover:bg-[#27316E] transition-colors flex items-center justify-between gap-2 text-left"
-          >
-            <span className="flex items-center gap-2 min-w-0">
-              <span className="w-2 h-2 rounded-full bg-[#4DA3FF] animate-pulse shrink-0" />
-              <span className="text-[12.5px] font-medium text-[#D6DCFF] truncate">
-                {focusStatus.activeBlock.title}
-              </span>
-            </span>
-            <span className="text-[12px] font-semibold text-[#AEB8FF] tabular-nums shrink-0">
-              {formatElapsedTimer(liveElapsedSeconds)}
-            </span>
-          </button>
+          <LiveFocusPill
+            title={focusStatus.activeBlock.title}
+            blockId={focusStatus.activeBlock.id}
+            elapsedSeconds={liveElapsedSeconds}
+            onOpen={() => navigate('focus')}
+          />
         </div>
       ) : null}
 

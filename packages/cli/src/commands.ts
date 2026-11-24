@@ -1108,6 +1108,14 @@ export function createProgram(ctx: ProgramContext): Command {
     });
 
   program
+    .command('cancel')
+    .description('Cancel the active focus session and discard its time (use stop to keep it)')
+    .action(async () => {
+      const data = await ctx.getClient().cancelFocus();
+      emit<FocusCloseResponse>(data, (d) => `Cancelled focus on "${d.block.title}" (session discarded)`);
+    });
+
+  program
     .command('done [id]')
     .description('Complete the active focus block or a specified block ID')
     .option('--energy <signal>', 'Energy signal (up|neutral|down)')

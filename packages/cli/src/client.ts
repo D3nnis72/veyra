@@ -448,6 +448,10 @@ export class VeyraClient {
     });
   }
 
+  cancelFocus(): Promise<FocusCloseResponse> {
+    return this.request<FocusCloseResponse>('POST', '/api/focus/cancel');
+  }
+
   stopFocus(): Promise<FocusCloseResponse> {
     return this.request<FocusCloseResponse>('POST', '/api/focus/stop');
   }

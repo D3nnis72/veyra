@@ -314,6 +314,50 @@ export function stopFocus(
   };
 }
 
+/**
+ * Cancels the running focus session: the session is discarded (soft-deleted), so its time
+ * does not count anywhere. Use `stopFocus` to end a session but keep the tracked time.
+ */
+export function cancelFocus(
+  veyraDb: VeyraDb,
+  now?: Date | string,
+  options?: { actor?: ActivityActor },
+): CloseFocusResult {
+  const nowIso = resolveNow(now).toISOString();
+  const actor = resolveActor(options?.actor);
+
+  const open = getActiveOpenSession(veyraDb);
+  if (!open) {
+    throw new NotFoundError('No active focus session to cancel');
+  }
+
+  const block = getActiveBlockOrThrow(veyraDb, open.blockId);
+  const closedSession: FocusSession = {
+    ...open,
+    endedAt: nowIso,
+    updatedAt: nowIso,
+    deletedAt: nowIso,
+  };
+
+  veyraDb.sqlite.transaction(() => {
+    veyraDb.db
+      .update(focusSessions)
+      .set({ endedAt: nowIso, updatedAt: nowIso, deletedAt: nowIso })
+      .where(eq(focusSessions.id, open.id))
+      .run();
+
+    recordActivity(
+      veyraDb,
+      actor,
+      'focus.cancelled',
+      `Cancelled focus on "${block.title}" (session discarded)`,
+      nowIso,
+    );
+  })();
+
+  return { closedSession, block };
+}
+
 export function completeBlock(
   veyraDb: VeyraDb,
   blockId?: string,

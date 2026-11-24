@@ -11,6 +11,7 @@ import {
   Play,
   Square,
   Video,
+  X,
 } from 'lucide-react';
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient, isElectronDesktop } from '../api/client';
@@ -95,6 +96,24 @@ export function FocusView() {
     onSuccess: () => {
       invalidateBlockRelated(queryClient, activeBlock?.id);
       setPanelMode('none');
+      closeDrawer();
+      navigate('today');
+    },
+  });
+
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  useEffect(() => {
+    if (!confirmCancel) return;
+    const timer = window.setTimeout(() => setConfirmCancel(false), 4000);
+    return () => window.clearTimeout(timer);
+  }, [confirmCancel]);
+
+  const cancelMutation = useMutation({
+    mutationFn: () => apiClient.cancelFocus(),
+    onSuccess: () => {
+      invalidateBlockRelated(queryClient, activeBlock?.id);
+      setPanelMode('none');
+      setConfirmCancel(false);
       closeDrawer();
       navigate('today');
     },
@@ -413,6 +432,17 @@ export function FocusView() {
               className="text-[#9A9A9A]"
             >
               Stop
+            </Button>
+            <Button
+              variant="ghost"
+              size="lg"
+              title="Cancel this session and discard its time"
+              leftIcon={<X size={13} />}
+              onClick={() => (confirmCancel ? cancelMutation.mutate() : setConfirmCancel(true))}
+              disabled={cancelMutation.isPending}
+              className={confirmCancel ? 'text-[#F5B27A]' : 'text-[#9A9A9A]'}
+            >
+              {confirmCancel ? 'Discard session?' : 'Cancel'}
             </Button>
           </div>
         ) : null}

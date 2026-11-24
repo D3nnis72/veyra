@@ -192,8 +192,8 @@ export function Keycap({
 
   const sizeClass =
     size === 'sm'
-      ? `h-[22px] ${isWord ? 'px-1.5 text-[10.5px]' : isSymbol ? 'min-w-[22px] px-1 text-[12px]' : 'min-w-[22px] px-1 text-[11px]'}`
-      : `h-[26px] ${isWord ? 'px-2 text-[11.5px]' : isSymbol ? 'min-w-[26px] px-1.5 text-[13px]' : 'min-w-[26px] px-1.5 text-[12px]'}`;
+      ? `h-[24px] ${isWord ? 'px-2 text-[11px]' : isSymbol ? 'min-w-[24px] px-1.5 text-[12.5px]' : 'min-w-[24px] px-1.5 text-[11.5px]'}`
+      : `h-[30px] ${isWord ? 'px-3 text-[12px]' : isSymbol ? 'min-w-[30px] px-2 text-[14px]' : 'min-w-[30px] px-2 text-[12.5px]'}`;
 
   const toneClass = active
     ? 'bg-[#253070] border-[#6B7CFF] text-[#EEF1FF] shadow-[inset_0_1px_0_rgba(255,255,255,0.14),0_1px_0_#111428]'
@@ -202,7 +202,7 @@ export function Keycap({
   return (
     <kbd
       className={[
-        'inline-flex items-center justify-center rounded-[6px] border font-sans font-medium leading-none select-none',
+        'inline-flex items-center justify-center rounded-[7px] border font-sans font-medium leading-none select-none',
         sizeClass,
         toneClass,
       ].join(' ')}
@@ -222,7 +222,7 @@ export function KeyChord({
   size?: 'sm' | 'md';
 }) {
   return (
-    <span className="inline-flex items-center gap-1">
+    <span className="inline-flex items-center gap-1.5">
       {keys.map((key, idx) => (
         <Keycap key={`${key}-${idx}`} label={key} active={active} size={size} />
       ))}
@@ -241,11 +241,11 @@ export function ShortcutBinding({
   size = 'md',
 }: ShortcutBindingSpec & { size?: 'sm' | 'md' }) {
   return (
-    <div className="inline-flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+    <div className="inline-flex items-center gap-2 shrink-0 flex-wrap justify-end">
       {chords.map((chord, idx) => (
-        <span key={`${chord.join('-')}-${idx}`} className="inline-flex items-center gap-1.5">
+        <span key={`${chord.join('-')}-${idx}`} className="inline-flex items-center gap-2">
           {idx > 0 ? (
-            <span className="text-[11px] text-[#6E6E6E] px-0.5 select-none">
+            <span className="text-[11.5px] text-[#6E6E6E] px-1 select-none">
               {separator === 'to' ? '–' : 'or'}
             </span>
           ) : null}

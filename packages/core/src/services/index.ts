@@ -37,6 +37,7 @@ export {
   type SplitSessionResult,
   type StartFocusResult,
   completeBlock,
+  cancelFocus,
   deleteSession,
   getFocusStatus,
   listSessions,

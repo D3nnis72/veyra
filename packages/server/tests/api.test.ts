@@ -583,6 +583,24 @@ describe('@veyra/server REST API', () => {
     });
     expect(stopRes.status).toBe(200);
 
+    // Focus start + cancel (session is discarded)
+    await fetch(`${baseUrl}/api/focus/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Veyra-Now': '2026-11-23T12:30:00.000Z' },
+      body: JSON.stringify({ blockId: b2.id }),
+    });
+    const cancelRes = await fetch(`${baseUrl}/api/focus/cancel`, {
+      method: 'POST',
+      headers: { 'X-Veyra-Now': '2026-11-23T12:40:00.000Z' },
+    });
+    expect(cancelRes.status).toBe(200);
+    const cancelBody = (await cancelRes.json()) as {
+      closedSession: { deletedAt: string | null };
+      focusStatus: { activeSession: unknown };
+    };
+    expect(cancelBody.closedSession.deletedAt).not.toBeNull();
+    expect(cancelBody.focusStatus.activeSession).toBeNull();
+
     // Sync error resilience: misconfigured ICS returns 200 with diagnostic status, never 500
     await fetch(`${baseUrl}/api/settings`, {
       method: 'PATCH',

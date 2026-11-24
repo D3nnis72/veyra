@@ -557,9 +557,12 @@ export function startHookListener(options: HookListenerOptions = {}): Promise<Ho
       }
 
       const command = resolveCommandForEvent(payload.event, handlers);
+      // A cancelled focus session is discarded, so there is no work to summarize.
+      const wasCancelled = payload.event === 'focus.ended' && payload.data.reason === 'cancelled';
       const isAutoSummaryEvent =
         Boolean(autoSummary) &&
         Boolean(blockId) &&
+        !wasCancelled &&
         (payload.event === 'focus.ended' || payload.event === 'block.completed');
       const shouldRunAutoSummary =
         isAutoSummaryEvent && blockId

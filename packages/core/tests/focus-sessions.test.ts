@@ -16,6 +16,7 @@ import {
   resumeFocus,
   splitSession,
   startFocus,
+  cancelFocus,
   stopFocus,
   trimSession,
   updateSettings,
@@ -162,6 +163,23 @@ describe('Task 4: Focus Sessions (single focus, multi-day totals, pause/stop/com
     expect(stopped.closedSession.endedAt).toBe(t3.toISOString());
     expect(stopped.block.status).toBe('todo');
     expect(stopped.block.resumeNote).toBe('Next: finish edge cases section');
+  });
+
+  it('cancelFocus discards the running session so its time does not count', () => {
+    const t0 = new Date('2026-11-23T10:00:00.000Z');
+    const t1 = new Date('2026-11-23T10:30:00.000Z');
+    const block = createBlock(veyraDb, { title: 'Wrong block' }, { now: t0 });
+    startFocus(veyraDb, block.id, t0);
+
+    const cancelled = cancelFocus(veyraDb, t1);
+    expect(cancelled.closedSession.deletedAt).toBe(t1.toISOString());
+    expect(cancelled.block.status).toBe('todo');
+
+    const status = getFocusStatus(veyraDb, t1);
+    expect(status.activeSession).toBeNull();
+    expect(status.focusedTodayMinutes).toBe(0);
+    expect(listSessions(veyraDb, { blockId: block.id })).toHaveLength(0);
+    expect(() => cancelFocus(veyraDb, t1)).toThrow(/No active focus session/);
   });
 
   it('splits a 09:00-11:00 session with a 20m break at 10:00 into 09:00-10:00 and 10:20-11:00', () => {

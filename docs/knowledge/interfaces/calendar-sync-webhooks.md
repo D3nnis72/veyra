@@ -56,7 +56,7 @@ Auto-matching runs inside `upsertCalendarEvents` for new and still-unassigned ev
 
 `WebhookDispatcher` (`packages/server/src/webhooks.ts`) sends fire-and-forget JSON `POST` requests whenever `Settings.webhookUrl` is configured and the event is enabled in `Settings.webhookEvents`:
 
-- **Lifecycle events:** `focus.started`, `focus.ended`, `block.completed`, plus `webhook.test` triggered by `POST /api/settings/test-hook`.
+- **Lifecycle events:** `focus.started`, `focus.ended` (`data.reason`: `paused`, `stopped`, `switched`, `completed` or `cancelled`), `block.completed`, plus `webhook.test` triggered by `POST /api/settings/test-hook`.
 - **Delivery contract:** Sends `Content-Type: application/json`, `User-Agent: Veyra-Webhook/0.1.0`, `X-Veyra-Event: <event>`, and body `{ event, timestamp, data }`, with a 5-second timeout and up to 2 attempts (250ms retry delay). When `VEYRA_WEBHOOK_SECRET` (or `WebhookDispatcherOptions.secret`) is set, deliveries also include `X-Veyra-Signature-256: sha256=<hmac-hex>`.
 - **Diagnostics & live updates:** Every delivery outcome (`webhook.delivered` or `webhook.failed`) is recorded in `activity_log` with `actor = 'hook'` and broadcast over SSE (`entity: 'activity'`) so `Settings → Integrations` surfaces recent webhook deliveries live alongside `Test Hook`.
 

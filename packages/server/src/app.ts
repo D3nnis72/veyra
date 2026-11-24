@@ -46,6 +46,7 @@ import {
   formatLocalDate,
   getActiveWeeklyRule,
   getBlockDetail,
+  cancelFocus,
   getFocusStatus,
   getLocalDayBoundsIso,
   getProject,
@@ -1144,6 +1145,29 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
       'focus.ended',
       {
         reason: 'stopped',
+        session: result.closedSession,
+        block: result.block,
+      },
+      { now },
+    );
+    void macosFocus.onFocusEnded({ now });
+
+    return c.json({
+      ...result,
+      focusStatus: getFocusStatus(db, now),
+    });
+  });
+
+  app.post('/api/focus/cancel', (c) => {
+    const now = getNow(c);
+    const actor = getActor(c);
+    const result = cancelFocus(db, now, { actor });
+    emitSse('focus.cancelled', 'focus_session', result.closedSession.id, now);
+
+    void webhooks.emit(
+      'focus.ended',
+      {
+        reason: 'cancelled',
         session: result.closedSession,
         block: result.block,
       },

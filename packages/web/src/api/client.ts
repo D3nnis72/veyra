@@ -602,6 +602,10 @@ export const apiClient = {
     return request<FocusCloseResponse>('POST', '/api/focus/pause', note !== undefined ? { note } : {});
   },
 
+  cancelFocus(): Promise<FocusCloseResponse> {
+    return request<FocusCloseResponse>('POST', '/api/focus/cancel', {});
+  },
+
   stopFocus(): Promise<FocusCloseResponse> {
     return request<FocusCloseResponse>('POST', '/api/focus/stop', {});
   },
