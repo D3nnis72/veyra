@@ -24,6 +24,14 @@ import {
   type SaveClientConfigInput,
   updateDesktopPreferences,
 } from './client-config.js';
+import {
+  buildTrayMenuDescriptors,
+  formatMenuBarTitle,
+  formatTrayToolTip,
+  MenuBarFocusController,
+  type MenuBarServerTarget,
+  type TrayMenuAction,
+} from './menubar-focus.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -66,12 +74,29 @@ let captureWindow: BrowserWindow | null = null;
 let lastCaptureTab: CaptureTab = 'daily-note';
 let commandWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
+let isTrayMenuOpen = false;
+let pendingTrayMenuRefresh = false;
+let lastTrayTitle: string | null = null;
+let lastTrayToolTip: string | null = null;
 let embeddedServer: VeyraServerInstance | null = null;
 let localServerUrl = `http://${DEFAULT_HOST}:${DEFAULT_PORT}`;
 let clientConfig: PersistedClientConfig | null = null;
 let activeShortcut: string | null = null;
 let isQuitting = false;
 let isShuttingDown = false;
+
+const menuBarFocus = new MenuBarFocusController({
+  onStateChange: () => {
+    updateTrayDisplay({ rebuildMenu: true });
+  },
+  onTick: () => {
+    updateTrayDisplay({ rebuildMenu: true });
+  },
+  onError: (context, err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`Veyra menu bar sync (${context}): ${message}`);
+  },
+});
 
 function getDbPath(): string {
   return process.env.VEYRA_DB_PATH?.trim() || path.join(os.homedir(), '.veyra', 'veyra.db');
@@ -512,53 +537,132 @@ function registerCaptureShortcut(accelerator: string): boolean {
   }
 }
 
-function refreshTrayMenu(): void {
-  if (!tray || tray.isDestroyed()) return;
-  const shortcutLabel = formatShortcutForDisplay(
-    clientConfig?.cachedShortcut ?? DEFAULT_CAPTURE_SHORTCUT,
-  );
+function getApiServerTarget(): MenuBarServerTarget {
+  const config = clientConfig ?? loadClientConfig(getConfigPath());
+  const resolved = resolveDesktopClientConfig(config, localServerUrl);
+  return {
+    serverUrl: resolved.serverUrl,
+    token: resolved.token ?? null,
+  };
+}
 
-  const menu = Menu.buildFromTemplate([
-    {
-      label: 'Show Veyra',
-      click: () => {
-        showMainWindow();
-      },
-    },
-    {
-      label: `Quick Capture (${shortcutLabel})`,
-      click: () => {
-        toggleCaptureWindow('daily-note');
-      },
-    },
-    {
-      label: `Quick Focus (${formatShortcutForDisplay(QUICK_FOCUS_SHORTCUT)})`,
-      click: () => {
-        toggleCaptureWindow('focus');
-      },
-    },
-    {
-      label: `Command Palette (${formatShortcutForDisplay(COMMAND_SHORTCUT)})`,
-      click: () => {
-        toggleCommandWindow();
-      },
-    },
-    { type: 'separator' },
-    {
-      label: 'Quit',
-      click: () => {
-        isQuitting = true;
-        app.quit();
-      },
-    },
-  ]);
+function handleTrayMenuAction(action: TrayMenuAction): void {
+  switch (action.type) {
+    case 'open-focus':
+      showMainWindow();
+      sendCommandActionToMain({ type: 'navigate', route: 'focus' });
+      return;
+    case 'pause-session':
+      void menuBarFocus.pauseFocus();
+      return;
+    case 'stop-session':
+      void menuBarFocus.stopFocus();
+      return;
+    case 'complete-block':
+      void menuBarFocus.completeBlock(action.blockId);
+      return;
+    case 'start-focus':
+      void menuBarFocus.startFocus(action.blockId);
+      return;
+    case 'show-window':
+      showMainWindow();
+      return;
+    case 'quick-capture':
+      toggleCaptureWindow('daily-note');
+      return;
+    case 'quick-focus':
+      toggleCaptureWindow('focus');
+      return;
+    case 'command-palette':
+      toggleCommandWindow();
+      return;
+    case 'quit':
+      isQuitting = true;
+      app.quit();
+      return;
+  }
+}
+
+function refreshTrayMenu(nowMs = Date.now()): void {
+  if (!tray || tray.isDestroyed()) return;
+
+  const descriptors = buildTrayMenuDescriptors(menuBarFocus.getState(), {
+    nowMs,
+    captureShortcutLabel: formatShortcutForDisplay(
+      clientConfig?.cachedShortcut ?? DEFAULT_CAPTURE_SHORTCUT,
+    ),
+    quickFocusShortcutLabel: formatShortcutForDisplay(QUICK_FOCUS_SHORTCUT),
+    commandShortcutLabel: formatShortcutForDisplay(COMMAND_SHORTCUT),
+  });
+
+  const template: Electron.MenuItemConstructorOptions[] = descriptors.map((entry) => {
+    if (entry.type === 'separator') {
+      return { type: 'separator' };
+    }
+    return {
+      label: entry.label,
+      enabled: entry.enabled,
+      ...(entry.action
+        ? {
+            click: () => {
+              handleTrayMenuAction(entry.action!);
+            },
+          }
+        : {}),
+    };
+  });
+
+  const menu = Menu.buildFromTemplate(template);
+  menu.on('menu-will-show', () => {
+    isTrayMenuOpen = true;
+  });
+  menu.on('menu-will-close', () => {
+    isTrayMenuOpen = false;
+    if (pendingTrayMenuRefresh) {
+      pendingTrayMenuRefresh = false;
+      updateTrayDisplay({ rebuildMenu: true });
+    }
+  });
 
   tray.setContextMenu(menu);
 }
 
+function updateTrayDisplay(opts: { rebuildMenu?: boolean } = {}): void {
+  if (!tray || tray.isDestroyed()) return;
+
+  const nowMs = Date.now();
+  const state = menuBarFocus.getState();
+
+  const nextTitle = formatMenuBarTitle(state, nowMs);
+  if (nextTitle !== lastTrayTitle) {
+    lastTrayTitle = nextTitle;
+    if (process.platform === 'darwin') {
+      if (nextTitle) {
+        tray.setTitle(nextTitle, { fontType: 'monospacedDigit' });
+      } else {
+        tray.setTitle('');
+      }
+    }
+  }
+
+  const nextToolTip = formatTrayToolTip(state, nowMs);
+  if (nextToolTip !== lastTrayToolTip) {
+    lastTrayToolTip = nextToolTip;
+    tray.setToolTip(nextToolTip);
+  }
+
+  if (opts.rebuildMenu) {
+    if (isTrayMenuOpen) {
+      pendingTrayMenuRefresh = true;
+    } else {
+      refreshTrayMenu(nowMs);
+    }
+  }
+}
+
 function createTray(): void {
   if (tray && !tray.isDestroyed()) {
-    refreshTrayMenu();
+    updateTrayDisplay({ rebuildMenu: true });
     return;
   }
 
@@ -576,8 +680,11 @@ function createTray(): void {
   }
 
   tray = new Tray(image);
-  tray.setToolTip('Veyra');
-  refreshTrayMenu();
+  lastTrayTitle = null;
+  lastTrayToolTip = null;
+  isTrayMenuOpen = false;
+  pendingTrayMenuRefresh = false;
+  updateTrayDisplay({ rebuildMenu: true });
 }
 
 function reloadFloatingWindows(nextUrl: string, previousUrl: string): void {
@@ -609,12 +716,14 @@ function registerIpcHandlers(): void {
         void mainWindow.loadURL(nextUrl).catch(() => {});
       }
       reloadFloatingWindows(nextUrl, previousUrl);
+      menuBarFocus.configure(getApiServerTarget());
     } else if (updated.remoteUrl) {
       const nextUrl = getRendererBaseUrl();
       if (!getWebDevUrl() && nextUrl !== previousUrl && mainWindow && !mainWindow.isDestroyed()) {
         await mainWindow.loadURL(nextUrl).catch(() => {});
       }
       reloadFloatingWindows(nextUrl, previousUrl);
+      menuBarFocus.configure(getApiServerTarget());
       await stopLocalServer();
     }
   });
@@ -626,7 +735,7 @@ function registerIpcHandlers(): void {
       const updated = updateDesktopPreferences(configPath, prefs);
       clientConfig = updated;
       registerCaptureShortcut(updated.cachedShortcut);
-      refreshTrayMenu();
+      updateTrayDisplay({ rebuildMenu: true });
     },
   );
 
@@ -666,6 +775,8 @@ async function shutdown(): Promise<void> {
   isShuttingDown = true;
   isQuitting = true;
 
+  menuBarFocus.stop();
+
   try {
     globalShortcut.unregisterAll();
   } catch {
@@ -701,6 +812,7 @@ async function bootstrap(): Promise<void> {
 
   registerIpcHandlers();
   createTray();
+  menuBarFocus.configure(getApiServerTarget());
   registerCaptureShortcut(clientConfig.cachedShortcut);
   if (!registerQuickFocusShortcut()) {
     console.warn(`Veyra: could not register global shortcut ${QUICK_FOCUS_SHORTCUT}`);
