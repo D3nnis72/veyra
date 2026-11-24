@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import {
   ValidationError,
   getSettings,
@@ -14,10 +15,28 @@ export interface WebhookDispatchResult {
   error?: string;
 }
 
+export interface WebhookDeliveryEvent {
+  action: 'webhook.delivered' | 'webhook.failed';
+  eventName: string;
+  timestamp: string;
+  delivered: boolean;
+  statusCode?: number;
+  error?: string;
+}
+
 export interface WebhookDispatcherOptions {
   timeoutMs?: number;
   retryDelayMs?: number;
   fetcher?: typeof fetch;
+  /** Optional HMAC-SHA256 signing secret (falls back to VEYRA_WEBHOOK_SECRET env var). */
+  secret?: string;
+  /** Invoked whenever a delivery finishes (delivered or failed) after logging activity. */
+  onDelivery?: (event: WebhookDeliveryEvent) => void;
+}
+
+export function computeWebhookSignature(secret: string, body: string): string {
+  const digest = crypto.createHmac('sha256', secret).update(body, 'utf8').digest('hex');
+  return `sha256=${digest}`;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -32,12 +51,18 @@ export class WebhookDispatcher {
   private readonly timeoutMs: number;
   private readonly retryDelayMs: number;
   private readonly fetcher: typeof fetch;
+  private readonly secret: string | undefined;
+  private readonly onDelivery?: (event: WebhookDeliveryEvent) => void;
 
   constructor(veyraDb: VeyraDb, options?: WebhookDispatcherOptions) {
     this.veyraDb = veyraDb;
     this.timeoutMs = options?.timeoutMs ?? 5_000;
     this.retryDelayMs = options?.retryDelayMs ?? 250;
     this.fetcher = options?.fetcher ?? fetch;
+    const rawSecret =
+      options?.secret !== undefined ? options.secret : process.env.VEYRA_WEBHOOK_SECRET;
+    this.secret = rawSecret?.trim() || undefined;
+    this.onDelivery = options?.onDelivery;
   }
 
   async emit(
@@ -102,16 +127,21 @@ export class WebhookDispatcher {
     let lastStatusCode: number | undefined;
     let lastError: string | undefined;
 
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'User-Agent': 'Veyra-Webhook/0.1.0',
+      'X-Veyra-Event': eventName,
+    };
+    if (this.secret) {
+      headers['X-Veyra-Signature-256'] = computeWebhookSignature(this.secret, body);
+    }
+
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       attempts = attempt;
       try {
         const response = await this.fetcher(url, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'User-Agent': 'Veyra-Webhook/0.1.0',
-            'X-Veyra-Event': eventName,
-          },
+          headers,
           body,
           signal: AbortSignal.timeout(this.timeoutMs),
         });
@@ -124,6 +154,13 @@ export class WebhookDispatcher {
             `Delivered webhook '${eventName}' to ${url} (HTTP ${response.status}, attempts: ${attempts})`,
             nowDate,
           );
+          this.onDelivery?.({
+            action: 'webhook.delivered',
+            eventName,
+            timestamp: nowIso,
+            delivered: true,
+            statusCode: response.status,
+          });
           return {
             delivered: true,
             skipped: false,
@@ -153,6 +190,14 @@ export class WebhookDispatcher {
       `Failed to deliver webhook '${eventName}' to ${url} after ${attempts} attempt(s): ${lastError ?? 'unknown error'}`,
       nowDate,
     );
+    this.onDelivery?.({
+      action: 'webhook.failed',
+      eventName,
+      timestamp: nowIso,
+      delivered: false,
+      statusCode: lastStatusCode,
+      error: lastError,
+    });
 
     return {
       delivered: false,

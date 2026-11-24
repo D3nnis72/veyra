@@ -42,6 +42,27 @@ export {
   type SaveConfigResult,
   type StoredCliConfig,
 } from './config.js';
+export {
+  DEFAULT_HOOK_HOST,
+  DEFAULT_HOOK_PATH,
+  DEFAULT_HOOK_PORT,
+  DEFAULT_HOOK_TIMEOUT_MS,
+  computeWebhookSignature,
+  executeHookCommand,
+  extractBlockId,
+  extractHookEnv,
+  formatHookLogHuman,
+  hookWebhookPayloadSchema,
+  resolveCommandForEvent,
+  startHookListener,
+  verifyWebhookSignature,
+  type HookCommandMap,
+  type HookExecutionResult,
+  type HookListenerHandle,
+  type HookListenerOptions,
+  type HookLogRecord,
+  type HookWebhookPayload,
+} from './hook-listener.js';
 
 function isDirectExecution(): boolean {
   const entry = process.argv[1];

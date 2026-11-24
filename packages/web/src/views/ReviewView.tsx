@@ -454,6 +454,13 @@ export function ReviewView() {
                     {item.outcomeNote ? (
                       <p className="text-[12.5px] text-[#C4C4C4]">{item.outcomeNote}</p>
                     ) : null}
+
+                    {item.autoSummary ? (
+                      <div className="pt-2 border-t border-[#262626] flex items-start gap-1.5 text-[12px] leading-relaxed text-[#9A9A9A]">
+                        <Sparkles size={11} className="text-[#AEB8FF] mt-0.5 shrink-0" />
+                        <p className="min-w-0 break-words">{item.autoSummary}</p>
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}
@@ -663,27 +670,50 @@ function OpsRadarList({
       {items.map((item) => {
         const proj = projectsById.get(item.projectId);
         const latestBlockId = item.blockIds[item.blockIds.length - 1];
+        const summaries = item.autoSummaries ?? [];
+        const visibleSummaries = summaries.slice(0, 2);
+        const hiddenCount = summaries.length - visibleSummaries.length;
         return (
-          <li key={item.key} className="py-1.5 flex items-center justify-between gap-2">
-            <button
-              type="button"
-              onClick={() => latestBlockId && onOpenBlock(latestBlockId)}
-              className="flex items-center gap-2 min-w-0 text-left hover:text-[#AEB8FF] transition-colors"
-            >
-              {proj ? (
-                <ProjectBadge
-                  name={proj.name}
-                  color={proj.color}
-                  icon={proj.icon}
-                  size="xs"
-                />
-              ) : null}
-              <span className="text-[12.5px] text-[#EDEDED] truncate">{item.title}</span>
-            </button>
-            <span className="text-[11.5px] text-[#9A9A9A] tabular-nums shrink-0">
-              {item.occurrenceCount > 1 ? `×${item.occurrenceCount} · ` : ''}
-              {formatDuration(item.totalMinutes)}
-            </span>
+          <li key={item.key} className="py-2 space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => latestBlockId && onOpenBlock(latestBlockId)}
+                className="flex items-center gap-2 min-w-0 text-left hover:text-[#AEB8FF] transition-colors"
+              >
+                {proj ? (
+                  <ProjectBadge
+                    name={proj.name}
+                    color={proj.color}
+                    icon={proj.icon}
+                    size="xs"
+                  />
+                ) : null}
+                <span className="text-[12.5px] text-[#EDEDED] truncate">{item.title}</span>
+              </button>
+              <span className="text-[11.5px] text-[#9A9A9A] tabular-nums shrink-0">
+                {item.occurrenceCount > 1 ? `×${item.occurrenceCount} · ` : ''}
+                {formatDuration(item.totalMinutes)}
+              </span>
+            </div>
+            {visibleSummaries.length > 0 ? (
+              <div className="pl-7 space-y-1">
+                {visibleSummaries.map((summary, idx) => (
+                  <div
+                    key={`${item.key}-sum-${idx}`}
+                    className="flex items-start gap-1.5 text-[11.5px] leading-snug text-[#9A9A9A]"
+                  >
+                    <Sparkles size={10} className="text-[#F2D06B]/75 mt-0.5 shrink-0" />
+                    <span className="min-w-0 break-words">{summary}</span>
+                  </div>
+                ))}
+                {hiddenCount > 0 ? (
+                  <div className="text-[11px] text-[#6E6E6E]">
+                    +{hiddenCount} more pattern {hiddenCount === 1 ? 'summary' : 'summaries'}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </li>
         );
       })}

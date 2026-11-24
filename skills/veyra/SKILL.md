@@ -70,6 +70,7 @@ veyra resume <blockId> --json
 veyra stop --json
 veyra done --energy up --outcome "Shipped retry policy" --json   # omits <id> to complete active block
 veyra summary set <blockId> "Completed audit across 3 queues" --json
+veyra summary clear <blockId> --json
 ```
 
 Adjust sessions retroactively when a timer ran long or had an interruption:
@@ -79,7 +80,24 @@ veyra session trim <sessionId> --start 2026-11-23T09:05:00Z --end 2026-11-23T10:
 veyra session split <sessionId> --at 2026-11-23T09:30:00Z --gap 15 --json
 ```
 
-## 4. Daily Notes & Weekly Review
+## 4. Event Hooks & Post-Block Auto-Summary Loop
+
+Run Veyra's built-in webhook receiver to react to `focus.started`, `focus.ended`, and `block.completed` events (configure `http://127.0.0.1:4174/webhook` in `Settings → Integrations`):
+
+```bash
+veyra hook listen --port 4174 \
+  --on-focus-start './scripts/enter-focus.sh' \
+  --on-focus-end './scripts/exit-focus.sh' \
+  --on-complete './scripts/summarize-block.sh' \
+  --json
+```
+
+- Each handler receives the full JSON payload (`{ event, timestamp, data }`) on stdin plus structured env vars (`VEYRA_EVENT`, `VEYRA_BLOCK_ID`, `VEYRA_BLOCK_TITLE`, `VEYRA_BLOCK_IS_OPS`, `VEYRA_PROJECT_ID`, `VEYRA_GOAL_ID`, `VEYRA_SESSION_START`, `VEYRA_SESSION_END`, `VEYRA_TOTAL_BLOCK_MINUTES`, `VEYRA_PAYLOAD`).
+- Pass `--secret <secret>` (or set `VEYRA_WEBHOOK_SECRET` on both server and listener) to require HMAC-SHA256 verification via `X-Veyra-Signature-256`.
+- A post-block summarizer script inspects the completed block's `[VEYRA_SESSION_START, VEYRA_SESSION_END]` window, captures what was accomplished (and recurring failure/request patterns on `Ops` blocks), and writes back via `veyra summary set "$VEYRA_BLOCK_ID" "..." --json`.
+- `--json` streams newline-delimited JSON (NDJSON) events (`listening`, `event`, `handler_result`, `rejected`, `stopped`).
+
+## 5. Daily Notes & Weekly Review
 
 Capture observations throughout the week:
 ```bash

@@ -47,6 +47,13 @@ import {
   VeyraClient,
 } from './client.js';
 import { loadConfig, saveConfig } from './config.js';
+import {
+  DEFAULT_HOOK_HOST,
+  DEFAULT_HOOK_PORT,
+  DEFAULT_HOOK_TIMEOUT_MS,
+  formatHookLogHuman,
+  startHookListener,
+} from './hook-listener.js';
 
 export interface CliIo {
   stdout?: (chunk: string) => void;
@@ -54,6 +61,7 @@ export interface CliIo {
   env?: NodeJS.ProcessEnv;
   configPath?: string;
   fetchImpl?: typeof fetch;
+  signal?: AbortSignal;
 }
 
 export class CliUsageError extends Error {
@@ -317,6 +325,7 @@ export interface ProgramContext {
   getClient: () => VeyraClient;
   env: NodeJS.ProcessEnv;
   configPath?: string;
+  signal?: AbortSignal;
 }
 
 export function createProgram(ctx: ProgramContext): Command {
@@ -1126,6 +1135,112 @@ export function createProgram(ctx: ProgramContext): Command {
       emit<Block>(block, (b) => `Set summary on ${b.id}: ${b.autoSummary ?? ''}`);
     });
 
+  summaryCmd
+    .command('clear <id>')
+    .description('Clear autoSummary on a block')
+    .action(async (id: string) => {
+      const { block } = await ctx.getClient().updateBlock(id, { autoSummary: null });
+      emit<Block>(block, (b) => `Cleared summary on ${b.id}`);
+    });
+
+  // -------------------------------------------------------------------------
+  // Event Hook Listener Command
+  // -------------------------------------------------------------------------
+
+  const hookCmd = program.command('hook').description('Listen for Veyra lifecycle webhooks');
+
+  hookCmd
+    .command('listen')
+    .description(
+      'Run a local HTTP webhook listener that forwards Veyra events to shell commands or agent scripts',
+    )
+    .option('--port <port>', 'Port to listen on', String(DEFAULT_HOOK_PORT))
+    .option('--host <host>', 'Host interface to bind', DEFAULT_HOOK_HOST)
+    .option('--path <path>', 'Webhook URL path (defaults to accepting / and /webhook)')
+    .option('--on-focus-start <cmd>', 'Shell command to execute on focus.started')
+    .option('--on-focus-end <cmd>', 'Shell command to execute on focus.ended')
+    .option('--on-complete <cmd>', 'Shell command to execute on block.completed')
+    .option('--on-any <cmd>', 'Fallback shell command for any unhandled lifecycle event')
+    .option(
+      '--secret <secret>',
+      'HMAC-SHA256 signing secret (defaults to VEYRA_WEBHOOK_SECRET env var)',
+    )
+    .option(
+      '--timeout <ms>',
+      'Handler command timeout in milliseconds',
+      String(DEFAULT_HOOK_TIMEOUT_MS),
+    )
+    .action(
+      async (opts: {
+        port: string;
+        host: string;
+        path?: string;
+        onFocusStart?: string;
+        onFocusEnd?: string;
+        onComplete?: string;
+        onAny?: string;
+        secret?: string;
+        timeout: string;
+      }) => {
+        const port = Number.parseInt(opts.port, 10);
+        if (Number.isNaN(port) || port < 0 || port > 65535) {
+          throw new CliUsageError(`Invalid --port '${opts.port}'. Expected an integer 0-65535.`);
+        }
+        const timeoutMs = Number.parseInt(opts.timeout, 10);
+        if (Number.isNaN(timeoutMs) || timeoutMs < 100) {
+          throw new CliUsageError(
+            `Invalid --timeout '${opts.timeout}'. Expected an integer >= 100 (ms).`,
+          );
+        }
+
+        const secret =
+          opts.secret !== undefined ? opts.secret : ctx.env.VEYRA_WEBHOOK_SECRET;
+
+        const handle = await startHookListener({
+          port,
+          host: opts.host,
+          webhookPath: opts.path,
+          handlers: {
+            onFocusStart: opts.onFocusStart,
+            onFocusEnd: opts.onFocusEnd,
+            onComplete: opts.onComplete,
+            onAny: opts.onAny,
+          },
+          secret,
+          timeoutMs,
+          env: ctx.env,
+          onLog: (record) => {
+            if (ctx.jsonMode) {
+              ctx.writeOut(`${JSON.stringify(record)}\n`);
+            } else {
+              ctx.writeOut(`${formatHookLogHuman(record)}\n`);
+            }
+          },
+        });
+
+        await new Promise<void>((resolve) => {
+          let closing = false;
+          const shutdown = () => {
+            if (closing) return;
+            closing = true;
+            process.off('SIGINT', shutdown);
+            process.off('SIGTERM', shutdown);
+            ctx.signal?.removeEventListener('abort', shutdown);
+            void handle.stop().finally(() => resolve());
+          };
+
+          if (ctx.signal?.aborted) {
+            shutdown();
+            return;
+          }
+
+          process.once('SIGINT', shutdown);
+          process.once('SIGTERM', shutdown);
+          ctx.signal?.addEventListener('abort', shutdown, { once: true });
+        });
+      },
+    );
+
   const sessionCmd = program.command('session').description('Log, trim, split, or delete focus sessions');
 
   sessionCmd
@@ -1528,6 +1643,7 @@ export async function runCli(argv: string[], io?: CliIo): Promise<number> {
     getClient,
     env,
     configPath: io?.configPath,
+    signal: io?.signal,
   });
 
   try {

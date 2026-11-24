@@ -14,6 +14,7 @@ groundedIn:
   - packages/server/src/sync/outlook-cli-adapter.ts
   - packages/server/src/sync/ics-adapter.ts
   - packages/server/src/webhooks.ts
+  - packages/cli/src/hook-listener.ts
   - packages/core/src/services/calendar-events.ts
 updateWhen:
   - calendar sync adapters, sync window, or filtering rules change
@@ -49,9 +50,11 @@ Auto-matching runs inside `upsertCalendarEvents` for new and still-unassigned ev
 - **`IcsFeedAdapter` (`ics-adapter.ts`):** Fetches any `.ics` feed URL (Outlook/Microsoft 365, Google, Apple Calendar) using `node-ical`, expands recurring `RRULE` occurrences across the sync window, inspects multi-attendee `PARTSTAT=DECLINED` parameters accurately, and extracts Teams/Zoom meeting URLs. Works identically locally and inside Docker.
 - **`Manual / CLI Push` (`calendarSyncMode = 'manual'`):** Disables polling while allowing direct event creation via `POST /api/events/upsert` or `veyra events upsert`.
 
-## Outgoing Event Webhooks
+## Outgoing Event Webhooks And Local Listener
 
 `WebhookDispatcher` (`packages/server/src/webhooks.ts`) sends fire-and-forget JSON `POST` requests whenever `Settings.webhookUrl` is configured and the event is enabled in `Settings.webhookEvents`:
 
 - **Lifecycle events:** `focus.started`, `focus.ended`, `block.completed`, plus `webhook.test` triggered by `POST /api/settings/test-hook`.
-- **Delivery contract:** Sends `Content-Type: application/json`, `User-Agent: Veyra-Webhook/0.1.0`, `X-Veyra-Event: <event>`, and body `{ event, timestamp, data }`, with a 5-second timeout and up to 2 attempts (250ms retry delay). Failures are logged to `activity_log` and never block user mutations.
+- **Delivery contract:** Sends `Content-Type: application/json`, `User-Agent: Veyra-Webhook/0.1.0`, `X-Veyra-Event: <event>`, and body `{ event, timestamp, data }`, with a 5-second timeout and up to 2 attempts (250ms retry delay). When `VEYRA_WEBHOOK_SECRET` (or `WebhookDispatcherOptions.secret`) is set, deliveries also include `X-Veyra-Signature-256: sha256=<hmac-hex>`.
+- **Diagnostics & live updates:** Every delivery outcome (`webhook.delivered` or `webhook.failed`) is recorded in `activity_log` with `actor = 'hook'` and broadcast over SSE (`entity: 'activity'`) so `Settings → Integrations` surfaces recent webhook deliveries live alongside `Test Hook`.
+- **Built-in CLI receiver (`veyra hook listen`):** `packages/cli/src/hook-listener.ts` provides a lightweight local HTTP receiver (default `http://127.0.0.1:4174/webhook`, also accepting `POST /` and `GET /health`). It optionally verifies `X-Veyra-Signature-256` (`--secret` / `VEYRA_WEBHOOK_SECRET`), responds `202 Accepted` immediately so longer-running agent scripts never trip the 5-second webhook timeout, pipes the raw JSON payload to stdin, and exports `VEYRA_EVENT`, `VEYRA_BLOCK_ID`, `VEYRA_BLOCK_TITLE`, `VEYRA_BLOCK_IS_OPS`, `VEYRA_PROJECT_ID`, `VEYRA_GOAL_ID`, `VEYRA_SESSION_ID`, `VEYRA_SESSION_START`, `VEYRA_SESSION_END`, `VEYRA_FOCUS_END_REASON`, `VEYRA_TOTAL_BLOCK_MINUTES`, and `VEYRA_PAYLOAD` to `--on-focus-start`, `--on-focus-end`, `--on-complete`, or `--on-any` handlers (which can write post-block summaries back via `veyra summary set <blockId> "..."`).

@@ -1,6 +1,7 @@
 import type { QueryClient } from '@tanstack/react-query';
 import { useQuery } from '@tanstack/react-query';
 import type {
+  ListActivityFilter,
   ListBlocksFilter,
   ListDailyNotesFilter,
   ListGoalsFilter,
@@ -132,6 +133,14 @@ export function useEventsQuery(start?: string, end?: string, enabled = true) {
   return useQuery({
     queryKey: queryKeys.events(start, end),
     queryFn: () => apiClient.listEvents(start, end),
+    enabled,
+  });
+}
+
+export function useActivityQuery(filter?: ListActivityFilter, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.activity(filter),
+    queryFn: () => apiClient.listActivity(filter),
     enabled,
   });
 }

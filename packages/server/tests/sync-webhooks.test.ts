@@ -15,7 +15,11 @@ import {
 import { IcsFeedAdapter } from '../src/sync/ics-adapter.js';
 import { OutlookCliAdapter } from '../src/sync/outlook-cli-adapter.js';
 import { CalendarSyncRunner } from '../src/sync/sync-runner.js';
-import { WebhookDispatcher } from '../src/webhooks.js';
+import {
+  WebhookDispatcher,
+  computeWebhookSignature,
+  type WebhookDeliveryEvent,
+} from '../src/webhooks.js';
 
 const tempDirs: string[] = [];
 const openDbs: VeyraDb[] = [];
@@ -497,5 +501,76 @@ describe('WebhookDispatcher', () => {
     const testResult = await dispatcher.sendTestHook({ now: '2026-11-23T10:05:00.000Z' });
     expect(testResult.delivered).toBe(true);
     expect(receivedBodies[receivedBodies.length - 1].event).toBe('webhook.test');
+  });
+
+  it('signs payloads with X-Veyra-Signature-256 when secret is configured and invokes onDelivery for success and failure', async () => {
+    const db = createTestDb();
+    let mode: 'ok' | 'fail' = 'ok';
+    const receivedRawBodies: string[] = [];
+    const receivedSignatures: Array<string | undefined> = [];
+
+    const { url } = await startLocalServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      req.on('end', () => {
+        receivedRawBodies.push(Buffer.concat(chunks).toString('utf8'));
+        const sig = req.headers['x-veyra-signature-256'];
+        receivedSignatures.push(Array.isArray(sig) ? sig[0] : sig);
+        if (mode === 'fail') {
+          res.writeHead(400, { 'Content-Type': 'text/plain' });
+          res.end('Bad request');
+          return;
+        }
+        res.writeHead(202, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      });
+    });
+
+    updateSettings(db, {
+      webhookUrl: `${url}/webhook`,
+      webhookEvents: ['block.completed'],
+    });
+
+    const deliveries: WebhookDeliveryEvent[] = [];
+    const secret = 'test-signing-secret';
+    const dispatcher = new WebhookDispatcher(db, {
+      timeoutMs: 5000,
+      retryDelayMs: 10,
+      secret,
+      onDelivery: (ev) => deliveries.push(ev),
+    });
+
+    const okResult = await dispatcher.emit(
+      'block.completed',
+      { block: { id: 'blk-42', title: 'Ship hooks loop' } },
+      { now: '2026-11-23T11:00:00.000Z' },
+    );
+    expect(okResult.delivered).toBe(true);
+    expect(okResult.statusCode).toBe(202);
+    expect(receivedSignatures[0]).toBe(computeWebhookSignature(secret, receivedRawBodies[0]));
+    expect(deliveries[0]).toMatchObject({
+      action: 'webhook.delivered',
+      eventName: 'block.completed',
+      delivered: true,
+      statusCode: 202,
+    });
+
+    mode = 'fail';
+    const failResult = await dispatcher.emit(
+      'block.completed',
+      { block: { id: 'blk-43', title: 'Failing hook' } },
+      { now: '2026-11-23T11:05:00.000Z' },
+    );
+    expect(failResult.delivered).toBe(false);
+    expect(failResult.statusCode).toBe(400);
+    expect(deliveries[1]).toMatchObject({
+      action: 'webhook.failed',
+      eventName: 'block.completed',
+      delivered: false,
+      statusCode: 400,
+    });
+
+    const hookLogs = listActivity(db, { actor: 'hook' });
+    expect(hookLogs.map((l) => l.action)).toEqual(['webhook.failed', 'webhook.delivered']);
   });
 });
