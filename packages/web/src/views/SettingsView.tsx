@@ -13,6 +13,7 @@ import {
   FileText,
   Monitor,
   Moon,
+  PlugZap,
   Plus,
   RefreshCw,
   Send,
@@ -299,6 +300,9 @@ function IntegrationsSettingsSection() {
 
   const settings = settingsQuery.data?.settings;
   const syncStatus = settingsQuery.data?.calendarSyncStatus;
+  const notionConfigured =
+    settingsQuery.data?.notionConfigured ?? settings?.notionConfigured ?? false;
+  const notionTokenSource = settings?.notionTokenSource ?? null;
   const projectsWithNotion = (projectsQuery.data?.projects ?? []).filter((p) => Boolean(p.notionUrl));
 
   const [syncMode, setSyncMode] = useState<CalendarSyncMode>('outlook_cli');
@@ -313,9 +317,11 @@ function IntegrationsSettingsSection() {
     'focus.ended',
     'block.completed',
   ]);
+  const [notionTokenInput, setNotionTokenInput] = useState('');
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
   const [hookNotice, setHookNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const [notionNotice, setNotionNotice] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => {
     if (!settings) return;
@@ -332,8 +338,33 @@ function IntegrationsSettingsSection() {
     mutationFn: (input: UpdateSettingsInput) => apiClient.updateSettings(input),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['settings'] });
+      void queryClient.invalidateQueries({ queryKey: ['notion-search'] });
       setSaveNotice('Settings saved');
       window.setTimeout(() => setSaveNotice(null), 1800);
+    },
+  });
+
+  const testNotionMutation = useMutation({
+    mutationFn: (overrideToken?: string) => apiClient.testNotionConnection(overrideToken),
+    onSuccess: (res) => {
+      if (res.result.ok) {
+        const target = res.result.workspaceName ?? res.result.botName ?? 'Notion';
+        setNotionNotice({
+          ok: true,
+          text: `Connected to ${target}`,
+        });
+      } else {
+        setNotionNotice({
+          ok: false,
+          text: res.result.error ?? `Connection failed (HTTP ${res.result.statusCode ?? 'none'})`,
+        });
+      }
+    },
+    onError: (err) => {
+      setNotionNotice({
+        ok: false,
+        text: err instanceof Error ? err.message : 'Notion connection test failed',
+      });
     },
   });
 
@@ -402,6 +433,35 @@ function IntegrationsSettingsSection() {
       webhookUrl: webhookUrl.trim() || null,
       webhookEvents,
     });
+  };
+
+  const handleSaveNotionToken = (e: FormEvent) => {
+    e.preventDefault();
+    const trimmed = notionTokenInput.trim();
+    if (!trimmed) return;
+    setNotionNotice(null);
+    updateSettingsMutation.mutate(
+      { notionToken: trimmed },
+      {
+        onSuccess: () => {
+          setNotionTokenInput('');
+          setNotionNotice({ ok: true, text: 'Notion token saved securely on server' });
+        },
+      },
+    );
+  };
+
+  const handleClearNotionToken = () => {
+    setNotionNotice(null);
+    updateSettingsMutation.mutate(
+      { notionToken: null },
+      {
+        onSuccess: () => {
+          setNotionTokenInput('');
+          setNotionNotice({ ok: true, text: 'Stored Notion token removed' });
+        },
+      },
+    );
   };
 
   const statusTone =
@@ -647,24 +707,105 @@ function IntegrationsSettingsSection() {
         </div>
       </form>
 
-      {/* Notion Link Status Card */}
-      <div className="veyra-card flex items-center justify-between gap-4">
-        <div className="flex items-start gap-3 min-w-0">
-          <span className="w-8 h-8 rounded-[8px] bg-[#262626] border border-[#3C3C3C] inline-flex items-center justify-center text-[#C4C4C4] shrink-0">
-            <FileText size={15} />
-          </span>
-          <div className="space-y-0.5 min-w-0">
-            <div className="text-[14px] font-semibold text-[#EDEDED]">Notion Links</div>
-            <div className="text-[12.5px] text-[#9A9A9A]">
-              Paste any <code className="text-[#C4C4C4]">notion.so</code> URL into a project hub,
-              block, or meeting to render one-click Notion chips — no OAuth required.
+      {/* Notion Links Integration Card */}
+      <form onSubmit={handleSaveNotionToken} className="veyra-card space-y-4">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="flex items-start gap-3 min-w-0 flex-1">
+            <span className="w-8 h-8 rounded-[8px] bg-[#262626] border border-[#3C3C3C] inline-flex items-center justify-center text-[#C4C4C4] shrink-0">
+              <FileText size={15} />
+            </span>
+            <div className="space-y-0.5 min-w-0">
+              <div className="text-[14px] font-semibold text-[#EDEDED]">Notion Links</div>
+              <div className="text-[12.5px] text-[#9A9A9A]">
+                Paste any <code className="text-[#C4C4C4]">notion.so</code> URL zero-config, or add
+                an optional Notion integration token to search and attach pages inline without
+                mirroring subtasks.
+              </div>
             </div>
           </div>
+
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            <Pill tone={notionConfigured ? 'energy-up' : 'neutral'} dot={notionConfigured}>
+              {notionConfigured
+                ? notionTokenSource === 'env'
+                  ? 'Connected · ENV'
+                  : 'Connected'
+                : 'URL Paste Only'}
+            </Pill>
+            <Pill tone="neutral" className="tabular-nums">
+              {projectsWithNotion.length} hub{projectsWithNotion.length === 1 ? '' : 's'} linked
+            </Pill>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              leftIcon={<PlugZap size={12} />}
+              onClick={() => testNotionMutation.mutate(notionTokenInput.trim() || undefined)}
+              disabled={
+                testNotionMutation.isPending || (!notionConfigured && !notionTokenInput.trim())
+              }
+            >
+              Test Connection
+            </Button>
+          </div>
         </div>
-        <Pill tone="neutral" className="shrink-0 tabular-nums">
-          {projectsWithNotion.length} hub{projectsWithNotion.length === 1 ? '' : 's'} linked
-        </Pill>
-      </div>
+
+        <div className="space-y-1.5">
+          <label htmlFor="notion-token-input" className="text-[11.5px] text-[#9A9A9A] block">
+            Notion Integration Token (optional)
+          </label>
+          <input
+            id="notion-token-input"
+            type="password"
+            autoComplete="off"
+            value={notionTokenInput}
+            onChange={(e) => setNotionTokenInput(e.target.value)}
+            placeholder={
+              notionTokenSource === 'settings'
+                ? '•••••••••••••••• (saved — enter new token to replace)'
+                : notionTokenSource === 'env'
+                  ? 'Configured via VEYRA_NOTION_TOKEN (enter token to override)'
+                  : 'ntn_… or secret_…'
+            }
+            className="w-full h-9 px-3 rounded-[8px] bg-[#262626] border border-[#3C3C3C] focus:border-[#5566F2] text-[13px] font-mono text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none"
+          />
+          <p className="text-[11.5px] text-[#6E6E6E]">
+            Stored on the Veyra server and never returned to the browser. You can also configure{' '}
+            <code className="text-[#9A9A9A]">VEYRA_NOTION_TOKEN</code> in the server environment.
+          </p>
+        </div>
+
+        <div className="flex items-center justify-between gap-2 pt-2 border-t border-[#2A2A2A] flex-wrap">
+          <div className="text-[12px]">
+            {notionNotice ? (
+              <span className={notionNotice.ok ? 'text-[#7BE0A0]' : 'text-[#FF9EC5]'}>
+                {notionNotice.text}
+              </span>
+            ) : null}
+          </div>
+          <div className="flex items-center gap-2">
+            {notionTokenSource === 'settings' ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={handleClearNotionToken}
+                disabled={updateSettingsMutation.isPending}
+              >
+                Remove Token
+              </Button>
+            ) : null}
+            <Button
+              type="submit"
+              variant="primary"
+              size="sm"
+              disabled={!notionTokenInput.trim() || updateSettingsMutation.isPending}
+            >
+              Save Token
+            </Button>
+          </div>
+        </div>
+      </form>
     </div>
   );
 }

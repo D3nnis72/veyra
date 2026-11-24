@@ -136,6 +136,7 @@ CREATE TABLE IF NOT EXISTS settings (
   last_calendar_sync_at TEXT,
   webhook_url TEXT,
   webhook_events TEXT NOT NULL DEFAULT '[]',
+  notion_token TEXT,
   global_capture_shortcut TEXT NOT NULL DEFAULT 'CommandOrControl+Shift+P',
   run_in_menu_bar INTEGER NOT NULL DEFAULT 1,
   updated_at TEXT NOT NULL
@@ -188,6 +189,11 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{ table: string; column: string; ddl: stri
     column: 'match_keywords',
     ddl: "ALTER TABLE projects ADD COLUMN match_keywords TEXT NOT NULL DEFAULT '[]'",
   },
+  {
+    table: 'settings',
+    column: 'notion_token',
+    ddl: 'ALTER TABLE settings ADD COLUMN notion_token TEXT',
+  },
 ];
 
 function applyAdditiveColumnMigrations(sqlite: Database.Database): void {
@@ -231,8 +237,8 @@ function seedBootstrapRows(sqlite: Database.Database): void {
       id, theme, timezone, onboarding_completed, server_url,
       calendar_sync_mode, outlook_cli_command, ics_feed_url,
       calendar_sync_interval_min, skip_declined_and_all_day, last_calendar_sync_at,
-      webhook_url, webhook_events, global_capture_shortcut, run_in_menu_bar, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      webhook_url, webhook_events, notion_token, global_capture_shortcut, run_in_menu_bar, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   insertDefaultSettings.run(
@@ -249,6 +255,7 @@ function seedBootstrapRows(sqlite: Database.Database): void {
     null,
     null,
     '[]',
+    null,
     DEFAULT_GLOBAL_CAPTURE_SHORTCUT,
     1,
     now,

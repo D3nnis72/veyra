@@ -87,7 +87,7 @@ function getKeysToInvalidate(payload: SseEventPayload | null): string[][] {
   }
 
   if (entity === 'settings' || type.startsWith('settings.')) {
-    keys.push(['settings'], ['today'], ['plan'], ['calendar'], ['review']);
+    keys.push(['settings'], ['notion-search'], ['today'], ['plan'], ['calendar'], ['review']);
     return keys;
   }
 

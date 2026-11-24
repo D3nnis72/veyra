@@ -20,7 +20,8 @@ import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../api/client';
 import { invalidateBlockRelated } from '../api/queries';
 import { Button } from '../components/Button';
-import { LinkChip, inferLinkSource, inferLinkTitle } from '../components/LinkChip';
+import { LinkChip } from '../components/LinkChip';
+import { LinkPickerPopover } from '../components/LinkPickerPopover';
 import { ModalSheet } from '../components/ModalSheet';
 import { ProjectBadge } from '../components/ProjectBadge';
 import { SelectPopover } from '../components/SelectPopover';
@@ -63,8 +64,6 @@ export function CreateBlockModal({ open, defaults, onClose }: CreateBlockModalPr
   const [notes, setNotes] = useState('');
   const [links, setLinks] = useState<ExternalLink[]>([]);
   const [linkInputOpen, setLinkInputOpen] = useState(false);
-  const [linkUrl, setLinkUrl] = useState('');
-  const [linkTitle, setLinkTitle] = useState('');
   const [createAnother, setCreateAnother] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -115,8 +114,6 @@ export function CreateBlockModal({ open, defaults, onClose }: CreateBlockModalPr
     setNotes('');
     setLinks([]);
     setLinkInputOpen(false);
-    setLinkUrl('');
-    setLinkTitle('');
     setError(null);
 
     window.setTimeout(() => titleRef.current?.focus(), 30);
@@ -130,27 +127,10 @@ export function CreateBlockModal({ open, defaults, onClose }: CreateBlockModalPr
     }
   };
 
-  const addLink = () => {
-    const raw = linkUrl.trim();
-    if (!raw) return;
-    const normalized = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
-    try {
-      new URL(normalized);
-    } catch {
-      setError('Enter a valid URL for the link.');
-      return;
-    }
-    setLinks((prev) => [
-      ...prev,
-      {
-        url: normalized,
-        title: linkTitle.trim() || inferLinkTitle(normalized),
-        source: inferLinkSource(normalized),
-      },
-    ]);
-    setLinkUrl('');
-    setLinkTitle('');
-    setLinkInputOpen(false);
+  const handleAddLink = (nextLink: ExternalLink) => {
+    setLinks((prev) =>
+      prev.some((l) => l.url === nextLink.url) ? prev : [...prev, nextLink],
+    );
     setError(null);
   };
 
@@ -473,40 +453,12 @@ export function CreateBlockModal({ open, defaults, onClose }: CreateBlockModalPr
             </div>
           ) : null}
 
-          {linkInputOpen ? (
-            <div className="flex items-center gap-2">
-              <input
-                autoFocus
-                type="text"
-                value={linkUrl}
-                onChange={(e) => setLinkUrl(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    addLink();
-                  }
-                }}
-                placeholder="https://notion.so/…"
-                className="flex-1 h-8 px-2.5 rounded-[6px] bg-[#262626] border border-[#3C3C3C] text-[12.5px] text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none focus:border-[#5566F2]"
-              />
-              <input
-                type="text"
-                value={linkTitle}
-                onChange={(e) => setLinkTitle(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    addLink();
-                  }
-                }}
-                placeholder="Title (optional)"
-                className="w-36 h-8 px-2.5 rounded-[6px] bg-[#262626] border border-[#3C3C3C] text-[12.5px] text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none focus:border-[#5566F2]"
-              />
-              <Button variant="secondary" size="sm" onClick={addLink}>
-                Add
-              </Button>
-            </div>
-          ) : null}
+          <LinkPickerPopover
+            open={linkInputOpen}
+            onClose={() => setLinkInputOpen(false)}
+            existingLinks={links}
+            onAddLink={handleAddLink}
+          />
         </div>
 
         {/* Open NOTES & AI CONTEXT */}

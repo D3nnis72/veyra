@@ -5,6 +5,8 @@ import { settings } from '../schema.js';
 import { isValidTimeZone } from '../time.js';
 import {
   DEFAULT_SETTINGS_ID,
+  type NotionTokenSource,
+  type PublicSettings,
   type Settings,
   type UpdateSettingsInput,
   updateSettingsInputSchema,
@@ -15,6 +17,34 @@ import {
   resolveActor,
   resolveNow,
 } from './internal.js';
+
+export function resolveNotionToken(
+  row: Pick<Settings, 'notionToken'>,
+  envNotionToken?: string | null,
+): { token: string | null; source: NotionTokenSource | null } {
+  const fromSettings = row.notionToken?.trim();
+  if (fromSettings) {
+    return { token: fromSettings, source: 'settings' };
+  }
+  const fromEnv = envNotionToken?.trim();
+  if (fromEnv) {
+    return { token: fromEnv, source: 'env' };
+  }
+  return { token: null, source: null };
+}
+
+export function toPublicSettings(
+  row: Settings,
+  envNotionToken?: string | null,
+): PublicSettings {
+  const { notionToken: _secret, ...rest } = row;
+  const { source } = resolveNotionToken(row, envNotionToken);
+  return {
+    ...rest,
+    notionConfigured: source !== null,
+    notionTokenSource: source,
+  };
+}
 
 export function getSettings(veyraDb: VeyraDb): Settings {
   const row = veyraDb.db
@@ -65,6 +95,10 @@ export function updateSettings(
         : existing.lastCalendarSyncAt,
     webhookUrl: parsed.webhookUrl !== undefined ? parsed.webhookUrl : existing.webhookUrl,
     webhookEvents: parsed.webhookEvents ?? existing.webhookEvents,
+    notionToken:
+      parsed.notionToken !== undefined
+        ? parsed.notionToken?.trim() || null
+        : existing.notionToken,
     globalCaptureShortcut:
       parsed.globalCaptureShortcut ?? existing.globalCaptureShortcut,
     runInMenuBar: parsed.runInMenuBar ?? existing.runInMenuBar,
@@ -87,6 +121,7 @@ export function updateSettings(
         lastCalendarSyncAt: updated.lastCalendarSyncAt,
         webhookUrl: updated.webhookUrl,
         webhookEvents: updated.webhookEvents,
+        notionToken: updated.notionToken,
         globalCaptureShortcut: updated.globalCaptureShortcut,
         runInMenuBar: updated.runInMenuBar,
         updatedAt: updated.updatedAt,

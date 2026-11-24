@@ -11,6 +11,7 @@ dependsOn:
 groundedIn:
   - packages/server/src/app.ts
   - packages/server/src/index.ts
+  - packages/server/src/notion.ts
   - packages/server/src/sse.ts
   - packages/web/src/api/client.ts
   - packages/web/src/api/use-live-sync.ts
@@ -27,7 +28,7 @@ updateWhen:
 - **Optional bearer auth:** When `VEYRA_TOKEN` (or `bearerToken` option) is set, every `/api/*` route except `GET /api/health` requires `Authorization: Bearer <token>` (or `?token=<token>` for browser `EventSource` connections on `/api/events/stream`). Static SPA assets stay public so the login/config shell can load.
 - **Actor attribution:** Callers may send `X-Veyra-Actor` (`user`, `cli`, `agent`, `hook`; defaults to `user`) so `activity_log` records distinguish human clicks, CLI calls, autonomous agent actions, and hooks.
 - **Deterministic test clock:** Disabled in normal operation. Only when `VEYRA_ENABLE_TEST_CLOCK=1` (or `enableTestClock: true` in tests) does the server honor `?now=<ISO>` or `X-Veyra-Now: <ISO>` to verify midnight rollover and weekly boundaries deterministically.
-- **Error envelope:** Domain errors map cleanly to HTTP status codes (`ValidationError` -> `400`, `SystemProjectError` -> `400`, `NotFoundError` -> `404`, `ConflictError` -> `409`, uncaught `CalendarSyncError` -> `502`, while `POST /api/events/sync` catches sync failures and returns structured diagnostics in `status` + `error`) returning `{ "error": { "code", "message" } }`.
+- **Error envelope:** Domain errors map cleanly to HTTP status codes (`ValidationError` -> `400`, `SystemProjectError` -> `400`, `NotFoundError` -> `404`, `ConflictError` -> `409`, uncaught `CalendarSyncError` or `NotionApiError` -> `502`, while `POST /api/events/sync` catches sync failures and returns structured diagnostics in `status` + `error`) returning `{ "error": { "code", "message" } }`.
 
 ## REST Resource Groups
 
@@ -41,6 +42,10 @@ Exact route handlers live in `packages/server/src/app.ts`:
 - **Daily Notes:** `GET/POST /api/notes`, `PATCH/DELETE /api/notes/:id`
 - **Calendar Events:** `GET /api/events`, `POST /api/events/{upsert,sync,auto-match}`, `PATCH /api/events/:id`
 - **Settings & Activity:** `GET/PATCH /api/settings`, `POST /api/settings/test-hook`, `GET /api/activity`
+  - `Settings.notionToken` (or the `VEYRA_NOTION_TOKEN` env var fallback) is stored server-side and always stripped from `GET/PATCH /api/settings` responses, which return `notionConfigured: boolean` and `settings.notionTokenSource: 'settings' | 'env' | null` instead.
+- **Integrations (Notion Link Proxy):** `GET /api/integrations/notion/search?q=...&limit=...`, `POST /api/integrations/notion/test`
+  - Proxies `POST https://api.notion.com/v1/search` (`Notion-Version: 2022-06-28`) and returns `{ configured, results: [{ id, title, url, objectType: 'page' | 'database', lastEditedTime }] }`. When no Notion token is set, returns `200 { configured: false, results: [] }` so direct URL paste stays zero-config.
+  - `POST /api/integrations/notion/test` verifies an optional candidate `{ token }` or the stored/env token against `GET https://api.notion.com/v1/users/me` and returns `{ result: { ok, statusCode, workspaceName, botName, error } }`.
 
 ## Live SSE Broadcast Hub
 

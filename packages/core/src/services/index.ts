@@ -68,4 +68,9 @@ export {
   setWeeklyRule,
   updateDailyNote,
 } from './notes-review.js';
-export { getSettings, updateSettings } from './settings.js';
+export {
+  getSettings,
+  resolveNotionToken,
+  toPublicSettings,
+  updateSettings,
+} from './settings.js';

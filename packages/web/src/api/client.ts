@@ -25,11 +25,13 @@ import type {
   LogSessionInput,
   MoveBlockInput,
   NormalizedCalendarEvent,
+  NotionSearchResponse,
+  NotionTestConnectionResult,
   ParkBlockInput,
   Project,
   ProjectWithStats,
+  PublicSettings,
   ReorderBlockInput,
-  Settings,
   SplitSessionInput,
   SplitSessionResult,
   StartFocusResult,
@@ -193,8 +195,13 @@ export interface ReviewResponse extends WeeklyReviewSummary {
 }
 
 export interface SettingsResponse {
-  settings: Settings;
+  settings: PublicSettings;
   calendarSyncStatus: CalendarSyncStatus;
+  notionConfigured: boolean;
+}
+
+export interface NotionTestResponse {
+  result: NotionTestConnectionResult;
 }
 
 export interface SyncEventsResponse {
@@ -415,6 +422,7 @@ export const queryKeys = {
   notes: (filter?: ListDailyNotesFilter) => ['notes', filter ?? {}] as const,
   events: (start?: string, end?: string) => ['events', start ?? '', end ?? ''] as const,
   settings: ['settings'] as const,
+  notionSearch: (q: string) => ['notion-search', q] as const,
   activity: (filter?: ListActivityFilter) => ['activity', filter ?? {}] as const,
 };
 
@@ -682,6 +690,22 @@ export const apiClient = {
 
   testHook(): Promise<TestHookResponse> {
     return request<TestHookResponse>('POST', '/api/settings/test-hook', {});
+  },
+
+  // Integrations: Notion
+  searchNotion(q = '', limit?: number): Promise<NotionSearchResponse> {
+    return request<NotionSearchResponse>(
+      'GET',
+      `/api/integrations/notion/search${buildQuery({ q, limit })}`,
+    );
+  },
+
+  testNotionConnection(token?: string): Promise<NotionTestResponse> {
+    return request<NotionTestResponse>(
+      'POST',
+      '/api/integrations/notion/test',
+      token !== undefined ? { token } : {},
+    );
   },
 
   // Activity Log

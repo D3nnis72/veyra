@@ -153,4 +153,53 @@ describe('@veyra/core database bootstrap, order-key, time, and contracts', () =>
     expect(typesSource).not.toMatch(/drizzle-orm/);
     expect(typesSource).not.toMatch(/from\s+['"]node:/);
   });
+
+  it('adds settings.notion_token cleanly to legacy databases via additive migration', async () => {
+    const { default: Database } = await import('better-sqlite3');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'veyra-core-legacy-'));
+    const dbPath = path.join(tmpDir, 'legacy.db');
+    try {
+      const legacy = new Database(dbPath);
+      legacy.exec(`
+        CREATE TABLE settings (
+          id TEXT PRIMARY KEY,
+          theme TEXT NOT NULL DEFAULT 'dark',
+          timezone TEXT NOT NULL,
+          onboarding_completed INTEGER NOT NULL DEFAULT 0,
+          server_url TEXT,
+          calendar_sync_mode TEXT NOT NULL DEFAULT 'manual',
+          outlook_cli_command TEXT,
+          ics_feed_url TEXT,
+          calendar_sync_interval_min INTEGER NOT NULL DEFAULT 15,
+          skip_declined_and_all_day INTEGER NOT NULL DEFAULT 1,
+          last_calendar_sync_at TEXT,
+          webhook_url TEXT,
+          webhook_events TEXT NOT NULL DEFAULT '[]',
+          global_capture_shortcut TEXT NOT NULL DEFAULT 'CommandOrControl+Shift+P',
+          run_in_menu_bar INTEGER NOT NULL DEFAULT 1,
+          updated_at TEXT NOT NULL
+        );
+        INSERT INTO settings (id, theme, timezone, onboarding_completed, calendar_sync_mode, calendar_sync_interval_min, skip_declined_and_all_day, webhook_events, global_capture_shortcut, run_in_menu_bar, updated_at)
+        VALUES ('default', 'dark', 'UTC', 1, 'manual', 15, 1, '[]', 'CommandOrControl+Shift+P', 1, '2026-11-23T00:00:00.000Z');
+      `);
+      legacy.close();
+
+      const upgraded = openVeyraDb(dbPath);
+      try {
+        const cols = upgraded.sqlite
+          .prepare('PRAGMA table_info(settings)')
+          .all() as Array<{ name: string }>;
+        expect(cols.some((c) => c.name === 'notion_token')).toBe(true);
+        const rows = upgraded.db.select().from(settings).all();
+        expect(rows).toHaveLength(1);
+        expect(rows[0].timezone).toBe('UTC');
+        expect(rows[0].onboardingCompleted).toBe(true);
+        expect(rows[0].notionToken).toBeNull();
+      } finally {
+        upgraded.close();
+      }
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

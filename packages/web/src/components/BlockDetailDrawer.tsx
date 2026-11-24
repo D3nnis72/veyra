@@ -40,7 +40,8 @@ import {
 } from '../api/queries';
 import { Button } from './Button';
 import { DockedDrawer } from './DockedDrawer';
-import { LinkChip, inferLinkSource, inferLinkTitle } from './LinkChip';
+import { LinkChip } from './LinkChip';
+import { LinkPickerPopover } from './LinkPickerPopover';
 import { goalChipStyle } from './goalTint';
 import { Pill } from './Pill';
 import { ProjectBadge } from './ProjectBadge';
@@ -143,9 +144,6 @@ export function BlockDetailDrawer({ blockId, onClose, onStartFocus }: BlockDetai
 
   // Add link inline state
   const [addingLink, setAddingLink] = useState(false);
-  const [linkUrl, setLinkUrl] = useState('');
-  const [linkTitle, setLinkTitle] = useState('');
-  const [linkError, setLinkError] = useState<string | null>(null);
 
   // Log time inline state
   const [loggingTime, setLoggingTime] = useState(false);
@@ -384,28 +382,9 @@ export function BlockDetailDrawer({ blockId, onClose, onStartFocus }: BlockDetai
     updateMutation.mutate({ notes: nextNotes });
   };
 
-  const handleAddLink = (e: FormEvent) => {
-    e.preventDefault();
+  const handleAddLink = (nextLink: ExternalLink) => {
     if (!block) return;
-    const rawUrl = linkUrl.trim();
-    if (!rawUrl) return;
-    const normalizedUrl = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
-    try {
-      new URL(normalizedUrl);
-    } catch {
-      setLinkError('Enter a valid URL (e.g. https://notion.so/...)');
-      return;
-    }
-
-    const nextLink: ExternalLink = {
-      url: normalizedUrl,
-      title: linkTitle.trim() || inferLinkTitle(normalizedUrl),
-      source: inferLinkSource(normalizedUrl),
-    };
-    setLinkError(null);
-    setLinkUrl('');
-    setLinkTitle('');
-    setAddingLink(false);
+    if (block.externalLinks.some((l) => l.url === nextLink.url)) return;
     updateMutation.mutate({ externalLinks: [...block.externalLinks, nextLink] });
   };
 
@@ -1068,43 +1047,12 @@ export function BlockDetailDrawer({ blockId, onClose, onStartFocus }: BlockDetai
               </div>
             ) : null}
 
-            {addingLink ? (
-              <form onSubmit={handleAddLink} className="space-y-2 pt-1">
-                <div className="flex items-center gap-2">
-                  <input
-                    autoFocus
-                    type="text"
-                    value={linkUrl}
-                    onChange={(e) => setLinkUrl(e.target.value)}
-                    placeholder="https://notion.so/…"
-                    className="flex-1 h-8 px-3 rounded-[6px] bg-[#262626] border border-[#3C3C3C] text-[12.5px] text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none focus:border-[#5566F2]"
-                  />
-                  <input
-                    type="text"
-                    value={linkTitle}
-                    onChange={(e) => setLinkTitle(e.target.value)}
-                    placeholder="Label (optional)"
-                    className="w-36 h-8 px-3 rounded-[6px] bg-[#262626] border border-[#3C3C3C] text-[12.5px] text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none focus:border-[#5566F2]"
-                  />
-                </div>
-                {linkError ? <div className="text-[11.5px] text-[#FF9EC5]">{linkError}</div> : null}
-                <div className="flex items-center gap-1.5">
-                  <Button type="submit" variant="primary" size="xs">
-                    Save link
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    onClick={() => {
-                      setAddingLink(false);
-                      setLinkError(null);
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </form>
-            ) : null}
+            <LinkPickerPopover
+              open={addingLink}
+              onClose={() => setAddingLink(false)}
+              existingLinks={block.externalLinks}
+              onAddLink={handleAddLink}
+            />
           </div>
 
           {/* Action Bar: Start Focus + Finish stacked full-width beneath a clean divider */}
