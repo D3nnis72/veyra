@@ -28,6 +28,7 @@ import type {
   MacOsFocusShortcutsResponse,
   MoveBlockInput,
   NormalizedCalendarEvent,
+  NotionOAuthStartResponse,
   NotionSearchResponse,
   NotionTestConnectionResult,
   ParkBlockInput,
@@ -717,6 +718,18 @@ export const apiClient = {
       'POST',
       '/api/integrations/notion/test',
       token !== undefined ? { token } : {},
+    );
+  },
+
+  startNotionOAuth(input?: {
+    clientId?: string;
+    clientSecret?: string;
+    redirectUri?: string;
+  }): Promise<NotionOAuthStartResponse> {
+    return request<NotionOAuthStartResponse>(
+      'POST',
+      '/api/integrations/notion/oauth/start',
+      input ?? {},
     );
   },
 

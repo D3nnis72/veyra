@@ -137,6 +137,10 @@ CREATE TABLE IF NOT EXISTS settings (
   webhook_url TEXT,
   webhook_events TEXT NOT NULL DEFAULT '[]',
   notion_token TEXT,
+  notion_oauth_client_id TEXT,
+  notion_oauth_client_secret TEXT,
+  notion_oauth_redirect_uri TEXT,
+  notion_workspace_name TEXT,
   macos_focus_enabled INTEGER NOT NULL DEFAULT 0,
   macos_focus_start_shortcut TEXT,
   macos_focus_end_shortcut TEXT,
@@ -199,6 +203,26 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{ table: string; column: string; ddl: stri
   },
   {
     table: 'settings',
+    column: 'notion_oauth_client_id',
+    ddl: 'ALTER TABLE settings ADD COLUMN notion_oauth_client_id TEXT',
+  },
+  {
+    table: 'settings',
+    column: 'notion_oauth_client_secret',
+    ddl: 'ALTER TABLE settings ADD COLUMN notion_oauth_client_secret TEXT',
+  },
+  {
+    table: 'settings',
+    column: 'notion_oauth_redirect_uri',
+    ddl: 'ALTER TABLE settings ADD COLUMN notion_oauth_redirect_uri TEXT',
+  },
+  {
+    table: 'settings',
+    column: 'notion_workspace_name',
+    ddl: 'ALTER TABLE settings ADD COLUMN notion_workspace_name TEXT',
+  },
+  {
+    table: 'settings',
     column: 'macos_focus_enabled',
     ddl: 'ALTER TABLE settings ADD COLUMN macos_focus_enabled INTEGER NOT NULL DEFAULT 0',
   },
@@ -256,9 +280,11 @@ function seedBootstrapRows(sqlite: Database.Database): void {
       calendar_sync_mode, outlook_cli_command, ics_feed_url,
       calendar_sync_interval_min, skip_declined_and_all_day, last_calendar_sync_at,
       webhook_url, webhook_events, notion_token,
+      notion_oauth_client_id, notion_oauth_client_secret,
+      notion_oauth_redirect_uri, notion_workspace_name,
       macos_focus_enabled, macos_focus_start_shortcut, macos_focus_end_shortcut,
       global_capture_shortcut, run_in_menu_bar, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   insertDefaultSettings.run(
@@ -275,6 +301,10 @@ function seedBootstrapRows(sqlite: Database.Database): void {
     null,
     null,
     '[]',
+    null,
+    null,
+    null,
+    null,
     null,
     0,
     null,

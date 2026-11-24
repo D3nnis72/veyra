@@ -161,6 +161,10 @@ export const settings = sqliteTable('settings', {
     .notNull()
     .default([]),
   notionToken: text('notion_token'),
+  notionOauthClientId: text('notion_oauth_client_id'),
+  notionOauthClientSecret: text('notion_oauth_client_secret'),
+  notionOauthRedirectUri: text('notion_oauth_redirect_uri'),
+  notionWorkspaceName: text('notion_workspace_name'),
   macosFocusEnabled: integer('macos_focus_enabled', { mode: 'boolean' })
     .notNull()
     .default(false),

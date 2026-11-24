@@ -192,8 +192,8 @@ export function Keycap({
 
   const sizeClass =
     size === 'sm'
-      ? `h-[24px] ${isWord ? 'px-2 text-[11px]' : isSymbol ? 'min-w-[24px] px-1.5 text-[12.5px]' : 'min-w-[24px] px-1.5 text-[11.5px]'}`
-      : `h-[30px] ${isWord ? 'px-3 text-[12px]' : isSymbol ? 'min-w-[30px] px-2 text-[14px]' : 'min-w-[30px] px-2 text-[12.5px]'}`;
+      ? `h-[21px] ${isWord ? 'px-1.5 text-[10.5px]' : isSymbol ? 'min-w-[21px] px-1 text-[11.5px]' : 'min-w-[21px] px-1 text-[10.5px]'}`
+      : `h-[24px] ${isWord ? 'px-2 text-[11px]' : isSymbol ? 'min-w-[24px] px-1.5 text-[12.5px]' : 'min-w-[24px] px-1.5 text-[11.5px]'}`;
 
   const toneClass = active
     ? 'bg-[#253070] border-[#6B7CFF] text-[#EEF1FF] shadow-[inset_0_1px_0_rgba(255,255,255,0.14),0_1px_0_#111428]'
@@ -202,7 +202,7 @@ export function Keycap({
   return (
     <kbd
       className={[
-        'inline-flex items-center justify-center rounded-[7px] border font-sans font-medium leading-none select-none',
+        'inline-flex items-center justify-center rounded-[5px] border font-sans font-medium leading-none select-none',
         sizeClass,
         toneClass,
       ].join(' ')}
@@ -222,7 +222,7 @@ export function KeyChord({
   size?: 'sm' | 'md';
 }) {
   return (
-    <span className="inline-flex items-center gap-1.5">
+    <span className="inline-flex items-center gap-1">
       {keys.map((key, idx) => (
         <Keycap key={`${key}-${idx}`} label={key} active={active} size={size} />
       ))}
@@ -241,11 +241,11 @@ export function ShortcutBinding({
   size = 'md',
 }: ShortcutBindingSpec & { size?: 'sm' | 'md' }) {
   return (
-    <div className="inline-flex items-center gap-2 shrink-0 flex-wrap justify-end">
+    <div className="inline-flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
       {chords.map((chord, idx) => (
-        <span key={`${chord.join('-')}-${idx}`} className="inline-flex items-center gap-2">
+        <span key={`${chord.join('-')}-${idx}`} className="inline-flex items-center gap-1.5">
           {idx > 0 ? (
-            <span className="text-[11.5px] text-[#6E6E6E] px-1 select-none">
+            <span className="text-[11px] text-[#6E6E6E] px-0.5 select-none">
               {separator === 'to' ? '–' : 'or'}
             </span>
           ) : null}
@@ -380,7 +380,7 @@ export function ShortcutRecorder({
               type="button"
               aria-label="Recording shortcut, press keys or Escape to cancel"
               onClick={stopRecording}
-              className="h-9 px-2.5 rounded-[8px] bg-[#1F2759]/80 border border-[#5566F2] ring-2 ring-[#5566F2]/25 inline-flex items-center gap-2 text-[12px] text-[#D6DCFF] transition-all"
+              className="h-[34px] px-2.5 rounded-[8px] bg-[#1F2759]/80 border border-[#5566F2] ring-2 ring-[#5566F2]/25 inline-flex items-center gap-2 text-[11.5px] text-[#D6DCFF] transition-all"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-[#7E90FF] animate-pulse shrink-0" />
               {heldModifiers.length > 0 ? (
@@ -391,7 +391,7 @@ export function ShortcutRecorder({
               ) : (
                 <span className="font-medium">Press keys…</span>
               )}
-              <span className="text-[10.5px] text-[#AEB8FF]/75 pl-1 border-l border-[#5566F2]/40">
+              <span className="text-[10.5px] text-[#AEB8FF]/75 pl-1.5 border-l border-[#5566F2]/40">
                 Esc
               </span>
             </button>
@@ -413,7 +413,7 @@ export function ShortcutRecorder({
             ].join(' ')}
           >
             <KeyChord keys={keys} size={size} />
-            <span className="inline-flex items-center text-[#787878] group-hover:text-[#AEB8FF] transition-colors pl-0.5">
+            <span className="inline-flex items-center text-[#787878] group-hover:text-[#AEB8FF] transition-colors pl-1 border-l border-[#2D2D2D] group-hover:border-[#5566F2]/40">
               <Pencil size={11} />
             </span>
           </button>

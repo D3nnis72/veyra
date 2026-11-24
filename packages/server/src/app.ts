@@ -17,6 +17,7 @@ import {
   type MacOsFocusRunResult,
   type MacOsFocusShortcutsResponse,
   type NormalizedCalendarEvent,
+  type NotionOAuthStartResponse,
   type NotionTestConnectionResult,
   type ProjectWithStats,
   type PublicSettings,
@@ -263,6 +264,54 @@ const notionTestBodySchema = z.object({
   token: z.string().optional(),
 });
 
+const notionOAuthStartBodySchema = z.object({
+  clientId: z.string().optional(),
+  clientSecret: z.string().optional(),
+  redirectUri: z.string().optional(),
+});
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function renderNotionOAuthCallbackHtml(options: {
+  ok: boolean;
+  title: string;
+  detail: string;
+}): string {
+  const accent = options.ok ? '#2E9E6F' : '#C94A6A';
+  const badge = options.ok ? 'Connected' : 'Connection Failed';
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Veyra · ${escapeHtml(options.title)}</title>
+    <style>
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #131313; color: #EDEDED; font-family: -apple-system, BlinkMacSystemFont, "Inter", sans-serif; padding: 24px; }
+      .card { width: 100%; max-width: 440px; background: #1C1C1C; border: 1px solid #2A2A2A; border-radius: 12px; padding: 24px; box-sizing: border-box; }
+      .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; padding: 4px 10px; border-radius: 999px; background: ${accent}22; color: #EDEDED; border: 1px solid ${accent}66; }
+      h1 { margin: 14px 0 8px; font-size: 18px; font-weight: 600; }
+      p { margin: 0; font-size: 13px; line-height: 1.5; color: #9A9A9A; }
+      .hint { margin-top: 16px; font-size: 12px; color: #6E6E6E; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="badge">${escapeHtml(badge)}</div>
+      <h1>${escapeHtml(options.title)}</h1>
+      <p>${escapeHtml(options.detail)}</p>
+      <p class="hint">You can close this tab and return to Veyra.</p>
+    </div>
+  </body>
+</html>`;
+}
+
 const macOsFocusTestBodySchema = z.object({
   phase: macOsFocusPhaseSchema,
   shortcutName: z.string().optional(),
@@ -404,16 +453,32 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
       ? options.notionToken
       : process.env.VEYRA_NOTION_TOKEN
     )?.trim() || undefined;
+  const envNotionOauthClientId = process.env.VEYRA_NOTION_CLIENT_ID?.trim() || undefined;
+  const envNotionOauthClientSecret =
+    process.env.VEYRA_NOTION_CLIENT_SECRET?.trim() || undefined;
 
   const notion = new NotionClient(db, {
     ...options.notionOptions,
     envToken: envNotionToken,
+    envOauthClientId: options.notionOptions?.envOauthClientId ?? envNotionOauthClientId,
+    envOauthClientSecret:
+      options.notionOptions?.envOauthClientSecret ?? envNotionOauthClientSecret,
   });
+
+  const pendingNotionOAuthStates = new Map<
+    string,
+    { redirectUri: string; expiresAt: number }
+  >();
+  const NOTION_OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
   const macosFocus = new MacOsFocusPresence(db, options.macosFocusOptions);
 
   const buildSettingsResponse = (row: Settings): SettingsResponse => {
-    const publicSettings = toPublicSettings(row, envNotionToken);
+    const publicSettings = toPublicSettings(row, envNotionToken, {
+      clientId: options.notionOptions?.envOauthClientId ?? envNotionOauthClientId,
+      clientSecret:
+        options.notionOptions?.envOauthClientSecret ?? envNotionOauthClientSecret,
+    });
     return {
       settings: publicSettings,
       calendarSyncStatus: syncRunner.getStatus(),
@@ -475,10 +540,14 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
     );
   });
 
-  // Bearer token auth middleware for /api/* (except /api/health and CORS preflight)
+  // Bearer token auth middleware for /api/* (except /api/health, OAuth callback, and CORS preflight)
   if (bearerToken) {
     app.use('/api/*', async (c, next) => {
-      if (c.req.method === 'OPTIONS' || c.req.path === '/api/health') {
+      if (
+        c.req.method === 'OPTIONS' ||
+        c.req.path === '/api/health' ||
+        c.req.path === '/api/integrations/notion/oauth/callback'
+      ) {
         await next();
         return;
       }
@@ -1515,6 +1584,154 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
     const result = await notion.testConnection(parsed.data.token);
     const payload: NotionTestResponse = { result };
     return c.json(payload);
+  });
+
+  app.post('/api/integrations/notion/oauth/start', async (c) => {
+    const now = getNow(c);
+    const actor = getActor(c);
+    const raw = await readJsonBody(c, true);
+    const parsed = notionOAuthStartBodySchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid Notion OAuth start payload');
+    }
+
+    const patch: Parameters<typeof updateSettings>[1] = {};
+    if (parsed.data.clientId !== undefined && parsed.data.clientId.trim()) {
+      patch.notionOauthClientId = parsed.data.clientId.trim();
+    }
+    if (parsed.data.clientSecret !== undefined && parsed.data.clientSecret.trim()) {
+      patch.notionOauthClientSecret = parsed.data.clientSecret.trim();
+    }
+    if (parsed.data.redirectUri !== undefined) {
+      patch.notionOauthRedirectUri = parsed.data.redirectUri.trim() || null;
+    }
+    if (Object.keys(patch).length > 0) {
+      updateSettings(db, patch, { now, actor });
+      emitSse('settings.updated', 'settings', 'default', now);
+    }
+
+    const creds = notion.resolveOAuthCredentials();
+    if (!creds.clientId || !creds.clientSecret) {
+      throw new ValidationError(
+        'Enter both your Notion OAuth Client ID and Client Secret first',
+      );
+    }
+
+    const reqOrigin = new URL(c.req.url).origin;
+    const redirectUri =
+      creds.redirectUri || `${reqOrigin}/api/integrations/notion/oauth/callback`;
+    try {
+      const parsedRedirect = new URL(redirectUri);
+      if (parsedRedirect.protocol !== 'http:' && parsedRedirect.protocol !== 'https:') {
+        throw new Error('Invalid protocol');
+      }
+    } catch {
+      throw new ValidationError('Redirect URI must be a valid http:// or https:// URL');
+    }
+
+    // Purge expired states before issuing a new CSRF state token
+    const nowMs = Date.now();
+    for (const [k, v] of pendingNotionOAuthStates.entries()) {
+      if (v.expiresAt <= nowMs) pendingNotionOAuthStates.delete(k);
+    }
+
+    const state = crypto.randomBytes(24).toString('hex');
+    pendingNotionOAuthStates.set(state, {
+      redirectUri,
+      expiresAt: nowMs + NOTION_OAUTH_STATE_TTL_MS,
+    });
+
+    const authorizeUrl = notion.buildOAuthAuthorizeUrl({
+      clientId: creds.clientId,
+      redirectUri,
+      state,
+    });
+
+    const payload: NotionOAuthStartResponse = { authorizeUrl, redirectUri };
+    return c.json(payload);
+  });
+
+  app.get('/api/integrations/notion/oauth/callback', async (c) => {
+    const now = getNow(c);
+    const errorParam = c.req.query('error');
+    const code = c.req.query('code')?.trim();
+    const state = c.req.query('state')?.trim();
+
+    if (errorParam) {
+      return c.html(
+        renderNotionOAuthCallbackHtml({
+          ok: false,
+          title: 'Notion authorization cancelled',
+          detail: `Notion returned: ${errorParam}`,
+        }),
+        400,
+      );
+    }
+
+    if (!state || !pendingNotionOAuthStates.has(state)) {
+      return c.html(
+        renderNotionOAuthCallbackHtml({
+          ok: false,
+          title: 'Invalid or expired OAuth state',
+          detail: 'Start the Notion connection again from Veyra Settings -> Integrations.',
+        }),
+        400,
+      );
+    }
+
+    const pending = pendingNotionOAuthStates.get(state)!;
+    pendingNotionOAuthStates.delete(state);
+    if (pending.expiresAt <= Date.now()) {
+      return c.html(
+        renderNotionOAuthCallbackHtml({
+          ok: false,
+          title: 'OAuth session expired',
+          detail: 'Start the Notion connection again from Veyra Settings -> Integrations.',
+        }),
+        400,
+      );
+    }
+
+    if (!code) {
+      return c.html(
+        renderNotionOAuthCallbackHtml({
+          ok: false,
+          title: 'Missing authorization code',
+          detail: 'Notion did not provide an authorization code.',
+        }),
+        400,
+      );
+    }
+
+    try {
+      const exchanged = await notion.exchangeOAuthCode({
+        code,
+        redirectUri: pending.redirectUri,
+        now,
+      });
+      emitSse('settings.updated', 'settings', 'default', now);
+      const target = exchanged.workspaceName
+        ? `Connected to Notion workspace "${exchanged.workspaceName}".`
+        : 'Your Notion account is now connected to Veyra.';
+      return c.html(
+        renderNotionOAuthCallbackHtml({
+          ok: true,
+          title: 'Connected to Notion',
+          detail: `${target} Inline Notion search is ready in Veyra.`,
+        }),
+      );
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : 'Failed to exchange Notion authorization code';
+      return c.html(
+        renderNotionOAuthCallbackHtml({
+          ok: false,
+          title: 'Notion connection failed',
+          detail: msg,
+        }),
+        502,
+      );
+    }
   });
 
   // -------------------------------------------------------------------------

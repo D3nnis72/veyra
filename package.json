@@ -14,6 +14,7 @@
     "dev:server": "pnpm --filter @veyra/server dev",
     "dev:web": "pnpm --filter @veyra/web dev",
     "dev:desktop": "pnpm --filter @veyra/desktop dev",
+    "install:mac": "bash scripts/install-mac.sh",
     "package:mac": "pnpm --filter @veyra/desktop package:mac"
   },
   "devDependencies": {

@@ -429,4 +429,138 @@ describe('@veyra/server Notion integration API', () => {
     });
     expect(auth.status).toBe(200);
   });
+
+  it('completes Notion OAuth 2.0 start + callback flow without exposing secrets and enables search', async () => {
+    let tokenExchangeAuthHeader: string | undefined;
+    let tokenExchangeBody: unknown = null;
+
+    const mockNotion = await startMockNotionServer((req, bodyText, res) => {
+      if (req.url === '/v1/oauth/token' && req.method === 'POST') {
+        tokenExchangeAuthHeader = req.headers.authorization;
+        tokenExchangeBody = bodyText ? JSON.parse(bodyText) : null;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            access_token: 'ntn_oauth_exchanged_secret',
+            workspace_name: 'Team Workspace',
+            bot_id: 'bot-oauth-1',
+          }),
+        );
+        return;
+      }
+
+      if (req.url === '/v1/search' && req.method === 'POST') {
+        expect(req.headers.authorization).toBe('Bearer ntn_oauth_exchanged_secret');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            object: 'list',
+            results: [
+              {
+                object: 'page',
+                id: 'oauth-page-1',
+                url: 'https://www.notion.so/OAuth-Page-1',
+                last_edited_time: '2026-11-24T19:00:00.000Z',
+                properties: {
+                  title: { type: 'title', title: [{ plain_text: 'OAuth Connected Page' }] },
+                },
+              },
+            ],
+          }),
+        );
+        return;
+      }
+
+      res.writeHead(404);
+      res.end();
+    });
+
+    const { baseUrl } = await startTestServer({
+      bearerToken: 'veyra-bearer',
+      notionOptions: { apiBaseUrl: mockNotion.url },
+    });
+
+    // Start OAuth flow with client ID + client secret
+    const startRes = await fetch(`${baseUrl}/api/integrations/notion/oauth/start`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer veyra-bearer',
+      },
+      body: JSON.stringify({
+        clientId: 'oauth-client-123',
+        clientSecret: 'oauth-secret-xyz',
+      }),
+    });
+    expect(startRes.status).toBe(200);
+    const startJson = (await startRes.json()) as {
+      authorizeUrl: string;
+      redirectUri: string;
+    };
+    const authorizeParsed = new URL(startJson.authorizeUrl);
+    expect(authorizeParsed.pathname).toBe('/v1/oauth/authorize');
+    expect(authorizeParsed.searchParams.get('client_id')).toBe('oauth-client-123');
+    expect(authorizeParsed.searchParams.get('owner')).toBe('user');
+    const state = authorizeParsed.searchParams.get('state');
+    expect(state).toBeTruthy();
+
+    // GET /api/settings never leaks clientSecret or token
+    const settingsBeforeText = await (
+      await fetch(`${baseUrl}/api/settings`, {
+        headers: { Authorization: 'Bearer veyra-bearer' },
+      })
+    ).text();
+    expect(settingsBeforeText).not.toContain('oauth-secret-xyz');
+    expect(JSON.parse(settingsBeforeText).settings.notionOauthConfigured).toBe(true);
+
+    // Invalid state is rejected
+    const badStateRes = await fetch(
+      `${baseUrl}/api/integrations/notion/oauth/callback?code=abc&state=invalid`,
+    );
+    expect(badStateRes.status).toBe(400);
+
+    // Valid callback succeeds even without Bearer header (browser redirect from Notion)
+    const cbRes = await fetch(
+      `${baseUrl}/api/integrations/notion/oauth/callback?code=auth-code-99&state=${encodeURIComponent(state!)}`,
+    );
+    expect(cbRes.status).toBe(200);
+    const cbHtml = await cbRes.text();
+    expect(cbHtml).toContain('Connected to Notion');
+    expect(cbHtml).toContain('Team Workspace');
+
+    // Verify Basic Auth & payload sent to Notion /v1/oauth/token
+    const expectedBasic = `Basic ${Buffer.from('oauth-client-123:oauth-secret-xyz').toString('base64')}`;
+    expect(tokenExchangeAuthHeader).toBe(expectedBasic);
+    expect(tokenExchangeBody).toEqual({
+      grant_type: 'authorization_code',
+      code: 'auth-code-99',
+      redirect_uri: startJson.redirectUri,
+    });
+
+    // Replaying the same state is rejected (single-use CSRF token)
+    const replayRes = await fetch(
+      `${baseUrl}/api/integrations/notion/oauth/callback?code=auth-code-99&state=${encodeURIComponent(state!)}`,
+    );
+    expect(replayRes.status).toBe(400);
+
+    // Search immediately uses the exchanged OAuth access token, and settings reflects workspace
+    const searchRes = await fetch(`${baseUrl}/api/integrations/notion/search?q=OAuth`, {
+      headers: { Authorization: 'Bearer veyra-bearer' },
+    });
+    expect(searchRes.status).toBe(200);
+    const searchJson = (await searchRes.json()) as {
+      configured: boolean;
+      results: Array<{ title: string }>;
+    };
+    expect(searchJson.configured).toBe(true);
+    expect(searchJson.results[0]?.title).toBe('OAuth Connected Page');
+
+    const settingsAfterText = await (
+      await fetch(`${baseUrl}/api/settings`, {
+        headers: { Authorization: 'Bearer veyra-bearer' },
+      })
+    ).text();
+    expect(settingsAfterText).not.toContain('ntn_oauth_exchanged_secret');
+    expect(JSON.parse(settingsAfterText).settings.notionWorkspaceName).toBe('Team Workspace');
+  });
 });

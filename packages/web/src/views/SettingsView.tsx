@@ -444,6 +444,10 @@ function IntegrationsSettingsSection() {
   const [hookNotice, setHookNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [copiedHookSnippet, setCopiedHookSnippet] = useState(false);
   const [notionNotice, setNotionNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const [notionOauthClientId, setNotionOauthClientId] = useState('');
+  const [notionOauthClientSecret, setNotionOauthClientSecret] = useState('');
+  const [notionOauthRedirectUri, setNotionOauthRedirectUri] = useState('');
+  const [copiedNotionRedirect, setCopiedNotionRedirect] = useState(false);
   const [macosFocusEnabled, setMacosFocusEnabled] = useState(false);
   const [macosFocusStartShortcut, setMacosFocusStartShortcut] = useState('');
   const [macosFocusEndShortcut, setMacosFocusEndShortcut] = useState('');
@@ -467,6 +471,8 @@ function IntegrationsSettingsSection() {
     setSkipDeclined(settings.skipDeclinedAndAllDay);
     setWebhookUrl(settings.webhookUrl ?? '');
     setWebhookEvents(settings.webhookEvents);
+    setNotionOauthClientId(settings.notionOauthClientId ?? '');
+    setNotionOauthRedirectUri(settings.notionOauthRedirectUri ?? '');
     setMacosFocusEnabled(settings.macosFocusEnabled);
     setMacosFocusStartShortcut(settings.macosFocusStartShortcut ?? '');
     setMacosFocusEndShortcut(settings.macosFocusEndShortcut ?? '');
@@ -505,6 +511,53 @@ function IntegrationsSettingsSection() {
       });
     },
   });
+
+  const startNotionOAuthMutation = useMutation({
+    mutationFn: () =>
+      apiClient.startNotionOAuth({
+        clientId: notionOauthClientId.trim() || undefined,
+        clientSecret: notionOauthClientSecret.trim() || undefined,
+        redirectUri: notionOauthRedirectUri.trim() || undefined,
+      }),
+    onSuccess: async (res) => {
+      setNotionOauthClientSecret('');
+      void queryClient.invalidateQueries({ queryKey: ['settings'] });
+      setNotionNotice({
+        ok: true,
+        text: 'Browser opened — approve access in Notion and return here.',
+      });
+      if (window.veyraDesktop?.openExternalUrl) {
+        await window.veyraDesktop.openExternalUrl(res.authorizeUrl);
+      } else {
+        window.open(res.authorizeUrl, '_blank', 'noopener,noreferrer');
+      }
+    },
+    onError: (err) => {
+      setNotionNotice({
+        ok: false,
+        text: err instanceof Error ? err.message : 'Failed to start Notion OAuth flow',
+      });
+    },
+  });
+
+  const defaultNotionRedirectUri =
+    typeof window !== 'undefined' &&
+    (window.location.protocol === 'http:' || window.location.protocol === 'https:')
+      ? `${window.location.origin}/api/integrations/notion/oauth/callback`
+      : 'http://127.0.0.1:4173/api/integrations/notion/oauth/callback';
+
+  const effectiveNotionRedirectUri =
+    notionOauthRedirectUri.trim() || defaultNotionRedirectUri;
+
+  const handleCopyNotionRedirect = async () => {
+    try {
+      await navigator.clipboard.writeText(effectiveNotionRedirectUri);
+      setCopiedNotionRedirect(true);
+      window.setTimeout(() => setCopiedNotionRedirect(false), 1600);
+    } catch {
+      // Clipboard unavailable in headless test environments
+    }
+  };
 
   const syncNowMutation = useMutation({
     mutationFn: () => apiClient.syncEvents(),
@@ -1001,7 +1054,7 @@ function IntegrationsSettingsSection() {
       </div>
 
       {/* Notion Links Integration Card */}
-      <form onSubmit={handleSaveNotionToken} className="veyra-card space-y-4">
+      <div className="veyra-card space-y-5">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="flex items-start gap-3 min-w-0 flex-1">
             <span className="w-8 h-8 rounded-[8px] bg-[#262626] border border-[#3C3C3C] inline-flex items-center justify-center text-[#C4C4C4] shrink-0">
@@ -1010,9 +1063,9 @@ function IntegrationsSettingsSection() {
             <div className="space-y-0.5 min-w-0">
               <div className="text-[14px] font-semibold text-[#EDEDED]">Notion Links</div>
               <div className="text-[12.5px] text-[#9A9A9A]">
-                Paste any <code className="text-[#C4C4C4]">notion.so</code> URL zero-config, or add
-                an optional Notion integration token to search and attach pages inline without
-                mirroring subtasks.
+                Paste any <code className="text-[#C4C4C4]">notion.so</code> URL zero-config, or
+                connect via Notion OAuth (works without workspace admin permissions) or an internal
+                API token to search and attach pages inline.
               </div>
             </div>
           </div>
@@ -1020,9 +1073,11 @@ function IntegrationsSettingsSection() {
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
             <Pill tone={notionConfigured ? 'energy-up' : 'neutral'} dot={notionConfigured}>
               {notionConfigured
-                ? notionTokenSource === 'env'
-                  ? 'Connected · ENV'
-                  : 'Connected'
+                ? settings?.notionWorkspaceName
+                  ? `Connected · ${settings.notionWorkspaceName}`
+                  : notionTokenSource === 'env'
+                    ? 'Connected · ENV'
+                    : 'Connected'
                 : 'URL Paste Only'}
             </Pill>
             <Pill tone="neutral" className="tabular-nums">
@@ -1043,62 +1098,158 @@ function IntegrationsSettingsSection() {
           </div>
         </div>
 
-        <div className="space-y-1.5">
-          <label htmlFor="notion-token-input" className="text-[11.5px] text-[#9A9A9A] block">
-            Notion Integration Token (optional)
-          </label>
-          <input
-            id="notion-token-input"
-            type="password"
-            autoComplete="off"
-            value={notionTokenInput}
-            onChange={(e) => setNotionTokenInput(e.target.value)}
-            placeholder={
-              notionTokenSource === 'settings'
-                ? '•••••••••••••••• (saved — enter new token to replace)'
-                : notionTokenSource === 'env'
-                  ? 'Configured via VEYRA_NOTION_TOKEN (enter token to override)'
-                  : 'ntn_… or secret_…'
-            }
-            className="w-full h-9 px-3 rounded-[8px] bg-[#262626] border border-[#3C3C3C] focus:border-[#5566F2] text-[13px] font-mono text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none"
-          />
-          <p className="text-[11.5px] text-[#6E6E6E]">
-            Stored on the Veyra server and never returned to the browser. You can also configure{' '}
-            <code className="text-[#9A9A9A]">VEYRA_NOTION_TOKEN</code> in the server environment.
-          </p>
-        </div>
-
-        <div className="flex items-center justify-between gap-2 pt-2 border-t border-[#2A2A2A] flex-wrap">
-          <div className="text-[12px]">
-            {notionNotice ? (
-              <span className={notionNotice.ok ? 'text-[#7BE0A0]' : 'text-[#FF9EC5]'}>
-                {notionNotice.text}
-              </span>
-            ) : null}
-          </div>
-          <div className="flex items-center gap-2">
-            {notionTokenSource === 'settings' ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={handleClearNotionToken}
-                disabled={updateSettingsMutation.isPending}
-              >
-                Remove Token
-              </Button>
-            ) : null}
+        {/* Notion OAuth 2.0 Connection (works without admin internal-token permissions) */}
+        <div className="pt-4 border-t border-[#2A2A2A] space-y-3">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-[#6E6E6E]">
+              Connect with Notion OAuth (User-Scoped)
+            </span>
             <Button
-              type="submit"
+              type="button"
+              variant="secondary"
+              size="xs"
+              leftIcon={copiedNotionRedirect ? <Check size={11} /> : <Copy size={11} />}
+              onClick={() => void handleCopyNotionRedirect()}
+            >
+              {copiedNotionRedirect ? 'Copied Redirect URI' : 'Copy Redirect URI'}
+            </Button>
+          </div>
+
+          <div className="space-y-1.5">
+            <label htmlFor="notion-oauth-redirect-input" className="text-[11.5px] text-[#9A9A9A] block">
+              Redirect URI (register this exact URL in your Notion OAuth connection)
+            </label>
+            <input
+              id="notion-oauth-redirect-input"
+              type="text"
+              value={notionOauthRedirectUri}
+              onChange={(e) => setNotionOauthRedirectUri(e.target.value)}
+              placeholder={defaultNotionRedirectUri}
+              className="w-full h-9 px-3 rounded-[8px] bg-[#262626] border border-[#3C3C3C] focus:border-[#5566F2] text-[12.5px] font-mono text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label htmlFor="notion-oauth-client-id" className="text-[11.5px] text-[#9A9A9A] block">
+                OAuth Client ID
+              </label>
+              <input
+                id="notion-oauth-client-id"
+                type="text"
+                autoComplete="off"
+                value={notionOauthClientId}
+                onChange={(e) => setNotionOauthClientId(e.target.value)}
+                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                className="w-full h-9 px-3 rounded-[8px] bg-[#262626] border border-[#3C3C3C] focus:border-[#5566F2] text-[12.5px] font-mono text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label
+                htmlFor="notion-oauth-client-secret"
+                className="text-[11.5px] text-[#9A9A9A] block"
+              >
+                OAuth Client Secret
+              </label>
+              <input
+                id="notion-oauth-client-secret"
+                type="password"
+                autoComplete="off"
+                value={notionOauthClientSecret}
+                onChange={(e) => setNotionOauthClientSecret(e.target.value)}
+                placeholder={
+                  settings?.notionOauthConfigured
+                    ? '•••••••••••••••• (saved — enter new secret to replace)'
+                    : 'secret_…'
+                }
+                className="w-full h-9 px-3 rounded-[8px] bg-[#262626] border border-[#3C3C3C] focus:border-[#5566F2] text-[12.5px] font-mono text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <span className="text-[11.5px] text-[#6E6E6E]">
+              Opens Notion in your browser so you can pick which pages Veyra may search.
+            </span>
+            <Button
+              type="button"
               variant="primary"
               size="sm"
-              disabled={!notionTokenInput.trim() || updateSettingsMutation.isPending}
+              onClick={() => startNotionOAuthMutation.mutate()}
+              disabled={
+                startNotionOAuthMutation.isPending ||
+                (!settings?.notionOauthConfigured &&
+                  (!notionOauthClientId.trim() || !notionOauthClientSecret.trim()))
+              }
             >
-              Save Token
+              {notionConfigured ? 'Reconnect Notion' : 'Connect with Notion'}
             </Button>
           </div>
         </div>
-      </form>
+
+        {/* Manual Internal Integration Token (alternative) */}
+        <form
+          onSubmit={handleSaveNotionToken}
+          className="pt-4 border-t border-[#2A2A2A] space-y-3"
+        >
+          <div className="space-y-1.5">
+            <label htmlFor="notion-token-input" className="text-[11.5px] text-[#9A9A9A] block">
+              Or paste a static Notion Integration Token (optional)
+            </label>
+            <input
+              id="notion-token-input"
+              type="password"
+              autoComplete="off"
+              value={notionTokenInput}
+              onChange={(e) => setNotionTokenInput(e.target.value)}
+              placeholder={
+                notionTokenSource === 'settings'
+                  ? '•••••••••••••••• (saved — enter new token to replace)'
+                  : notionTokenSource === 'env'
+                    ? 'Configured via VEYRA_NOTION_TOKEN (enter token to override)'
+                    : 'ntn_… or secret_…'
+              }
+              className="w-full h-9 px-3 rounded-[8px] bg-[#262626] border border-[#3C3C3C] focus:border-[#5566F2] text-[13px] font-mono text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none"
+            />
+            <p className="text-[11.5px] text-[#6E6E6E]">
+              Stored on the Veyra server and never returned to the browser. You can also configure{' '}
+              <code className="text-[#9A9A9A]">VEYRA_NOTION_TOKEN</code> in the server environment.
+            </p>
+          </div>
+
+          <div className="flex items-center justify-between gap-2 pt-2 border-t border-[#2A2A2A] flex-wrap">
+            <div className="text-[12px]">
+              {notionNotice ? (
+                <span className={notionNotice.ok ? 'text-[#7BE0A0]' : 'text-[#FF9EC5]'}>
+                  {notionNotice.text}
+                </span>
+              ) : null}
+            </div>
+            <div className="flex items-center gap-2">
+              {notionTokenSource === 'settings' ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleClearNotionToken}
+                  disabled={updateSettingsMutation.isPending}
+                >
+                  Remove Token
+                </Button>
+              ) : null}
+              <Button
+                type="submit"
+                variant="secondary"
+                size="sm"
+                disabled={!notionTokenInput.trim() || updateSettingsMutation.isPending}
+              >
+                Save Token
+              </Button>
+            </div>
+          </div>
+        </form>
+      </div>
 
       {/* macOS Focus Mode Presence Card */}
       <form onSubmit={handleSaveMacOsFocus} className="veyra-card space-y-4">
@@ -1694,15 +1845,15 @@ function HotkeyListCard({
   rows: HotkeyRow[];
 }) {
   return (
-    <section className="veyra-card space-y-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-2.5 min-w-0">
-          <span className="w-7 h-7 rounded-[7px] bg-[#242424] border border-[#323232] inline-flex items-center justify-center text-[#AEB8FF] shrink-0 mt-0.5">
+    <section className="veyra-card p-6 space-y-4">
+      <div className="flex items-start justify-between gap-4 pb-1">
+        <div className="flex items-start gap-3 min-w-0">
+          <span className="w-8 h-8 rounded-[8px] bg-[#242424] border border-[#323232] inline-flex items-center justify-center text-[#AEB8FF] shrink-0 mt-0.5">
             {icon}
           </span>
-          <div className="space-y-0.5 min-w-0">
-            <h2 className="text-[13.5px] font-semibold text-[#EDEDED] leading-snug">{heading}</h2>
-            <p className="text-[12px] text-[#7D7D7D]">{subtitle}</p>
+          <div className="space-y-1 min-w-0">
+            <h2 className="text-[14px] font-semibold text-[#EDEDED] leading-snug">{heading}</h2>
+            <p className="text-[12.5px] text-[#7D7D7D]">{subtitle}</p>
           </div>
         </div>
         {badge ? <div className="shrink-0">{badge}</div> : null}
@@ -1710,8 +1861,8 @@ function HotkeyListCard({
 
       <div className="divide-y divide-[#262626] border-t border-[#2A2A2A]">
         {rows.map((row) => (
-          <div key={row.label} className="py-1 first:pt-1.5 last:pb-0">
-            <div className="py-2 -mx-2 px-2 rounded-[8px] flex items-center justify-between gap-4 hover:bg-white/[0.025] transition-colors">
+          <div key={row.label} className="py-1 first:pt-2 last:pb-0">
+            <div className="py-2 -mx-2.5 px-2.5 rounded-[8px] flex items-center justify-between gap-6 hover:bg-white/[0.025] transition-colors">
               <div className="min-w-0">
                 <div className="text-[13.5px] font-medium text-[#EDEDED]">{row.label}</div>
                 <div className="text-[12px] text-[#8E8E8E] mt-0.5">{row.description}</div>
@@ -1799,7 +1950,7 @@ function ShortcutsSettingsSection() {
     },
     {
       label: 'Quick Focus',
-      description: 'Opens floating capture directly on Focus Now. Type a title and hit Enter to start.',
+      description: 'Opens floating capture directly on Focus Now to create and focus in one step',
       binding: { chords: [['⌘', '⇧', 'O'], ['⌃', 'O']], separator: 'or' },
     },
     {
@@ -1810,8 +1961,8 @@ function ShortcutsSettingsSection() {
   ];
 
   return (
-    <div className="space-y-6">
-      <header className="space-y-1">
+    <div className="space-y-7 pb-6">
+      <header className="space-y-1.5">
         <h1 className="font-display text-[24px] font-semibold text-[#EDEDED]">
           Keyboard Shortcuts
         </h1>

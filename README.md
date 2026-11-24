@@ -75,7 +75,13 @@ pnpm build
 pnpm dev:desktop
 ```
 
-Package a standalone `Veyra.app` and `.dmg` for macOS arm64:
+Build, package and install the new version into `/Applications` in one command (quits a running Veyra, replaces the app, restarts the `com.veyra.hook-listener` launch agent if present, and reopens Veyra):
+
+```bash
+pnpm install:mac
+```
+
+Package a standalone `Veyra.app` and `.dmg` for macOS arm64 without installing it:
 
 ```bash
 pnpm package:mac

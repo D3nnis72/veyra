@@ -8,6 +8,7 @@ import {
   type VeyraDb,
   getSettings,
   resolveNotionToken,
+  updateSettings,
 } from '@veyra/core';
 
 export const NOTION_API_VERSION = '2022-06-28';
@@ -29,9 +30,17 @@ export class NotionApiError extends Error {
 
 export interface NotionClientOptions {
   envToken?: string;
+  envOauthClientId?: string;
+  envOauthClientSecret?: string;
   apiBaseUrl?: string;
   timeoutMs?: number;
   fetcher?: typeof fetch;
+}
+
+export interface NotionOAuthExchangeResult {
+  accessToken: string;
+  workspaceName: string | null;
+  botId: string | null;
 }
 
 interface NotionRichTextPart {
@@ -132,9 +141,15 @@ async function readNotionErrorMessage(response: Response): Promise<string> {
   try {
     const text = await response.text();
     if (text.trim()) {
-      const parsed = JSON.parse(text) as { message?: unknown };
+      const parsed = JSON.parse(text) as { message?: unknown; error_description?: unknown; error?: unknown };
       if (typeof parsed.message === 'string' && parsed.message.trim()) {
         return parsed.message.trim();
+      }
+      if (typeof parsed.error_description === 'string' && parsed.error_description.trim()) {
+        return parsed.error_description.trim();
+      }
+      if (typeof parsed.error === 'string' && parsed.error.trim()) {
+        return parsed.error.trim();
       }
     }
   } catch {
@@ -146,6 +161,8 @@ async function readNotionErrorMessage(response: Response): Promise<string> {
 export class NotionClient {
   private readonly veyraDb: VeyraDb;
   private readonly envToken?: string;
+  private readonly envOauthClientId?: string;
+  private readonly envOauthClientSecret?: string;
   private readonly apiBaseUrl: string;
   private readonly timeoutMs: number;
   private readonly fetcher: typeof fetch;
@@ -153,6 +170,8 @@ export class NotionClient {
   constructor(veyraDb: VeyraDb, options?: NotionClientOptions) {
     this.veyraDb = veyraDb;
     this.envToken = options?.envToken?.trim() || undefined;
+    this.envOauthClientId = options?.envOauthClientId?.trim() || undefined;
+    this.envOauthClientSecret = options?.envOauthClientSecret?.trim() || undefined;
     this.apiBaseUrl = (options?.apiBaseUrl ?? DEFAULT_NOTION_API_BASE_URL).replace(/\/+$/, '');
     this.timeoutMs = options?.timeoutMs ?? 8_000;
     this.fetcher = options?.fetcher ?? fetch;
@@ -161,6 +180,119 @@ export class NotionClient {
   resolveToken(): { token: string | null; source: NotionTokenSource | null } {
     const settings = getSettings(this.veyraDb);
     return resolveNotionToken(settings, this.envToken);
+  }
+
+  resolveOAuthCredentials(): {
+    clientId: string | null;
+    clientSecret: string | null;
+    redirectUri: string | null;
+  } {
+    const settings = getSettings(this.veyraDb);
+    return {
+      clientId: settings.notionOauthClientId?.trim() || this.envOauthClientId || null,
+      clientSecret:
+        settings.notionOauthClientSecret?.trim() || this.envOauthClientSecret || null,
+      redirectUri: settings.notionOauthRedirectUri?.trim() || null,
+    };
+  }
+
+  buildOAuthAuthorizeUrl(params: {
+    clientId: string;
+    redirectUri: string;
+    state: string;
+  }): string {
+    const url = new URL(`${this.apiBaseUrl}/v1/oauth/authorize`);
+    url.searchParams.set('client_id', params.clientId);
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('owner', 'user');
+    url.searchParams.set('redirect_uri', params.redirectUri);
+    url.searchParams.set('state', params.state);
+    return url.toString();
+  }
+
+  async exchangeOAuthCode(params: {
+    code: string;
+    redirectUri: string;
+    now?: Date;
+  }): Promise<NotionOAuthExchangeResult> {
+    const { clientId, clientSecret } = this.resolveOAuthCredentials();
+    if (!clientId || !clientSecret) {
+      throw new ValidationError('Notion OAuth client ID and client secret are not configured');
+    }
+
+    const basic = Buffer.from(`${clientId}:${clientSecret}`, 'utf8').toString('base64');
+
+    let response: Response;
+    try {
+      response = await this.fetcher(`${this.apiBaseUrl}/v1/oauth/token`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${basic}`,
+          'Content-Type': 'application/json',
+          'Notion-Version': NOTION_API_VERSION,
+          'User-Agent': 'Veyra/0.1.0',
+        },
+        body: JSON.stringify({
+          grant_type: 'authorization_code',
+          code: params.code,
+          redirect_uri: params.redirectUri,
+        }),
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new NotionApiError(`Failed to reach Notion OAuth token endpoint: ${detail}`);
+    }
+
+    if (!response.ok) {
+      const message = await readNotionErrorMessage(response);
+      throw new NotionApiError(message, {
+        code: response.status === 401 ? 'NOTION_OAUTH_UNAUTHORIZED' : 'NOTION_OAUTH_ERROR',
+        statusCode: response.status,
+      });
+    }
+
+    let json: {
+      access_token?: unknown;
+      workspace_name?: unknown;
+      bot_id?: unknown;
+    };
+    try {
+      json = (await response.json()) as {
+        access_token?: unknown;
+        workspace_name?: unknown;
+        bot_id?: unknown;
+      };
+    } catch {
+      throw new NotionApiError('Notion OAuth token endpoint returned invalid JSON', {
+        statusCode: response.status,
+      });
+    }
+
+    if (typeof json.access_token !== 'string' || !json.access_token.trim()) {
+      throw new NotionApiError('Notion OAuth response did not include an access_token', {
+        statusCode: response.status,
+      });
+    }
+
+    const accessToken = json.access_token.trim();
+    const workspaceName =
+      typeof json.workspace_name === 'string' && json.workspace_name.trim()
+        ? json.workspace_name.trim()
+        : null;
+    const botId =
+      typeof json.bot_id === 'string' && json.bot_id.trim() ? json.bot_id.trim() : null;
+
+    updateSettings(
+      this.veyraDb,
+      {
+        notionToken: accessToken,
+        notionWorkspaceName: workspaceName,
+      },
+      { now: params.now, actor: 'user' },
+    );
+
+    return { accessToken, workspaceName, botId };
   }
 
   async search(

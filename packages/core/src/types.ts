@@ -272,6 +272,10 @@ export const settingsSchema = z.object({
   webhookUrl: z.string().nullable(),
   webhookEvents: z.array(webhookEventNameSchema),
   notionToken: z.string().nullable(),
+  notionOauthClientId: z.string().nullable(),
+  notionOauthClientSecret: z.string().nullable(),
+  notionOauthRedirectUri: z.string().nullable(),
+  notionWorkspaceName: z.string().nullable(),
   macosFocusEnabled: z.boolean(),
   macosFocusStartShortcut: z.string().nullable(),
   macosFocusEndShortcut: z.string().nullable(),
@@ -281,10 +285,13 @@ export const settingsSchema = z.object({
 });
 export type Settings = z.infer<typeof settingsSchema>;
 
-export const publicSettingsSchema = settingsSchema.omit({ notionToken: true }).extend({
-  notionConfigured: z.boolean(),
-  notionTokenSource: notionTokenSourceSchema.nullable(),
-});
+export const publicSettingsSchema = settingsSchema
+  .omit({ notionToken: true, notionOauthClientSecret: true })
+  .extend({
+    notionConfigured: z.boolean(),
+    notionTokenSource: notionTokenSourceSchema.nullable(),
+    notionOauthConfigured: z.boolean(),
+  });
 export type PublicSettings = z.infer<typeof publicSettingsSchema>;
 
 export const notionObjectTypeSchema = z.enum(['page', 'database']);
@@ -310,6 +317,11 @@ export interface NotionTestConnectionResult {
   workspaceName: string | null;
   botName: string | null;
   error: string | null;
+}
+
+export interface NotionOAuthStartResponse {
+  authorizeUrl: string;
+  redirectUri: string;
 }
 
 export const macOsFocusPhaseSchema = z.enum(['start', 'end']);
@@ -548,6 +560,10 @@ export const updateSettingsInputSchema = z.object({
   webhookUrl: z.string().nullable().optional(),
   webhookEvents: z.array(webhookEventNameSchema).optional(),
   notionToken: z.string().nullable().optional(),
+  notionOauthClientId: z.string().nullable().optional(),
+  notionOauthClientSecret: z.string().nullable().optional(),
+  notionOauthRedirectUri: z.string().nullable().optional(),
+  notionWorkspaceName: z.string().nullable().optional(),
   macosFocusEnabled: z.boolean().optional(),
   macosFocusStartShortcut: z.string().nullable().optional(),
   macosFocusEndShortcut: z.string().nullable().optional(),

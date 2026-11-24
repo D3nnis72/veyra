@@ -36,13 +36,24 @@ export function resolveNotionToken(
 export function toPublicSettings(
   row: Settings,
   envNotionToken?: string | null,
+  envNotionOauth?: { clientId?: string | null; clientSecret?: string | null },
 ): PublicSettings {
-  const { notionToken: _secret, ...rest } = row;
+  const {
+    notionToken: _secret,
+    notionOauthClientSecret: _oauthSecret,
+    ...rest
+  } = row;
   const { source } = resolveNotionToken(row, envNotionToken);
+  const resolvedClientId =
+    row.notionOauthClientId?.trim() || envNotionOauth?.clientId?.trim() || null;
+  const resolvedClientSecret =
+    row.notionOauthClientSecret?.trim() || envNotionOauth?.clientSecret?.trim() || null;
   return {
     ...rest,
+    notionOauthClientId: resolvedClientId,
     notionConfigured: source !== null,
     notionTokenSource: source,
+    notionOauthConfigured: Boolean(resolvedClientId && resolvedClientSecret),
   };
 }
 
@@ -99,6 +110,24 @@ export function updateSettings(
       parsed.notionToken !== undefined
         ? parsed.notionToken?.trim() || null
         : existing.notionToken,
+    notionOauthClientId:
+      parsed.notionOauthClientId !== undefined
+        ? parsed.notionOauthClientId?.trim() || null
+        : existing.notionOauthClientId,
+    notionOauthClientSecret:
+      parsed.notionOauthClientSecret !== undefined
+        ? parsed.notionOauthClientSecret?.trim() || null
+        : existing.notionOauthClientSecret,
+    notionOauthRedirectUri:
+      parsed.notionOauthRedirectUri !== undefined
+        ? parsed.notionOauthRedirectUri?.trim() || null
+        : existing.notionOauthRedirectUri,
+    notionWorkspaceName:
+      parsed.notionWorkspaceName !== undefined
+        ? parsed.notionWorkspaceName?.trim() || null
+        : parsed.notionToken === null
+          ? null
+          : existing.notionWorkspaceName,
     macosFocusEnabled: parsed.macosFocusEnabled ?? existing.macosFocusEnabled,
     macosFocusStartShortcut:
       parsed.macosFocusStartShortcut !== undefined
@@ -131,6 +160,10 @@ export function updateSettings(
         webhookUrl: updated.webhookUrl,
         webhookEvents: updated.webhookEvents,
         notionToken: updated.notionToken,
+        notionOauthClientId: updated.notionOauthClientId,
+        notionOauthClientSecret: updated.notionOauthClientSecret,
+        notionOauthRedirectUri: updated.notionOauthRedirectUri,
+        notionWorkspaceName: updated.notionWorkspaceName,
         macosFocusEnabled: updated.macosFocusEnabled,
         macosFocusStartShortcut: updated.macosFocusStartShortcut,
         macosFocusEndShortcut: updated.macosFocusEndShortcut,
