@@ -17,7 +17,7 @@ Builds on the shipped goals in [domain-invariants.md](../../../knowledge/archite
 
 ## Current direction {#direction updated=2026-11-24}
 
-Goals come in two kinds: **personal** goals and **company** goals. Both live in the same place, are linked to blocks, meetings and projects the same way, and use the same color and status. They are shown apart: two groups in `Settings → Goals`, and a small company marker wherever a goal pill appears. Reading of the request: the user wants the two kinds separated a bit, not merged into one list and not turned into a second system.
+Goals come in two kinds: **personal** goals and **company** goals. Both live in the same place, are linked to blocks, meetings and projects the same way, and use the same color and status. They are shown clearly apart: two separate group panels in `Settings → Goals`, each with its own header, the Company panel with its own tint. Inside the Company panel the cards carry no extra tag, because the group already says it. Outside a group (block completion card, Weekly Review) the kind is named in text. Reading of the request: the user wants the two kinds separated a bit, not merged into one list and not turned into a second system.
 
 Why this fits what exists: a `Project` already has a `defaultGoalId`, so hanging a customer project on the company goal "Upsells" already sends all its blocks there. What is missing is the difference between the kinds and the evaluation of it.
 
