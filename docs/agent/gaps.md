@@ -2,10 +2,10 @@
 
 Open post-MVP items and known non-blocking improvements. Remove each item once resolved or moved into its canonical owner.
 
-## Step 03 Ecosystem Loop (Open Canvas)
+## Step 03 Ecosystem Loop (Remaining Scope)
 
 - **Area:** `docs/playbook/canvases/veyra/03_ecosystem_loop.md`
-- **Detail:** Post-block T3 Code auto-summary and `Ops` pattern extraction (`focus.ended` / `block.completed` webhook consumer), T3 Code Focus filter (`focus.started`), Teams/Outlook/macOS Focus presence write-back, inline Notion search picker, and dedicated iOS app remain intentionally deferred to Step 03.
+- **Detail:** `T3 Code Focus Mode Filter` (`focus.started` thread/project filter), `Teams/Outlook/macOS Focus Presence Write-Back`, and `Dedicated iOS App` remain intentionally open in Step 03. (Menu bar active project icon & controls, inline Notion search & link picker, and the event hooks listener + post-block auto-summary & `Ops` pattern runner have shipped.)
 
 ## Web Bundle Code-Splitting
 

@@ -13,6 +13,7 @@ groundedIn:
   - packages/cli/src/client.ts
   - packages/cli/src/config.ts
   - packages/cli/src/hook-listener.ts
+  - packages/cli/src/auto-summary.ts
   - skills/veyra/SKILL.md
 updateWhen:
   - CLI commands, flags, config resolution, or error format change
@@ -41,7 +42,9 @@ Full option signatures live in `packages/cli/src/commands.ts` and `skills/veyra/
 - **Plan and prune:** `veyra add`, `veyra update`, `veyra move` (supports `--date`, `--start`, `--end`), `veyra reorder`, `veyra park --revisit <horizon|YYYY-MM-DD>`, `veyra drop [--stop-series]`, `veyra reopen`, `veyra project create/update` (`--keywords <csv>` sets calendar `matchKeywords`), `veyra goal create/update`
 - **Focus and retroactive session edits:** `veyra start`, `veyra pause [--note]`, `veyra resume`, `veyra stop`, `veyra done [--energy] [--outcome]`, `veyra summary set <id> <text>`, `veyra summary clear <id>`, `veyra session log`, `veyra session trim`, `veyra session split --at <ISO> --gap <min>`, `veyra session delete <sessionId>`
 - **Daily notes, review, and meetings:** `veyra note add`, `veyra notes [--week]`, `veyra review set-rule`, `veyra events`, `veyra events sync`, `veyra events auto-match`, `veyra events upsert`, `veyra events assign`
-- **Event hooks listener:** `veyra hook listen [--port 4174] [--host 127.0.0.1] [--path /webhook] [--on-focus-start <cmd>] [--on-focus-end <cmd>] [--on-complete <cmd>] [--on-any <cmd>] [--secret <secret>] [--timeout <ms>]` (streams NDJSON records when `--json` is passed)
+- **Event hooks listener & auto-summary runner:**
+  - `veyra hook listen [--port 4174] [--host 127.0.0.1] [--path /hooks/veyra] [--auto-summary --summarizer-cmd <cmd>] [--workspace <dir>] [--context-cmd <cmd>] [--min-minutes 5] [--dry-run] [--on-focus-start <cmd>] [--on-focus-end <cmd>] [--on-complete <cmd>] [--on-any <cmd>] [--secret <secret>] [--timeout <ms>]` (accepts `/hooks/veyra`, `/webhook`, and `/` by default; streams NDJSON records including `auto_summary_result` when `--json` is passed)
+  - `veyra hook summarize <blockId> [--from <iso>] [--to <iso>] [--cmd <summarizerCmd>] [--workspace <dir>] [--context-cmd <cmd>] [--min-minutes 5] [--timeout <ms>] [--dry-run] [--json]` (collects window context, branches prompt on `block.isOps`, invokes stdin-to-stdout summarizer, and writes back `autoSummary` via `PATCH /api/blocks/:id`)
 
 ## Bundled Agent Skill
 

@@ -641,7 +641,10 @@ describe('Veyra Web App Flows', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
     // Webhook listener snippet and recent webhook delivery logs surface in Integrations
-    expect(screen.getByText(/veyra hook listen --port 4174/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/veyra hook listen --port 4174 --auto-summary --summarizer-cmd "claude -p"/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/http:\/\/127\.0\.0\.1:4174\/hooks\/veyra/i)).toBeInTheDocument();
     expect(await screen.findByText(/Delivered webhook 'block\.completed'/i)).toBeInTheDocument();
     expect(screen.getByText(/Failed to deliver webhook 'focus\.started'/i)).toBeInTheDocument();
 

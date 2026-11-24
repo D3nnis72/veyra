@@ -82,20 +82,26 @@ veyra session split <sessionId> --at 2026-11-23T09:30:00Z --gap 15 --json
 
 ## 4. Event Hooks & Post-Block Auto-Summary Loop
 
-Run Veyra's built-in webhook receiver to react to `focus.started`, `focus.ended`, and `block.completed` events (configure `http://127.0.0.1:4174/webhook` in `Settings → Integrations`):
+Run Veyra's built-in webhook receiver and post-block auto-summary runner to react to `focus.started`, `focus.ended`, and `block.completed` events (configure `http://127.0.0.1:4174/hooks/veyra` or `/webhook` in `Settings → Integrations`):
 
 ```bash
+# Built-in post-block auto-summary & Ops pattern runner
 veyra hook listen --port 4174 \
-  --on-focus-start './scripts/enter-focus.sh' \
-  --on-focus-end './scripts/exit-focus.sh' \
-  --on-complete './scripts/summarize-block.sh' \
+  --auto-summary \
+  --summarizer-cmd "claude -p" \
+  --workspace ~/code/my-repo \
+  --min-minutes 5 \
   --json
+
+# Run on demand for a single block (use --dry-run to inspect context & prompt without writing)
+veyra hook summarize <blockId> --cmd "claude -p" --workspace ~/code/my-repo --json
+veyra hook summarize <blockId> --from 2026-11-23T09:00:00Z --to 2026-11-23T09:45:00Z --dry-run --json
 ```
 
-- Each handler receives the full JSON payload (`{ event, timestamp, data }`) on stdin plus structured env vars (`VEYRA_EVENT`, `VEYRA_BLOCK_ID`, `VEYRA_BLOCK_TITLE`, `VEYRA_BLOCK_IS_OPS`, `VEYRA_PROJECT_ID`, `VEYRA_GOAL_ID`, `VEYRA_SESSION_START`, `VEYRA_SESSION_END`, `VEYRA_TOTAL_BLOCK_MINUTES`, `VEYRA_PAYLOAD`).
+- `--auto-summary` runs automatically on `focus.ended` and `block.completed` (deduplicating paired completion events), skips trivial sessions under `--min-minutes` (default `5`), gathers block notes/outcome/resume notes plus opt-in git commits (`--workspace <dir>`, repeatable) and custom transcript/chat collectors (`--context-cmd <cmd>`, repeatable), prompts for a 1–2 sentence progress summary — highlighting recurring failure/request patterns and automation candidates when `block.isOps` is true — and writes back to `PATCH /api/blocks/:id` (`autoSummary`).
+- You can also combine or replace `--auto-summary` with shell handlers (`--on-focus-start`, `--on-focus-end`, `--on-complete`, `--on-any`), which receive the full JSON payload on stdin plus structured env vars (`VEYRA_EVENT`, `VEYRA_BLOCK_ID`, `VEYRA_BLOCK_TITLE`, `VEYRA_BLOCK_IS_OPS`, `VEYRA_PROJECT_ID`, `VEYRA_GOAL_ID`, `VEYRA_SESSION_START`, `VEYRA_SESSION_END`, `VEYRA_TOTAL_BLOCK_MINUTES`, `VEYRA_PAYLOAD`).
 - Pass `--secret <secret>` (or set `VEYRA_WEBHOOK_SECRET` on both server and listener) to require HMAC-SHA256 verification via `X-Veyra-Signature-256`.
-- A post-block summarizer script inspects the completed block's `[VEYRA_SESSION_START, VEYRA_SESSION_END]` window, captures what was accomplished (and recurring failure/request patterns on `Ops` blocks), and writes back via `veyra summary set "$VEYRA_BLOCK_ID" "..." --json`.
-- `--json` streams newline-delimited JSON (NDJSON) events (`listening`, `event`, `handler_result`, `rejected`, `stopped`).
+- `--json` streams newline-delimited JSON (NDJSON) events (`listening`, `event`, `handler_result`, `auto_summary_result`, `rejected`, `stopped`).
 
 ## 5. Daily Notes & Weekly Review
 

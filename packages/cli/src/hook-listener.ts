@@ -2,12 +2,22 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import http from 'node:http';
 import { z } from 'zod';
+import {
+  DEFAULT_AUTO_SUMMARY_MIN_MINUTES,
+  runAutoSummary,
+  type AutoSummaryClient,
+  type AutoSummaryResult,
+  type ContextCollector,
+  type SummarizerRunner,
+} from './auto-summary.js';
 
 export const DEFAULT_HOOK_PORT = 4174;
 export const DEFAULT_HOOK_HOST = '127.0.0.1';
 export const DEFAULT_HOOK_PATH = '/webhook';
+export const DEFAULT_HOOK_ACCEPTED_PATHS = ['/', '/webhook', '/hooks/veyra'] as const;
 export const DEFAULT_HOOK_TIMEOUT_MS = 60_000;
 const MAX_OUTPUT_BYTES = 64 * 1024;
+const AUTO_SUMMARY_DEDUPE_WINDOW_MS = 15_000;
 
 export const hookWebhookPayloadSchema = z.object({
   event: z.string().min(1),
@@ -35,6 +45,19 @@ export interface HookExecutionResult {
   error?: string;
 }
 
+export interface HookListenerAutoSummaryOptions {
+  enabled: boolean;
+  summarizerCmd?: string;
+  workspaceDirs?: string[];
+  contextCmds?: string[];
+  collectors?: ContextCollector[];
+  minMinutes?: number;
+  timeoutMs?: number;
+  dryRun?: boolean;
+  client?: AutoSummaryClient;
+  runSummarizer?: SummarizerRunner;
+}
+
 export type HookLogRecord =
   | {
       type: 'listening';
@@ -48,6 +71,7 @@ export type HookLogRecord =
         any: string | null;
       };
       secretConfigured: boolean;
+      autoSummaryEnabled?: boolean;
     }
   | {
       type: 'event';
@@ -57,6 +81,7 @@ export type HookLogRecord =
       handled: boolean;
       status: 'received' | 'skipped' | 'test';
       command?: string;
+      autoSummary?: boolean;
     }
   | {
       type: 'handler_result';
@@ -74,6 +99,13 @@ export type HookLogRecord =
       error?: string;
     }
   | {
+      type: 'auto_summary_result';
+      event: string;
+      timestamp: string;
+      blockId: string | null;
+      result: AutoSummaryResult;
+    }
+  | {
       type: 'rejected';
       statusCode: number;
       reason: string;
@@ -87,6 +119,7 @@ export interface HookListenerOptions {
   host?: string;
   webhookPath?: string;
   handlers?: HookCommandMap;
+  autoSummary?: HookListenerAutoSummaryOptions;
   secret?: string;
   timeoutMs?: number;
   maxBodyBytes?: number;
@@ -329,12 +362,17 @@ export function formatHookLogHuman(record: HookLogRecord): string {
       const configured = (['focus.started', 'focus.ended', 'block.completed'] as const).filter(
         (key) => Boolean(record.handlers[key]),
       );
+      const parts: string[] = [];
+      if (record.autoSummaryEnabled) {
+        parts.push('auto-summary (focus.ended, block.completed)');
+      }
+      if (configured.length > 0) {
+        parts.push(`${configured.join(', ')}${record.handlers.any ? ' (+ fallback)' : ''}`);
+      } else if (record.handlers.any) {
+        parts.push('all events');
+      }
       const handlerSummary =
-        configured.length > 0
-          ? `Handlers: ${configured.join(', ')}${record.handlers.any ? ' (+ fallback)' : ''}`
-          : record.handlers.any
-            ? 'Handlers: all events'
-            : 'Handlers: none (logging payloads only)';
+        parts.length > 0 ? `Handlers: ${parts.join(' + ')}` : 'Handlers: none (logging payloads only)';
       const sigSuffix = record.secretConfigured ? ' · HMAC verification enabled' : '';
       return `Listening for Veyra webhooks at ${record.url}${sigSuffix}\n${handlerSummary}`;
     }
@@ -346,7 +384,13 @@ export function formatHookLogHuman(record: HookLogRecord): string {
       if (record.status === 'skipped') {
         return `[${record.timestamp}] ← ${record.event}${target} (no handler configured)`;
       }
-      return `[${record.timestamp}] ← ${record.event}${target} → running handler`;
+      const actionLabel =
+        record.autoSummary && record.command
+          ? 'running auto-summary + handler'
+          : record.autoSummary
+            ? 'running auto-summary'
+            : 'running handler';
+      return `[${record.timestamp}] ← ${record.event}${target} → ${actionLabel}`;
     }
     case 'handler_result': {
       const icon = record.ok ? '✓' : '✗';
@@ -359,11 +403,35 @@ export function formatHookLogHuman(record: HookLogRecord): string {
       const suffix = detail ? ` — ${detail.split('\n')[0]}` : '';
       return `[${record.timestamp}] ${icon} ${record.event} (${status}, ${record.durationMs}ms)${suffix}`;
     }
+    case 'auto_summary_result': {
+      const res = record.result;
+      const opsBadge = res.isOps ? ' [Ops]' : '';
+      if (res.status === 'skipped') {
+        return `[${record.timestamp}] · ${record.event}${opsBadge} auto-summary skipped (${res.durationMinutes}m < ${res.minMinutes}m)`;
+      }
+      if (res.status === 'failed') {
+        return `[${record.timestamp}] ✗ ${record.event}${opsBadge} auto-summary failed (${res.durationMs}ms) — ${res.error ?? 'unknown error'}`;
+      }
+      if (res.status === 'dry_run') {
+        return `[${record.timestamp}] ✓ ${record.event}${opsBadge} auto-summary dry-run (${res.durationMs}ms)${res.summary ? ` — ${res.summary}` : ''}`;
+      }
+      return `[${record.timestamp}] ✓ ${record.event}${opsBadge} auto-summary saved (${res.durationMs}ms) — ${res.summary ?? ''}`;
+    }
     case 'rejected':
       return `Rejected webhook request (HTTP ${record.statusCode}): ${record.reason}`;
     case 'stopped':
       return 'Webhook listener stopped.';
   }
+}
+
+function extractSessionId(payload: HookWebhookPayload): string | null {
+  const { data } = payload;
+  const session = isPlainRecord(data.session)
+    ? data.session
+    : isPlainRecord(data.closedSession)
+      ? data.closedSession
+      : null;
+  return session && typeof session.id === 'string' ? session.id : null;
 }
 
 export function startHookListener(options: HookListenerOptions = {}): Promise<HookListenerHandle> {
@@ -372,6 +440,7 @@ export function startHookListener(options: HookListenerOptions = {}): Promise<Ho
   const explicitPath = options.webhookPath ? normalizeWebhookPath(options.webhookPath) : null;
   const advertisedPath = explicitPath ?? DEFAULT_HOOK_PATH;
   const handlers: HookCommandMap = options.handlers ?? {};
+  const autoSummary = options.autoSummary?.enabled ? options.autoSummary : undefined;
   const secret = options.secret?.trim() || undefined;
   const timeoutMs = options.timeoutMs ?? DEFAULT_HOOK_TIMEOUT_MS;
   const maxBodyBytes = options.maxBodyBytes ?? 1024 * 1024;
@@ -379,6 +448,22 @@ export function startHookListener(options: HookListenerOptions = {}): Promise<Ho
   const log = options.onLog ?? (() => {});
 
   const pendingExecutions = new Set<Promise<void>>();
+  const recentAutoSummaries = new Map<string, number>();
+
+  const claimAutoSummarySlot = (blockId: string, sessionId: string | null): boolean => {
+    const now = Date.now();
+    for (const [key, seenAt] of recentAutoSummaries.entries()) {
+      if (now - seenAt > AUTO_SUMMARY_DEDUPE_WINDOW_MS) {
+        recentAutoSummaries.delete(key);
+      }
+    }
+    const dedupeKey = `${blockId}:${sessionId ?? 'nosession'}`;
+    if (recentAutoSummaries.has(dedupeKey)) {
+      return false;
+    }
+    recentAutoSummaries.set(dedupeKey, now);
+    return true;
+  };
 
   const server = http.createServer((req, res) => {
     const method = (req.method ?? 'GET').toUpperCase();
@@ -392,7 +477,7 @@ export function startHookListener(options: HookListenerOptions = {}): Promise<Ho
 
     const pathMatches = explicitPath
       ? pathname === explicitPath
-      : pathname === '/' || pathname === DEFAULT_HOOK_PATH;
+      : (DEFAULT_HOOK_ACCEPTED_PATHS as readonly string[]).includes(pathname);
 
     if (!pathMatches) {
       sendJson(res, 404, {
@@ -472,7 +557,16 @@ export function startHookListener(options: HookListenerOptions = {}): Promise<Ho
       }
 
       const command = resolveCommandForEvent(payload.event, handlers);
-      if (!command) {
+      const isAutoSummaryEvent =
+        Boolean(autoSummary) &&
+        Boolean(blockId) &&
+        (payload.event === 'focus.ended' || payload.event === 'block.completed');
+      const shouldRunAutoSummary =
+        isAutoSummaryEvent && blockId
+          ? claimAutoSummarySlot(blockId, extractSessionId(payload))
+          : false;
+
+      if (!command && !shouldRunAutoSummary) {
         log({
           type: 'event',
           event: payload.event,
@@ -492,29 +586,67 @@ export function startHookListener(options: HookListenerOptions = {}): Promise<Ho
         blockId,
         handled: true,
         status: 'received',
-        command,
+        ...(command ? { command } : {}),
+        ...(shouldRunAutoSummary ? { autoSummary: true } : {}),
       });
 
       // Respond promptly with 202 Accepted so Veyra's 5s webhook timeout never trips
-      // while longer-running agent scripts summarize the completed block.
-      sendJson(res, 202, { ok: true, event: payload.event, handled: true });
+      // while longer-running agent scripts or auto-summary LLM calls finish.
+      sendJson(res, 202, {
+        ok: true,
+        event: payload.event,
+        handled: true,
+        ...(shouldRunAutoSummary ? { autoSummary: true } : {}),
+      });
 
       const env = extractHookEnv(payload, rawBody, baseEnv);
-      const task = executeHookCommand(command, rawBody, env, timeoutMs).then((result) => {
-        log({
-          type: 'handler_result',
-          event: payload.event,
-          timestamp: payload.timestamp,
-          blockId,
-          command,
-          ...result,
-        });
-      });
 
-      pendingExecutions.add(task);
-      void task.finally(() => {
-        pendingExecutions.delete(task);
-      });
+      if (command) {
+        const task = executeHookCommand(command, rawBody, env, timeoutMs).then((result) => {
+          log({
+            type: 'handler_result',
+            event: payload.event,
+            timestamp: payload.timestamp,
+            blockId,
+            command,
+            ...result,
+          });
+        });
+
+        pendingExecutions.add(task);
+        void task.finally(() => {
+          pendingExecutions.delete(task);
+        });
+      }
+
+      if (shouldRunAutoSummary && autoSummary) {
+        const summaryTask = runAutoSummary({
+          payload,
+          summarizerCmd: autoSummary.summarizerCmd,
+          workspaceDirs: autoSummary.workspaceDirs,
+          contextCmds: autoSummary.contextCmds,
+          collectors: autoSummary.collectors,
+          minMinutes: autoSummary.minMinutes ?? DEFAULT_AUTO_SUMMARY_MIN_MINUTES,
+          timeoutMs: autoSummary.timeoutMs ?? timeoutMs,
+          dryRun: autoSummary.dryRun,
+          client: autoSummary.client,
+          env,
+          runSummarizer: autoSummary.runSummarizer,
+        }).then((result) => {
+          log({
+            type: 'auto_summary_result',
+            event: payload.event,
+            timestamp: payload.timestamp,
+            blockId,
+            result,
+          });
+        });
+
+        pendingExecutions.add(summaryTask);
+        void summaryTask.finally(() => {
+          pendingExecutions.delete(summaryTask);
+        });
+      }
     })();
   });
 
@@ -541,6 +673,7 @@ export function startHookListener(options: HookListenerOptions = {}): Promise<Ho
           any: handlers.onAny ?? null,
         },
         secretConfigured: Boolean(secret),
+        ...(autoSummary ? { autoSummaryEnabled: true } : {}),
       });
 
       let stopped = false;
