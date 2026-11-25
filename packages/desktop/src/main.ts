@@ -29,6 +29,7 @@ import {
 import {
   buildTrayMenuDescriptors,
   formatTrayToolTip,
+  hasActiveFocusSession,
   MenuBarFocusController,
   type MenuBarServerTarget,
   type TrayMenuAction,
@@ -487,11 +488,22 @@ function hideCaptureWindow(): void {
   }
 }
 
+function triggerQuickFocus(): void {
+  if (hasActiveFocusSession(menuBarFocus.getState())) {
+    hideCaptureWindow();
+    hideCommandWindow();
+    showMainWindow();
+    sendCommandActionToMain({ type: 'navigate', route: 'focus' });
+    return;
+  }
+  toggleCaptureWindow('focus');
+}
+
 type GlobalShortcutId = 'quickCapture' | 'quickFocus' | 'globalCommandPalette';
 
 const GLOBAL_SHORTCUT_HANDLERS: Record<GlobalShortcutId, () => void> = {
   quickCapture: () => toggleCaptureWindow(),
-  quickFocus: () => toggleCaptureWindow('focus'),
+  quickFocus: () => triggerQuickFocus(),
   globalCommandPalette: () => toggleCommandWindow(),
 };
 
@@ -598,7 +610,7 @@ function handleTrayMenuAction(action: TrayMenuAction): void {
       toggleCaptureWindow('daily-note');
       return;
     case 'quick-focus':
-      toggleCaptureWindow('focus');
+      triggerQuickFocus();
       return;
     case 'command-palette':
       toggleCommandWindow();

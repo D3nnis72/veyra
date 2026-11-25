@@ -30,7 +30,7 @@ export const HOTKEY_META: Record<HotkeyId, HotkeyMeta> = {
     id: 'quickFocus',
     scope: 'global',
     label: 'Quick Focus',
-    description: 'Opens floating capture directly on Focus Now to create and focus in one step',
+    description: 'Opens floating capture on Focus Now, or jumps to the active Focus view if a block is already running',
   },
   globalCommandPalette: {
     id: 'globalCommandPalette',

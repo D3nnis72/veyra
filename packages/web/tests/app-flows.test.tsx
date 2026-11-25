@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom/vitest';
 import type {
@@ -1091,5 +1091,66 @@ describe('Veyra Web App Flows', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Session detail' });
     expect(await within(dialog).findByText('Ship Veyra v1')).toBeInTheDocument();
     expect(dialog.querySelector('[data-goal-kind="company"]')).toBeInTheDocument();
+  });
+
+  it('quickFocus hotkey jumps straight to the active Focus view when a session is already running', async () => {
+    const activeFocus = {
+      activeSession: {
+        id: SESSION_1_ID,
+        blockId: BLOCK_1_ID,
+        startedAt: '2026-11-23T09:00:00.000Z',
+        endedAt: null,
+        note: null,
+        updatedAt: '2026-11-23T09:00:00.000Z',
+        deletedAt: null,
+      },
+      activeBlock: BASE_BLOCK,
+      elapsedSeconds: 300,
+      focusedTodayMinutes: 5,
+    };
+
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const parsed = new URL(url, 'http://localhost');
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (parsed.pathname === '/api/settings' && method === 'GET') {
+        return jsonResponse(BASE_SETTINGS_RESPONSE);
+      }
+      if (parsed.pathname === '/api/focus' && method === 'GET') {
+        return jsonResponse(activeFocus);
+      }
+      if (parsed.pathname === '/api/today' && method === 'GET') {
+        return jsonResponse({ ...BASE_TODAY, focusStatus: activeFocus });
+      }
+      if (parsed.pathname === '/api/projects' && method === 'GET') {
+        return jsonResponse({ projects: BASE_PROJECTS });
+      }
+      if (parsed.pathname === '/api/goals' && method === 'GET') {
+        return jsonResponse({ goals: BASE_GOALS });
+      }
+      if (parsed.pathname === `/api/blocks/${BLOCK_1_ID}` && method === 'GET') {
+        return jsonResponse({ block: { ...BASE_BLOCK, sessions: [activeFocus.activeSession], totalFocusMinutes: 5 } });
+      }
+      if (parsed.pathname === '/api/calendar' && method === 'GET') {
+        return jsonResponse(BASE_CALENDAR);
+      }
+      return jsonResponse({});
+    });
+
+    const qc = createTestQueryClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <App />
+      </QueryClientProvider>,
+    );
+
+    // Wait for Today view and active focus pill to load
+    expect(await screen.findByRole('button', { name: 'Cancel focus session' })).toBeInTheDocument();
+
+    // Press Ctrl+O (Quick Focus): should jump straight to Focus view instead of opening Quick Capture
+    fireEvent.keyDown(window, { key: 'o', code: 'KeyO', ctrlKey: true });
+
+    expect(await screen.findByRole('button', { name: /Complete Block/i })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Quick Capture' })).not.toBeInTheDocument();
   });
 });

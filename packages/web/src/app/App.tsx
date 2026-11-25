@@ -324,6 +324,11 @@ function MainAppShell({ views }: AppProps) {
         e.preventDefault();
         setCommandPaletteOpen(false);
         setCreateBlockState({ open: false });
+        if (focusStatus?.activeSession && focusStatus?.activeBlock) {
+          setQuickCaptureState((prev) => ({ ...prev, open: false }));
+          navigate('focus');
+          return;
+        }
         setQuickCaptureState((prev) =>
           prev.open && prev.tab === 'focus'
             ? { open: false, tab: 'focus' }
@@ -414,6 +419,7 @@ function MainAppShell({ views }: AppProps) {
     quickCaptureState.open,
     createBlockState.open,
     activeDrawer,
+    focusStatus,
     navigate,
     hotkeys,
   ]);

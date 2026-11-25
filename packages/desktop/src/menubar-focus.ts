@@ -68,6 +68,10 @@ export interface BuildTrayMenuOptions {
   commandShortcutLabel: string;
 }
 
+export function hasActiveFocusSession(state: MenuBarFocusState): boolean {
+  return Boolean(state.activeSession && state.activeBlock);
+}
+
 /**
  * Formats stopwatch elapsed seconds for the macOS menu bar:
  * `MM:SS` under one hour (e.g. `00:47`), `H:MM:SS` at or above one hour (e.g. `1:05:23`).
