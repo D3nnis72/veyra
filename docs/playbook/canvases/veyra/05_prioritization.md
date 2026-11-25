@@ -29,17 +29,20 @@ Blocks get a rough size (30 min, 1 h, 2 h). The default comes from your history 
 
 ## 2. The fit line {#fitline updated=2026-11-25}
 
-In `Today → UP NEXT` a thin line sits where the room runs out. Blocks above it fit, blocks below it are shown quieter under "Probably not today". No red, no counter of missing items. In `Plan` each day header shows planned against room ("4 h planned · room about 3 h"), so overplanning is visible while dragging, before the day starts.
+In `Today → UP NEXT` a thin line sits where the room runs out. Blocks above it fit, blocks below it are shown quieter under "Probably not today". No red, no counter of missing items.
+
+Figma concept (Today, Plan, day look back and Weekly Review, current state left, proposal right): [Proposal · Prioritization · Dark](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=109-3). Concept only, not decided. In `Plan` each day header shows planned against room ("4 h planned · room about 3 h"), so overplanning is visible while dragging, before the day starts.
 
 ```text
 UP NEXT                                  Room today ≈ 3h 40m
-▶ Covestro offer revision        1h   · due tomorrow
-▶ Upsell plan Wefox              1h   · Upsells behind (40m of 4h)
-▶ Sidebar polish                 1h   · Product goal
+▶ Wefox renewal offer            1h   · due tomorrow
+▶ LioCare architecture prep      30m  · prep for the 14:30 call
+▶ Upsell plan Siemens            1h   · Upsells behind (40m of 4h)
+▶ Sidebar polish                 30m  · Product goal
 ─────────────── fits today ─── about 40m left ───────────────
   Probably not today
-  ○ Refactor review query        2h      [Tomorrow] [Later] [Drop] [Tell someone]
-  ○ Teams hypercare check   Ops  30m     [Tomorrow] [Later] [Drop]
+  ○ Covestro offer revision      2h   · due Thu   [Tomorrow] [Later] [Drop] [Tell someone]
+  ○ Covestro ticket hypercare Ops 1h  · mostly just motion lately   [Tomorrow] [Later] [Drop]
 ```
 
 ## 3. A suggested order with reasons {#order updated=2026-11-25}

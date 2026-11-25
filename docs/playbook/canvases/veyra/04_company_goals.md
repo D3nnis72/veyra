@@ -89,11 +89,11 @@ Proposal, as read from the request: the app sidebar gets a `GOALS` section below
 
 The right click menu on a goal row (sidebar and Settings) uses the shared `ContextMenu`: `Open Details`, `New Block for this Goal`, `Show in Review`, `Move Up` and `Move Down` (priority), `Mark Achieved`, `Let Go`, `Delete Goal`. Achieved and Let go open the short closing question.
 
-## Did this block make sense? {#sense updated=2026-11-24}
+## Did this block make sense? {#sense updated=2026-11-25}
 
 Wanted by the user: at the end of a block and in the Weekly Review, a short look at whether the block made sense for its goal. The completion card in the Focus view already asks how the block felt (energy) and what actually moved forward. The concept adds one more question, "Did this block make sense for its goal?", with three answers: moved the goal, partly, just motion. The Weekly Review then splits goal alignment into company and personal focus time and lists the blocks marked partly or just motion under "Worth a second look". Fits principle 6 in [VISION.md](../../../VISION.md) (progress over motion).
 
-Figma concept (three before and after pairs, current state left, proposal right): [Proposal · Company Goals · Dark](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=94-4478). Concept only, not decided. The richer goal fields are not drawn yet.
+Figma concept (three before and after pairs, current state left, proposal right): [Proposal · Company Goals · Dark](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=94-4478). Concept only, not decided. Since 2026-11-25 it also shows the richer goal cards in Settings, the `GOALS` sidebar section with its right click menu, the `GoalDetailDrawer` and the per goal rows in the Weekly Review.
 
 ## What the Weekly Review does with it {#review updated=2026-11-25}
 
