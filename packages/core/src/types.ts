@@ -3,6 +3,46 @@ import { z } from 'zod';
 export const SYSTEM_OTHER_PROJECT_ID = '00000000-0000-4000-8000-000000000001';
 export const DEFAULT_SETTINGS_ID = 'default';
 export const DEFAULT_GLOBAL_CAPTURE_SHORTCUT = 'CommandOrControl+Shift+P';
+
+/**
+ * Rebindable hotkeys. `quickCapture` is stored in `globalCaptureShortcut`, every other
+ * override lives in `settings.hotkeys` (id -> Electron-style accelerator, e.g. "Alt+K").
+ * Ids missing from that map use their default.
+ */
+export const HOTKEY_DEFINITIONS = [
+  { id: 'quickCapture', scope: 'global', defaults: ['CommandOrControl+Shift+P'] },
+  { id: 'quickFocus', scope: 'global', defaults: ['CommandOrControl+Shift+O', 'Control+O'] },
+  { id: 'globalCommandPalette', scope: 'global', defaults: ['Alt+K'] },
+  { id: 'commandPalette', scope: 'app', defaults: ['CommandOrControl+K'] },
+  { id: 'newBlock', scope: 'app', defaults: ['CommandOrControl+N'] },
+  { id: 'saveDrawer', scope: 'app', defaults: ['CommandOrControl+S'] },
+  { id: 'openSettings', scope: 'app', defaults: ['CommandOrControl+,'] },
+  { id: 'cycleProject', scope: 'capture', defaults: ['Control+P'] },
+  { id: 'toggleOps', scope: 'capture', defaults: ['Alt+O'] },
+  { id: 'pauseFocus', scope: 'focus', defaults: ['P'] },
+  { id: 'completeBlock', scope: 'focus', defaults: ['C'] },
+  { id: 'toggleNotes', scope: 'focus', defaults: ['N'] },
+] as const;
+export type HotkeyId = (typeof HOTKEY_DEFINITIONS)[number]['id'];
+export type HotkeyScope = (typeof HOTKEY_DEFINITIONS)[number]['scope'];
+export const GLOBAL_HOTKEY_IDS = ['quickFocus', 'globalCommandPalette'] as const;
+export type GlobalHotkeyId = (typeof GLOBAL_HOTKEY_IDS)[number];
+export const hotkeyOverridesSchema = z.record(z.string().min(1).max(64), z.string().min(1).max(64));
+export type HotkeyOverrides = z.infer<typeof hotkeyOverridesSchema>;
+
+/** Accelerators currently active for one hotkey, honoring a user override. */
+export function resolveHotkey(
+  id: HotkeyId,
+  overrides: HotkeyOverrides | undefined,
+  globalCaptureShortcut?: string,
+): string[] {
+  if (id === 'quickCapture') {
+    return [globalCaptureShortcut?.trim() || DEFAULT_GLOBAL_CAPTURE_SHORTCUT];
+  }
+  const override = overrides?.[id]?.trim();
+  if (override) return [override];
+  return [...(HOTKEY_DEFINITIONS.find((d) => d.id === id)?.defaults ?? [])];
+}
 export const DEFAULT_PROJECT_COLOR = '#6E7280';
 export const DEFAULT_GOAL_COLOR = '#3B4BD8';
 
@@ -347,6 +387,7 @@ export const settingsSchema = z.object({
   macosFocusEndShortcut: z.string().nullable(),
   globalCaptureShortcut: z.string().min(1),
   runInMenuBar: z.boolean(),
+  hotkeys: hotkeyOverridesSchema,
   updatedAt: z.string(),
 });
 export type Settings = z.infer<typeof settingsSchema>;
@@ -679,6 +720,7 @@ export const updateSettingsInputSchema = z.object({
   macosFocusEndShortcut: z.string().nullable().optional(),
   globalCaptureShortcut: z.string().min(1).optional(),
   runInMenuBar: z.boolean().optional(),
+  hotkeys: hotkeyOverridesSchema.optional(),
 });
 export type UpdateSettingsInput = z.infer<typeof updateSettingsInputSchema>;
 

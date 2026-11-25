@@ -179,6 +179,7 @@ const BASE_SETTINGS: PublicSettings = {
   macosFocusStartShortcut: null,
   macosFocusEndShortcut: null,
   globalCaptureShortcut: 'CommandOrControl+Shift+P',
+  hotkeys: {},
   runInMenuBar: true,
   updatedAt: '2026-11-23T09:15:00.000Z',
 };

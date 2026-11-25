@@ -204,6 +204,10 @@ export const settings = sqliteTable('settings', {
     .notNull()
     .default('CommandOrControl+Shift+P'),
   runInMenuBar: integer('run_in_menu_bar', { mode: 'boolean' }).notNull().default(true),
+  hotkeys: text('hotkeys', { mode: 'json' })
+    .$type<Record<string, string>>()
+    .notNull()
+    .default({}),
   updatedAt: text('updated_at').notNull(),
 });
 

@@ -13,6 +13,7 @@ import { inferLinkSource, inferLinkTitle } from '../components/LinkChip';
 import { ProjectBadge } from '../components/ProjectBadge';
 import { getTodayDateString } from '../components/icons';
 import { AppShellContext } from './AppShellContext';
+import { matchesAnyAccelerator, useHotkeys } from './hotkeys';
 
 export type QuickCaptureTab = 'daily-note' | 'inbox' | 'focus';
 
@@ -60,6 +61,7 @@ export function QuickCaptureOverlay({
 }: QuickCaptureOverlayProps) {
   const shell = useContext(AppShellContext);
   const queryClient = useQueryClient();
+  const hotkeys = useHotkeys();
   const projectsQuery = useProjectsQuery({ includeArchived: false });
   const projects = useMemo(
     () => (projectsQuery.data?.projects ?? []).filter((p) => p.status !== 'archived'),
@@ -210,8 +212,8 @@ export function QuickCaptureOverlay({
 
   // Full keyboard navigation inside Quick Capture:
   // - Tab / Shift+Tab: cycle tabs (Daily Note -> Park into Inbox -> Focus Now)
-  // - Ctrl+P: cycle project
-  // - Alt+O: toggle Ops
+  // - Ctrl+P: cycle project (rebindable)
+  // - Alt+O: toggle Ops (rebindable)
   // - Cmd+Enter: create & start focus immediately (on Inbox or Focus tab)
   // - Esc: close
   useEffect(() => {
@@ -241,7 +243,7 @@ export function QuickCaptureOverlay({
         return;
       }
 
-      if (e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'p') {
+      if (matchesAnyAccelerator(e, hotkeys.cycleProject)) {
         e.preventDefault();
         const ids = ['', ...orderedProjects.filter((p) => !p.isSystem).map((p) => p.id)];
         setProjectId((cur) => {
@@ -251,7 +253,7 @@ export function QuickCaptureOverlay({
         return;
       }
 
-      if (e.altKey && !e.metaKey && !e.ctrlKey && e.code === 'KeyO') {
+      if (matchesAnyAccelerator(e, hotkeys.toggleOps)) {
         e.preventDefault();
         setIsOps((v) => !v);
         return;
@@ -265,7 +267,7 @@ export function QuickCaptureOverlay({
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open, tab, orderedProjects, projectPickerOpen, noteContent, blockTitle, blockNoteOrUrl, projectId, isOps, isPending]);
+  }, [open, tab, orderedProjects, projectPickerOpen, noteContent, blockTitle, blockNoteOrUrl, projectId, isOps, isPending, hotkeys]);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();

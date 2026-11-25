@@ -22,6 +22,7 @@ import { Pill } from '../components/Pill';
 import { ProjectBadge } from '../components/ProjectBadge';
 import { formatShortDate } from '../components/icons';
 import { type AppRoute, AppShellContext, type SettingsSection } from './AppShellContext';
+import { formatHotkeyLabel, useHotkeys } from './hotkeys';
 
 export interface CommandPaletteProps {
   open: boolean;
@@ -144,6 +145,8 @@ export function CommandPalette({ open, standalone = false, onClose }: CommandPal
     return map;
   }, [projects]);
 
+  const hotkeys = useHotkeys();
+
   const allItems = useMemo<PaletteItem[]>(() => {
     const items: PaletteItem[] = [
       {
@@ -152,7 +155,7 @@ export function CommandPalette({ open, standalone = false, onClose }: CommandPal
         title: 'Create New Block',
         subtitle: 'Schedule work or add to inbox',
         keywords: 'new block create task add',
-        shortcut: '⌘N',
+        shortcut: formatHotkeyLabel(hotkeys.newBlock),
         leading: <Plus size={14} className="text-[#AEB8FF]" />,
         onSelect: () => run({ type: 'open-create-block' }),
       },
@@ -162,7 +165,7 @@ export function CommandPalette({ open, standalone = false, onClose }: CommandPal
         title: 'Quick Capture',
         subtitle: 'Daily Note or Park into Inbox',
         keywords: 'quick capture note inbox jot',
-        shortcut: '⌘⇧P',
+        shortcut: formatHotkeyLabel(hotkeys.quickCapture),
         leading: <Zap size={14} className="text-[#F2D06B]" />,
         onSelect: () => run({ type: 'open-quick-capture' }),
       },
@@ -323,7 +326,7 @@ export function CommandPalette({ open, standalone = false, onClose }: CommandPal
     }
 
     return items;
-  }, [projects, goals, blocksQuery.data, projectsById, run, standalone, shell, onClose]);
+  }, [projects, goals, blocksQuery.data, projectsById, run, standalone, shell, onClose, hotkeys]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

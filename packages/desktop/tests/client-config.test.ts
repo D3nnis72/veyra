@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_CAPTURE_SHORTCUT,
   DEFAULT_CLIENT_CONFIG,
+  DEFAULT_GLOBAL_HOTKEYS,
   loadClientConfig,
   resolveDesktopClientConfig,
   saveClientConfig,
@@ -83,6 +84,32 @@ describe('@veyra/desktop client-config', () => {
     expect(reloaded.cachedRunInMenuBar).toBe(false);
   });
 
+  it('caches custom global hotkeys, keeps them when only the menu bar toggle changes, and ignores junk', () => {
+    const configPath = createTempConfigPath();
+    updateDesktopPreferences(configPath, {
+      globalCaptureShortcut: DEFAULT_CAPTURE_SHORTCUT,
+      runInMenuBar: true,
+      globalHotkeys: { quickFocus: ['Alt+Shift+F'], globalCommandPalette: ['Alt+Space'] },
+    });
+    expect(loadClientConfig(configPath).cachedGlobalHotkeys).toEqual({
+      quickFocus: ['Alt+Shift+F'],
+      globalCommandPalette: ['Alt+Space'],
+    });
+
+    updateDesktopPreferences(configPath, {
+      globalCaptureShortcut: DEFAULT_CAPTURE_SHORTCUT,
+      runInMenuBar: false,
+    });
+    expect(loadClientConfig(configPath).cachedGlobalHotkeys.quickFocus).toEqual(['Alt+Shift+F']);
+
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ cachedGlobalHotkeys: { quickFocus: [42, ' '], globalCommandPalette: 'x' } }),
+      'utf8',
+    );
+    expect(loadClientConfig(configPath).cachedGlobalHotkeys).toEqual(DEFAULT_GLOBAL_HOTKEYS);
+  });
+
   it('falls back to defaults when config JSON is corrupted', () => {
     const configPath = createTempConfigPath();
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
@@ -97,6 +124,7 @@ describe('@veyra/desktop client-config', () => {
         mode: 'local',
         cachedShortcut: DEFAULT_CAPTURE_SHORTCUT,
         cachedRunInMenuBar: true,
+        cachedGlobalHotkeys: DEFAULT_GLOBAL_HOTKEYS,
       },
       'http://127.0.0.1:4173',
     );
@@ -115,6 +143,7 @@ describe('@veyra/desktop client-config', () => {
         remoteToken: 'bearer-xyz',
         cachedShortcut: DEFAULT_CAPTURE_SHORTCUT,
         cachedRunInMenuBar: true,
+        cachedGlobalHotkeys: DEFAULT_GLOBAL_HOTKEYS,
       },
       'http://127.0.0.1:4173',
     );

@@ -169,6 +169,7 @@ CREATE TABLE IF NOT EXISTS settings (
   macos_focus_end_shortcut TEXT,
   global_capture_shortcut TEXT NOT NULL DEFAULT 'CommandOrControl+Shift+P',
   run_in_menu_bar INTEGER NOT NULL DEFAULT 1,
+  hotkeys TEXT NOT NULL DEFAULT '{}',
   updated_at TEXT NOT NULL
 );
 
@@ -331,6 +332,11 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{ table: string; column: string; ddl: stri
     table: 'settings',
     column: 'macos_focus_end_shortcut',
     ddl: 'ALTER TABLE settings ADD COLUMN macos_focus_end_shortcut TEXT',
+  },
+  {
+    table: 'settings',
+    column: 'hotkeys',
+    ddl: "ALTER TABLE settings ADD COLUMN hotkeys TEXT NOT NULL DEFAULT '{}'",
   },
 ];
 

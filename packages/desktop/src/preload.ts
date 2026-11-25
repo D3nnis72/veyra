@@ -27,7 +27,8 @@ export interface VeyraDesktopBridge {
   syncDesktopPreferences: (prefs: {
     globalCaptureShortcut: string;
     runInMenuBar: boolean;
-  }) => Promise<void>;
+    globalHotkeys?: { quickFocus: string[]; globalCommandPalette: string[] };
+  }) => Promise<{ failed: string[] }>;
   closeCaptureWindow: () => Promise<void>;
   closeCommandWindow: () => Promise<void>;
   focusAndDispatchAction: (action: DesktopCommandAction) => Promise<void>;

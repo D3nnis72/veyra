@@ -1225,6 +1225,7 @@ describe('4-chapter ReviewView & Settings review.completed toggle', () => {
         macosFocusStartShortcut: null,
         macosFocusEndShortcut: null,
         globalCaptureShortcut: 'CommandOrControl+Shift+P',
+        hotkeys: {},
         runInMenuBar: true,
         updatedAt: '2026-11-27T10:00:00.000Z',
       } as PublicSettings,

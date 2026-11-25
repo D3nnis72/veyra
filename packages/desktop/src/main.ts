@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getSettings } from '@veyra/core';
+import { getSettings, resolveHotkey } from '@veyra/core';
 import { createVeyraServer, type VeyraServerInstance } from '@veyra/server/app';
 import {
   app,
@@ -16,7 +16,9 @@ import {
 } from 'electron';
 import {
   DEFAULT_CAPTURE_SHORTCUT,
+  DEFAULT_GLOBAL_HOTKEYS,
   type DesktopPreferencesInput,
+  type GlobalHotkeys,
   loadClientConfig,
   type PersistedClientConfig,
   resolveDesktopClientConfig,
@@ -46,9 +48,6 @@ const ALLOWED_EXTERNAL_PROTOCOLS = new Set([
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 4173;
-const COMMAND_SHORTCUT = 'Alt+K';
-const QUICK_FOCUS_SHORTCUT = 'CommandOrControl+Shift+O';
-const QUICK_FOCUS_ALT_SHORTCUT = 'Control+O';
 
 type CaptureTab = 'daily-note' | 'inbox' | 'focus';
 
@@ -82,7 +81,6 @@ let lastTrayToolTip: string | null = null;
 let embeddedServer: VeyraServerInstance | null = null;
 let localServerUrl = `http://${DEFAULT_HOST}:${DEFAULT_PORT}`;
 let clientConfig: PersistedClientConfig | null = null;
-let activeShortcut: string | null = null;
 let isQuitting = false;
 let isShuttingDown = false;
 
@@ -444,35 +442,6 @@ function isCommandAction(value: unknown): value is DesktopCommandAction {
   return typeof type === 'string' && COMMAND_ACTION_TYPES.has(type as DesktopCommandAction['type']);
 }
 
-function registerCommandShortcut(): boolean {
-  try {
-    return globalShortcut.register(COMMAND_SHORTCUT, () => {
-      toggleCommandWindow();
-    });
-  } catch {
-    return false;
-  }
-}
-
-function registerQuickFocusShortcut(): boolean {
-  let primaryOk = false;
-  try {
-    primaryOk = globalShortcut.register(QUICK_FOCUS_SHORTCUT, () => {
-      toggleCaptureWindow('focus');
-    });
-  } catch {
-    primaryOk = false;
-  }
-  try {
-    globalShortcut.register(QUICK_FOCUS_ALT_SHORTCUT, () => {
-      toggleCaptureWindow('focus');
-    });
-  } catch {
-    // Optional secondary alias
-  }
-  return primaryOk;
-}
-
 function dispatchCaptureTab(win: BrowserWindow, tab: CaptureTab): void {
   const safeTab = JSON.stringify(tab);
   void win.webContents
@@ -518,24 +487,81 @@ function hideCaptureWindow(): void {
   }
 }
 
-function registerCaptureShortcut(accelerator: string): boolean {
-  const nextShortcut = accelerator.trim() || DEFAULT_CAPTURE_SHORTCUT;
-  if (activeShortcut && globalShortcut.isRegistered(activeShortcut)) {
-    globalShortcut.unregister(activeShortcut);
-  }
-  activeShortcut = null;
+type GlobalShortcutId = 'quickCapture' | 'quickFocus' | 'globalCommandPalette';
 
-  try {
-    const ok = globalShortcut.register(nextShortcut, () => {
-      toggleCaptureWindow();
-    });
-    if (ok) {
-      activeShortcut = nextShortcut;
+const GLOBAL_SHORTCUT_HANDLERS: Record<GlobalShortcutId, () => void> = {
+  quickCapture: () => toggleCaptureWindow(),
+  quickFocus: () => toggleCaptureWindow('focus'),
+  globalCommandPalette: () => toggleCommandWindow(),
+};
+
+/** Accelerators currently registered with macOS, by hotkey id. */
+let activeGlobalShortcuts: Record<GlobalShortcutId, string[]> = {
+  quickCapture: [],
+  quickFocus: [],
+  globalCommandPalette: [],
+};
+
+function desiredGlobalShortcuts(
+  captureShortcut: string,
+  hotkeys: GlobalHotkeys,
+): Record<GlobalShortcutId, string[]> {
+  return {
+    quickCapture: [captureShortcut.trim() || DEFAULT_CAPTURE_SHORTCUT],
+    quickFocus: hotkeys.quickFocus,
+    globalCommandPalette: hotkeys.globalCommandPalette,
+  };
+}
+
+function unregisterGlobalShortcuts(): void {
+  for (const accelerators of Object.values(activeGlobalShortcuts)) {
+    for (const accelerator of accelerators) {
+      try {
+        globalShortcut.unregister(accelerator);
+      } catch {
+        // Already gone
+      }
     }
-    return ok;
-  } catch {
-    return false;
   }
+  activeGlobalShortcuts = { quickCapture: [], quickFocus: [], globalCommandPalette: [] };
+}
+
+/**
+ * Registers every global hotkey. Returns the ids that macOS refused (taken by another app
+ * or an invalid accelerator). A failing alias does not fail an id that has another working key.
+ */
+function registerGlobalShortcuts(wanted: Record<GlobalShortcutId, string[]>): GlobalShortcutId[] {
+  unregisterGlobalShortcuts();
+  const failed: GlobalShortcutId[] = [];
+  for (const id of Object.keys(wanted) as GlobalShortcutId[]) {
+    for (const accelerator of wanted[id]) {
+      try {
+        if (globalShortcut.register(accelerator, GLOBAL_SHORTCUT_HANDLERS[id])) {
+          activeGlobalShortcuts[id].push(accelerator);
+        }
+      } catch {
+        // Invalid accelerator, counted as failed below
+      }
+    }
+    if (activeGlobalShortcuts[id].length === 0) failed.push(id);
+  }
+  return failed;
+}
+
+/**
+ * Applies new global hotkeys. If any id cannot be registered, the previous set is restored
+ * so a rejected rebind never leaves the user without a working shortcut.
+ */
+function applyGlobalShortcuts(
+  captureShortcut: string,
+  hotkeys: GlobalHotkeys,
+): { failed: GlobalShortcutId[] } {
+  const previous = { ...activeGlobalShortcuts };
+  const failed = registerGlobalShortcuts(desiredGlobalShortcuts(captureShortcut, hotkeys));
+  if (failed.length > 0) {
+    registerGlobalShortcuts(previous);
+  }
+  return { failed };
 }
 
 function getApiServerTarget(): MenuBarServerTarget {
@@ -592,8 +618,12 @@ function refreshTrayMenu(nowMs = Date.now()): void {
     captureShortcutLabel: formatShortcutForDisplay(
       clientConfig?.cachedShortcut ?? DEFAULT_CAPTURE_SHORTCUT,
     ),
-    quickFocusShortcutLabel: formatShortcutForDisplay(QUICK_FOCUS_SHORTCUT),
-    commandShortcutLabel: formatShortcutForDisplay(COMMAND_SHORTCUT),
+    quickFocusShortcutLabel: formatShortcutForDisplay(
+      (clientConfig?.cachedGlobalHotkeys ?? DEFAULT_GLOBAL_HOTKEYS).quickFocus[0],
+    ),
+    commandShortcutLabel: formatShortcutForDisplay(
+      (clientConfig?.cachedGlobalHotkeys ?? DEFAULT_GLOBAL_HOTKEYS).globalCommandPalette[0],
+    ),
   });
 
   const template: Electron.MenuItemConstructorOptions[] = descriptors.map((entry) => {
@@ -750,10 +780,17 @@ function registerIpcHandlers(): void {
     'veyra:sync-desktop-preferences',
     (_event, prefs: DesktopPreferencesInput) => {
       const configPath = getConfigPath();
-      const updated = updateDesktopPreferences(configPath, prefs);
-      clientConfig = updated;
-      registerCaptureShortcut(updated.cachedShortcut);
+      const current = clientConfig ?? loadClientConfig(configPath);
+      const { failed } = applyGlobalShortcuts(
+        prefs.globalCaptureShortcut,
+        prefs.globalHotkeys ?? current.cachedGlobalHotkeys,
+      );
+      if (failed.length > 0) {
+        return { failed };
+      }
+      clientConfig = updateDesktopPreferences(configPath, prefs);
       updateTrayDisplay({ rebuildMenu: true });
+      return { failed: [] as GlobalShortcutId[] };
     },
   );
 
@@ -796,6 +833,7 @@ async function shutdown(): Promise<void> {
   menuBarFocus.stop();
 
   try {
+    unregisterGlobalShortcuts();
     globalShortcut.unregisterAll();
   } catch {
     // Ignore shutdown errors if app is not ready
@@ -821,6 +859,10 @@ async function bootstrap(): Promise<void> {
         clientConfig = updateDesktopPreferences(configPath, {
           globalCaptureShortcut: settings.globalCaptureShortcut,
           runInMenuBar: settings.runInMenuBar,
+          globalHotkeys: {
+            quickFocus: resolveHotkey('quickFocus', settings.hotkeys),
+            globalCommandPalette: resolveHotkey('globalCommandPalette', settings.hotkeys),
+          },
         });
       } catch {
         // Keep cached client config if settings read fails
@@ -831,12 +873,11 @@ async function bootstrap(): Promise<void> {
   registerIpcHandlers();
   createTray();
   menuBarFocus.configure(getApiServerTarget());
-  registerCaptureShortcut(clientConfig.cachedShortcut);
-  if (!registerQuickFocusShortcut()) {
-    console.warn(`Veyra: could not register global shortcut ${QUICK_FOCUS_SHORTCUT}`);
-  }
-  if (!registerCommandShortcut()) {
-    console.warn(`Veyra: could not register global shortcut ${COMMAND_SHORTCUT}`);
+  const failedShortcuts = registerGlobalShortcuts(
+    desiredGlobalShortcuts(clientConfig.cachedShortcut, clientConfig.cachedGlobalHotkeys),
+  );
+  for (const id of failedShortcuts) {
+    console.warn(`Veyra: could not register global shortcut for ${id}`);
   }
   createMainWindow();
   createCaptureWindow();

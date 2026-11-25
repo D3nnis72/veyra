@@ -108,6 +108,8 @@ veyra events sync --json
 
 ## Global Keyboard Shortcuts (macOS)
 
+These are the defaults. Every shortcut except `⌘1`–`⌘5`, `Tab` and `Esc` can be rebound in `Settings → Server & CLI → Keyboard Shortcuts`.
+
 - **`⌘⇧P`** — Global Quick Capture (`Daily Note` / `Inbox` / `Focus Now`, works even when the main window is closed)
 - **`⌘⇧O` / `⌃O`** — Global Quick Focus (opens directly on `Focus Now`; type a title and hit `Enter` to create and start focusing)
 - **`⌥K`** — Global Command Palette

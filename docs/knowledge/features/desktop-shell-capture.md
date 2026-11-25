@@ -17,6 +17,7 @@ groundedIn:
 updateWhen:
   - Electron window chrome, tray lifecycle, IPC bridge, or global shortcut changes
   - desktop client-config persistence or native rebuild flow changes
+  - hotkey ids, defaults, or the `settings.hotkeys` override map change
 ---
 # Desktop Shell And Global Quick Capture
 
@@ -37,7 +38,7 @@ Both `mainWindow` and `captureWindow` enforce strict Electron renderer isolation
 `packages/desktop/src/preload.ts` compiles to CJS (`dist/preload.cjs`) and exposes `window.veyraDesktop` via `contextBridge`:
 
 - `getClientConfig()` / `saveClientConfig(cfg)`: read and switch local vs. remote server targets.
-- `syncDesktopPreferences({ globalCaptureShortcut, runInMenuBar })`: re-registers the macOS global shortcut and updates tray behavior immediately when saved in `Settings`, caching them locally in `client-config.json` for cold starts.
+- `syncDesktopPreferences({ globalCaptureShortcut, runInMenuBar, globalHotkeys? })`: re-registers all macOS global shortcuts (Quick Capture, Quick Focus, Global Command Palette) and updates tray behavior immediately when saved in `Settings`, caching them locally in `client-config.json` (`cachedShortcut`, `cachedGlobalHotkeys`) for cold starts. Resolves to `{ failed: string[] }`: if macOS or another app refuses a key, the previous set is restored, nothing is cached, and the web UI shows an error instead of saving the binding.
 - `closeCaptureWindow()`: dismisses the floating capture overlay after submit or `Esc`.
 - `openExternalUrl(url)`: opens external links via `shell.openExternal` strictly limited to the same protocol allowlist (`http:`, `https:`, `msteams:`, `zoommtg:`, `notion:`).
 
@@ -48,9 +49,9 @@ Both `mainWindow` and `captureWindow` enforce strict Electron renderer isolation
 - **Icon-only macOS menu bar indicator (`packages/desktop/src/tray-icon.ts`):** To avoid cluttering the menu bar with text, `tray.setTitle('')` stays empty at all times. While a focus session is active, `tray.setImage` swaps the `18×18` tray icon to a crisp colored rounded-square badge rendered in the active project's accent color and icon/initial (`renderProjectTrayIconPng`), restoring the quiet monochrome Veyra template icon when paused, stopped, or completed. Hovering displays the live tooltip (`Veyra — <Block> (MM:SS)`).
 - **Dynamic tray menu:**
   - *When focusing:* shows the active block title and elapsed time (disabled header), `Open Focus` (focuses main window and navigates to `Focus`), `Pause Session`, `Stop Session`, and `Complete Block`, followed by the standard app actions.
-  - *When idle:* shows up to 3 `Up Next` blocks from `Today` to start focus in one click directly from the menu bar, alongside `Show Veyra`, `Quick Capture (<shortcut>)`, `Quick Focus (⌘⇧O)`, `Command Palette (⌥K)`, and `Quit`.
+  - *When idle:* shows up to 3 `Up Next` blocks from `Today` to start focus in one click directly from the menu bar, alongside `Show Veyra`, `Quick Capture (<shortcut>)`, `Quick Focus (<shortcut>)`, `Command Palette (<shortcut>)`, and `Quit`.
   - Menu rebuilds pause while the native tray menu is open (`menu-will-show` / `menu-will-close`) so live ticks never disrupt clicks.
-- **Global shortcuts (`⌘⇧P`, `⌘⇧O` / `⌃O` & `⌥K`):** Registers `CommandOrControl+Shift+P` (configurable) for `captureWindow` (`580×204` at `/capture`, opening on `Daily Note`), `CommandOrControl+Shift+O` (`⌘⇧O`, plus `Control+O` alias) for `captureWindow` opening directly on `Focus Now` (create block and jump straight into `Focus`), and `Alt+K` (`⌥K`) for `commandWindow` (`600×420` at `/command`) via Electron `globalShortcut`, sharing one frameless macOS floating window factory with native glass bezel and `visibleOnFullScreen: true`. Pressing `⌥K` or `⌘⇧O` from any macOS application dispatches chosen actions (`navigate`, `start-focus`, `open-block`, `open-create-block`, `open-daily-notes`, `open-quick-capture`) back to the main window via IPC (`focusAndDispatchAction` / `veyra:command-action`).
+- **Global shortcuts (defaults `⌘⇧P`, `⌘⇧O` / `⌃O` & `⌥K`, all rebindable in `Settings → Keyboard Shortcuts`):** Reads the accelerators from `client-config.json` (seeded from `settings.globalCaptureShortcut` and `settings.hotkeys` on startup) and registers `CommandOrControl+Shift+P` (configurable) for `captureWindow` (`580×204` at `/capture`, opening on `Daily Note`), `CommandOrControl+Shift+O` (`⌘⇧O`, plus `Control+O` alias) for `captureWindow` opening directly on `Focus Now` (create block and jump straight into `Focus`), and `Alt+K` (`⌥K`) for `commandWindow` (`600×420` at `/command`) via Electron `globalShortcut`, sharing one frameless macOS floating window factory with native glass bezel and `visibleOnFullScreen: true`. Pressing `⌥K` or `⌘⇧O` from any macOS application dispatches chosen actions (`navigate`, `start-focus`, `open-block`, `open-create-block`, `open-daily-notes`, `open-quick-capture`) back to the main window via IPC (`focusAndDispatchAction` / `veyra:command-action`).
 - **Single-instance lock:** Acquires Electron's single-instance lock by default (bypassable for isolated test runs via `VEYRA_DESKTOP_CONFIG_PATH` or `VEYRA_ALLOW_MULTI_INSTANCE=1`) and guards lifecycle registration and `bootstrap` behind `hasSingleInstanceLock` so secondary instances quit without booting a second window or server.
 
 ## Native SQLite ABI And macOS `.app` Packaging

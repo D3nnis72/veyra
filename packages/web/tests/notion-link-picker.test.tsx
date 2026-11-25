@@ -124,6 +124,7 @@ function makeSettingsResponse(
     macosFocusStartShortcut: null,
     macosFocusEndShortcut: null,
     globalCaptureShortcut: 'CommandOrControl+Shift+P',
+    hotkeys: {},
     runInMenuBar: true,
     updatedAt: new Date().toISOString(),
   };

@@ -140,6 +140,7 @@ export function updateSettings(
     globalCaptureShortcut:
       parsed.globalCaptureShortcut ?? existing.globalCaptureShortcut,
     runInMenuBar: parsed.runInMenuBar ?? existing.runInMenuBar,
+    hotkeys: parsed.hotkeys ?? existing.hotkeys,
     updatedAt: nowIso,
   };
 
@@ -169,6 +170,7 @@ export function updateSettings(
         macosFocusEndShortcut: updated.macosFocusEndShortcut,
         globalCaptureShortcut: updated.globalCaptureShortcut,
         runInMenuBar: updated.runInMenuBar,
+        hotkeys: updated.hotkeys,
         updatedAt: updated.updatedAt,
       })
       .where(eq(settings.id, DEFAULT_SETTINGS_ID))

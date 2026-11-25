@@ -22,6 +22,7 @@ import {
 } from './AppShellContext';
 import { CommandPalette } from './CommandPalette';
 import { CreateBlockModal } from './CreateBlockModal';
+import { matchesAnyAccelerator, useHotkeys } from './hotkeys';
 import { OnboardingFlow } from './OnboardingFlow';
 import { QuickCaptureOverlay, type QuickCaptureTab } from './QuickCaptureOverlay';
 import { Sidebar } from './Sidebar';
@@ -100,6 +101,7 @@ function MainAppShell({ views }: AppProps) {
   const liveSyncStatus = useLiveSync(true);
 
   const settingsQuery = useSettingsQuery();
+  const hotkeys = useHotkeys();
   const projectsQuery = useProjectsQuery({ includeArchived: false });
   const goalsQuery = useGoalsQuery({ activeOnly: true });
   const focusQuery = useFocusQuery();
@@ -311,16 +313,14 @@ function MainAppShell({ views }: AppProps) {
     openQuickCapture,
   ]);
 
-  // Global keyboard shortcuts: ⌘K, ⌘N, ⌘S, ⌘,, ⌘⇧P, ⌃O (Focus Now), ⌘1-6, Esc
+  // In-window keyboard shortcuts. The rebindable ones come from Settings → Shortcuts
+  // (defaults: ⌘K palette, ⌘N new block, ⌘S save, ⌘, settings, ⌘⇧P capture, ⌘⇧O / ⌃O Focus Now).
+  // ⌘1-6 and Esc stay fixed.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
       const key = e.key.toLowerCase();
 
-      if (
-        (mod && e.shiftKey && !e.altKey && key === 'o') ||
-        (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && key === 'o')
-      ) {
+      if (matchesAnyAccelerator(e, hotkeys.quickFocus)) {
         e.preventDefault();
         setCommandPaletteOpen(false);
         setCreateBlockState({ open: false });
@@ -332,7 +332,7 @@ function MainAppShell({ views }: AppProps) {
         return;
       }
 
-      if (mod && key === 'k') {
+      if (matchesAnyAccelerator(e, hotkeys.commandPalette)) {
         e.preventDefault();
         setQuickCaptureState((prev) => ({ ...prev, open: false }));
         setCreateBlockState({ open: false });
@@ -340,7 +340,7 @@ function MainAppShell({ views }: AppProps) {
         return;
       }
 
-      if (mod && e.shiftKey && key === 'p') {
+      if (matchesAnyAccelerator(e, hotkeys.quickCapture)) {
         e.preventDefault();
         setCommandPaletteOpen(false);
         setCreateBlockState({ open: false });
@@ -352,7 +352,7 @@ function MainAppShell({ views }: AppProps) {
         return;
       }
 
-      if (mod && !e.shiftKey && key === 'n') {
+      if (matchesAnyAccelerator(e, hotkeys.newBlock)) {
         e.preventDefault();
         setCommandPaletteOpen(false);
         setQuickCaptureState((prev) => ({ ...prev, open: false }));
@@ -360,13 +360,13 @@ function MainAppShell({ views }: AppProps) {
         return;
       }
 
-      if (mod && key === 's') {
+      if (matchesAnyAccelerator(e, hotkeys.saveDrawer)) {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent('veyra:save'));
         return;
       }
 
-      if (mod && key === ',') {
+      if (matchesAnyAccelerator(e, hotkeys.openSettings)) {
         e.preventDefault();
         navigate('settings', { settingsSection: 'integrations' });
         return;
@@ -415,6 +415,7 @@ function MainAppShell({ views }: AppProps) {
     createBlockState.open,
     activeDrawer,
     navigate,
+    hotkeys,
   ]);
 
   const shellValue = useMemo<AppShellContextValue>(

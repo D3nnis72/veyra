@@ -33,6 +33,7 @@ import {
   reorderGoal,
   resolveIsoWeekStartDate,
   resolveNotionToken,
+  resolveHotkey,
   runDailyRolloverAndRecurrence,
   setPreviousRuleKept,
   setWeeklyRule,
@@ -570,6 +571,14 @@ describe('Task 4: Calendar Upsert, Daily Notes, Weekly Review Rollups & Settings
     expect(updated.onboardingCompleted).toBe(true);
     expect(updated.calendarSyncMode).toBe('outlook_cli');
     expect(updated.webhookEvents).toEqual(['focus.started', 'block.completed']);
+
+    expect(initial.hotkeys).toEqual({});
+    const rebound = updateSettings(veyraDb, { hotkeys: { quickFocus: 'Alt+Shift+F' } });
+    expect(rebound.hotkeys).toEqual({ quickFocus: 'Alt+Shift+F' });
+    expect(getSettings(veyraDb).hotkeys).toEqual({ quickFocus: 'Alt+Shift+F' });
+    expect(resolveHotkey('quickFocus', rebound.hotkeys)).toEqual(['Alt+Shift+F']);
+    expect(resolveHotkey('globalCommandPalette', rebound.hotkeys)).toEqual(['Alt+K']);
+    expect(updateSettings(veyraDb, { hotkeys: {} }).hotkeys).toEqual({});
 
     expect(() => updateSettings(veyraDb, { timezone: 'Mars/Olympus_Mons' })).toThrow(
       ValidationError,

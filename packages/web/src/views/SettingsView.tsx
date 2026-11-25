@@ -35,10 +35,21 @@ import {
   useSettingsQuery,
 } from '../api/queries';
 import type { SettingsSection } from '../app/AppShellContext';
+import {
+  findHotkeyConflict,
+  globalHotkeyPayload,
+  HOTKEY_DEFAULTS,
+  HOTKEY_META,
+  type HotkeyId,
+  normalizeAccelerator,
+  useHotkeys,
+} from '../app/hotkeys';
 import { Button } from '../components/Button';
 import { Pill } from '../components/Pill';
 import {
   DEFAULT_CAPTURE_SHORTCUT,
+  KeyChord,
+  parseAcceleratorToKeys,
   ShortcutBinding,
   type ShortcutBindingSpec,
   ShortcutRecorder,
@@ -1073,14 +1084,12 @@ function ServerCliSettingsSection() {
   const [connMode, setConnMode] = useState<'local' | 'remote'>('local');
   const [remoteUrl, setRemoteUrl] = useState('');
   const [remoteToken, setRemoteToken] = useState('');
-  const [shortcut, setShortcut] = useState('CommandOrControl+Shift+P');
   const [runInMenuBar, setRunInMenuBar] = useState(true);
   const [copied, setCopied] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!settings) return;
-    setShortcut(settings.globalCaptureShortcut);
     setRunInMenuBar(settings.runInMenuBar);
     if (!inElectron && settings.serverUrl) {
       setConnMode('remote');
@@ -1122,15 +1131,12 @@ function ServerCliSettingsSection() {
 
   const saveDesktopPrefsMutation = useMutation({
     mutationFn: async () => {
-      const trimmedShortcut = shortcut.trim() || 'CommandOrControl+Shift+P';
-      await apiClient.updateSettings({
-        globalCaptureShortcut: trimmedShortcut,
-        runInMenuBar,
-      });
+      await apiClient.updateSettings({ runInMenuBar });
       if (window.veyraDesktop?.syncDesktopPreferences) {
         await window.veyraDesktop.syncDesktopPreferences({
-          globalCaptureShortcut: trimmedShortcut,
+          globalCaptureShortcut: settings?.globalCaptureShortcut ?? DEFAULT_CAPTURE_SHORTCUT,
           runInMenuBar,
+          globalHotkeys: globalHotkeyPayload(settings?.hotkeys),
         });
       }
     },
@@ -1291,20 +1297,6 @@ function ServerCliSettingsSection() {
         <div className="text-[14px] font-semibold text-[#EDEDED]">macOS Desktop Preferences</div>
 
         <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="space-y-0.5">
-            <div className="text-[13px] font-medium text-[#EDEDED]">Global Capture Shortcut</div>
-            <div className="text-[12px] text-[#9A9A9A]">
-              Opens floating Quick Capture from any macOS space
-            </div>
-          </div>
-          <ShortcutRecorder
-            value={shortcut}
-            onChange={setShortcut}
-            ariaLabel="Global capture shortcut"
-          />
-        </div>
-
-        <div className="pt-3 border-t border-[#2A2A2A] flex items-center justify-between gap-4 flex-wrap">
           <ToggleSwitch
             id="run-in-menubar-toggle"
             checked={runInMenuBar}
@@ -1441,79 +1433,32 @@ interface HotkeyRow {
   control?: ReactNode;
 }
 
-const NAVIGATION_HOTKEYS: HotkeyRow[] = [
-  {
-    label: 'Command Palette',
-    description: 'Jump to views, projects, or start a block',
-    binding: { chords: [['⌘', 'K']] },
-  },
-  {
-    label: 'New Block Composer',
-    description: 'Open full composer sheet inside Veyra',
-    binding: { chords: [['⌘', 'N']] },
-  },
-  {
+/** Shortcuts that stay fixed because they are part of a gesture, not a single action. */
+const FIXED_NAVIGATION_HOTKEYS: Record<string, HotkeyRow> = {
+  views: {
     label: 'Switch Primary Views',
     description: 'Today, Plan, Calendar, Projects, Goals, Review',
     binding: { chords: [['⌘', '1'], ['⌘', '6']], separator: 'to' },
   },
-  {
-    label: 'Save Active Drawer',
-    description: 'Flush notes and edits in Block, Meeting, or Session drawer',
-    binding: { chords: [['⌘', 'S']] },
-  },
-  {
-    label: 'Open Settings',
-    description: 'Jump directly to full-page Settings',
-    binding: { chords: [['⌘', ',']] },
-  },
-  {
+  close: {
     label: 'Close Overlay or Drawer',
     description: 'Dismiss active modal, palette, or side drawer',
     binding: { chords: [['Esc']] },
   },
-];
+};
 
-const QUICK_CAPTURE_HOTKEYS: HotkeyRow[] = [
-  {
+const FIXED_CAPTURE_HOTKEYS: Record<string, HotkeyRow> = {
+  tabs: {
     label: 'Switch Capture Tabs',
     description: 'Cycle Daily Note, Inbox, and Focus Now without leaving the input',
     binding: { chords: [['Tab'], ['⇧', 'Tab']], separator: 'or' },
   },
-  {
-    label: 'Cycle Project',
-    description: 'Switch the active project directly from the keyboard',
-    binding: { chords: [['⌃', 'P']] },
-  },
-  {
-    label: 'Toggle Ops Flag',
-    description: 'Mark a note or block as Ops without touching the mouse',
-    binding: { chords: [['⌥', 'O']] },
-  },
-  {
+  createAndFocus: {
     label: 'Create & Focus',
     description: 'Immediately create a block and enter Focus mode from Inbox or Composer',
     binding: { chords: [['⌘', '↵'], ['⌘', '⇧', '↵']], separator: 'or' },
   },
-];
-
-const FOCUS_MODE_HOTKEYS: HotkeyRow[] = [
-  {
-    label: 'Pause Focus',
-    description: 'Pause the active session with an optional resume note',
-    binding: { chords: [['P']] },
-  },
-  {
-    label: 'Complete Block',
-    description: 'Finish the current block and log outcome and energy',
-    binding: { chords: [['C'], ['⌘', '↵']], separator: 'or' },
-  },
-  {
-    label: 'Toggle Notes Drawer',
-    description: 'Open or close block notes without leaving Focus mode',
-    binding: { chords: [['N']] },
-  },
-];
+};
 
 function HotkeyListCard({
   heading,
@@ -1568,16 +1513,11 @@ function ShortcutsSettingsSection() {
   const queryClient = useQueryClient();
   const settingsQuery = useSettingsQuery();
   const current = settingsQuery.data?.settings;
+  const resolved = useHotkeys();
 
-  const [captureShortcut, setCaptureShortcut] = useState(DEFAULT_CAPTURE_SHORTCUT);
-  const [saved, setSaved] = useState(false);
+  const [savedId, setSavedId] = useState<HotkeyId | 'all' | null>(null);
+  const [errors, setErrors] = useState<Partial<Record<HotkeyId, string>>>({});
   const savedTimerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (current?.globalCaptureShortcut) {
-      setCaptureShortcut(current.globalCaptureShortcut);
-    }
-  }, [current?.globalCaptureShortcut]);
 
   useEffect(() => {
     return () => {
@@ -1587,114 +1527,196 @@ function ShortcutsSettingsSection() {
     };
   }, []);
 
-  const saveShortcutMutation = useMutation({
-    mutationFn: async (nextRaw: string) => {
-      const next = nextRaw.trim() || DEFAULT_CAPTURE_SHORTCUT;
-      await apiClient.updateSettings({ globalCaptureShortcut: next });
+  const saveHotkeysMutation = useMutation({
+    mutationFn: async (vars: {
+      id: HotkeyId | 'all';
+      globalCaptureShortcut: string;
+      hotkeys: Record<string, string>;
+    }) => {
+      // The desktop shell registers the global ones first. If macOS or another app already
+      // owns the keys, this throws and nothing is saved, so the old binding stays active.
       if (isElectronDesktop() && window.veyraDesktop?.syncDesktopPreferences) {
-        await window.veyraDesktop.syncDesktopPreferences({
-          globalCaptureShortcut: next,
+        const result = await window.veyraDesktop.syncDesktopPreferences({
+          globalCaptureShortcut: vars.globalCaptureShortcut,
           runInMenuBar: current?.runInMenuBar ?? true,
+          globalHotkeys: globalHotkeyPayload(vars.hotkeys),
         });
+        if (result && result.failed.length > 0) {
+          throw new Error('macOS or another app already uses these keys');
+        }
       }
-      return next;
+      await apiClient.updateSettings({
+        globalCaptureShortcut: vars.globalCaptureShortcut,
+        hotkeys: vars.hotkeys,
+      });
+      return vars.id;
     },
-    onSuccess: (next) => {
-      setCaptureShortcut(next);
-      setSaved(true);
+    onSuccess: (id) => {
       void queryClient.invalidateQueries({ queryKey: ['settings'] });
+      setSavedId(id);
       if (savedTimerRef.current !== null) {
         window.clearTimeout(savedTimerRef.current);
       }
-      savedTimerRef.current = window.setTimeout(() => setSaved(false), 1800);
+      savedTimerRef.current = window.setTimeout(() => setSavedId(null), 1800);
     },
-    onError: () => {
-      setCaptureShortcut(current?.globalCaptureShortcut ?? DEFAULT_CAPTURE_SHORTCUT);
+    onError: (err, vars) => {
+      if (vars.id === 'all') return;
+      setErrors((prev) => ({
+        ...prev,
+        [vars.id]: err instanceof Error ? err.message : 'Could not save shortcut',
+      }));
     },
   });
 
-  const handleCaptureShortcutChange = (next: string) => {
-    setCaptureShortcut(next);
-    saveShortcutMutation.mutate(next);
+  const setHotkey = (id: HotkeyId, accelerator: string) => {
+    const defaults = HOTKEY_DEFAULTS[id];
+    const matchesDefault = normalizeAccelerator(accelerator) === normalizeAccelerator(defaults[0]);
+
+    if (!matchesDefault || defaults.length === 1) {
+      const conflict = findHotkeyConflict(id, accelerator, resolved);
+      if (conflict) {
+        setErrors((prev) => ({
+          ...prev,
+          [id]: `Already used by ${conflict.label}`,
+        }));
+        return;
+      }
+    }
+    setErrors((prev) => ({ ...prev, [id]: undefined }));
+
+    const hotkeys = { ...(current?.hotkeys ?? {}) };
+    let globalCaptureShortcut = current?.globalCaptureShortcut ?? DEFAULT_CAPTURE_SHORTCUT;
+    if (id === 'quickCapture') {
+      globalCaptureShortcut = accelerator;
+    } else if (matchesDefault) {
+      delete hotkeys[id];
+    } else {
+      hotkeys[id] = accelerator;
+    }
+    saveHotkeysMutation.mutate({ id, globalCaptureShortcut, hotkeys });
   };
 
-  const globalRows: HotkeyRow[] = [
-    {
-      label: 'Quick Capture',
-      description: 'Opens the floating capture bar for Daily Note or Inbox from any macOS app',
+  const resetAll = () => {
+    setErrors({});
+    saveHotkeysMutation.mutate({
+      id: 'all',
+      globalCaptureShortcut: DEFAULT_CAPTURE_SHORTCUT,
+      hotkeys: {},
+    });
+  };
+
+  const hasCustom =
+    Object.keys(current?.hotkeys ?? {}).length > 0 ||
+    (current?.globalCaptureShortcut ?? DEFAULT_CAPTURE_SHORTCUT) !== DEFAULT_CAPTURE_SHORTCUT;
+
+  const rebindRow = (id: HotkeyId): HotkeyRow => {
+    const meta = HOTKEY_META[id];
+    const defaults = HOTKEY_DEFAULTS[id];
+    const accelerators = resolved[id];
+    const isDefault = accelerators.length > 1 || normalizeAccelerator(accelerators[0]) === normalizeAccelerator(defaults[0]);
+    const extraDefaults = isDefault ? defaults.slice(1) : [];
+    return {
+      label: meta.label,
+      description: meta.description,
       control: (
-        <ShortcutRecorder
-          value={captureShortcut}
-          onChange={handleCaptureShortcutChange}
-          disabled={saveShortcutMutation.isPending}
-          saved={saved}
-          ariaLabel="Customize Quick Capture shortcut"
-        />
+        <div className="inline-flex items-center gap-2 shrink-0">
+          <ShortcutRecorder
+            value={accelerators[0]}
+            defaultValue={defaults[0]}
+            onChange={(next) => setHotkey(id, next)}
+            disabled={saveHotkeysMutation.isPending}
+            saved={savedId === id}
+            error={errors[id] ?? null}
+            allowBare={meta.scope === 'focus'}
+            ariaLabel={`Customize ${meta.label} shortcut`}
+          />
+          {extraDefaults.map((accelerator) => (
+            <span key={accelerator} className="inline-flex items-center gap-1.5 self-start mt-1.5">
+              <span className="text-[11px] text-[#6E6E6E] select-none">or</span>
+              <KeyChord keys={parseAcceleratorToKeys(accelerator)} />
+            </span>
+          ))}
+        </div>
       ),
-    },
-    {
-      label: 'Quick Focus',
-      description: 'Opens floating capture directly on Focus Now to create and focus in one step',
-      binding: { chords: [['⌘', '⇧', 'O'], ['⌃', 'O']], separator: 'or' },
-    },
-    {
-      label: 'Global Command Palette',
-      description: 'Search blocks, projects, and actions from anywhere on macOS',
-      binding: { chords: [['⌥', 'K']] },
-    },
-  ];
+    };
+  };
 
   return (
     <div className="space-y-6 pt-2 border-t border-[#2A2A2A] pb-6">
-      <div className="space-y-1">
-        <h2 className="font-display text-[18px] font-semibold text-[#EDEDED]">
-          Keyboard Shortcuts
-        </h2>
-        <p className="text-[13px] text-[#9A9A9A]">
-          Drive Veyra without touching the mouse. Global macOS hotkeys work from any app.
-        </p>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="space-y-1">
+          <h2 className="font-display text-[18px] font-semibold text-[#EDEDED]">
+            Keyboard Shortcuts
+          </h2>
+          <p className="text-[13px] text-[#9A9A9A]">
+            Drive Veyra without touching the mouse. Click any shortcut with a pencil to record a
+            new one, or press Esc while recording to cancel.
+          </p>
+        </div>
+        <div className="inline-flex items-center gap-2">
+          {savedId === 'all' ? (
+            <span className="text-[11.5px] text-[#7BE0A0] inline-flex items-center gap-1">
+              <Check size={12} /> Reset
+            </span>
+          ) : null}
+          <Button
+            variant="secondary"
+            size="xs"
+            disabled={!hasCustom || saveHotkeysMutation.isPending}
+            onClick={resetAll}
+          >
+            Reset all to defaults
+          </Button>
+        </div>
       </div>
 
       <HotkeyListCard
         heading="Global macOS Hotkeys"
-        subtitle="Active system-wide while Veyra runs in the menu bar. Click Quick Capture to rebind."
+        subtitle="Active system-wide while Veyra runs in the menu bar. Click a shortcut to rebind it."
         icon={<Globe size={14} />}
         badge={
           <Pill tone="accent" dot>
             System-wide
           </Pill>
         }
-        rows={globalRows}
+        rows={[
+          rebindRow('quickCapture'),
+          rebindRow('quickFocus'),
+          rebindRow('globalCommandPalette'),
+        ]}
       />
-
-      {saveShortcutMutation.isError ? (
-        <div className="text-[12px] text-[#FF9EC5] px-1">
-          Could not save shortcut:{' '}
-          {saveShortcutMutation.error instanceof Error
-            ? saveShortcutMutation.error.message
-            : 'Unknown error'}
-        </div>
-      ) : null}
 
       <HotkeyListCard
         heading="Navigation & Overlays"
         subtitle="Available anywhere inside the Veyra window."
         icon={<Compass size={14} />}
-        rows={NAVIGATION_HOTKEYS}
+        rows={[
+          rebindRow('commandPalette'),
+          rebindRow('newBlock'),
+          FIXED_NAVIGATION_HOTKEYS.views,
+          rebindRow('saveDrawer'),
+          rebindRow('openSettings'),
+          FIXED_NAVIGATION_HOTKEYS.close,
+        ]}
       />
 
       <HotkeyListCard
         heading="Quick Capture"
         subtitle="Keyboard controls inside the floating capture bar and composer."
         icon={<Zap size={14} />}
-        rows={QUICK_CAPTURE_HOTKEYS}
+        rows={[
+          FIXED_CAPTURE_HOTKEYS.tabs,
+          rebindRow('cycleProject'),
+          rebindRow('toggleOps'),
+          FIXED_CAPTURE_HOTKEYS.createAndFocus,
+        ]}
       />
 
       <HotkeyListCard
         heading="Focus Mode"
-        subtitle="Single-key controls while a focus session is running."
+        subtitle="Single-key controls while a focus session is running. ⌘↵ always completes the block."
         icon={<Target size={14} />}
-        rows={FOCUS_MODE_HOTKEYS}
+        rows={[rebindRow('pauseFocus'), rebindRow('completeBlock'), rebindRow('toggleNotes')]}
       />
     </div>
   );

@@ -117,6 +117,10 @@ const PURE_MODIFIER_KEYS = new Set([
   'AltGraph',
 ]);
 
+export function eventToAcceleratorKey(event: KeyboardEvent): string | null {
+  return extractElectronKey(event);
+}
+
 function extractElectronKey(event: KeyboardEvent): string | null {
   if (PURE_MODIFIER_KEYS.has(event.key)) return null;
 
@@ -147,9 +151,13 @@ export type AcceleratorCaptureResult =
 
 /**
  * Converts a browser KeyboardEvent into an Electron globalShortcut accelerator.
- * Requires at least one of Command/Control/Option so bare typing keys cannot be bound globally.
+ * Requires at least one of Command/Control/Option so bare typing keys cannot be bound globally,
+ * unless `allowBare` is set (single-key shortcuts that only fire inside the Veyra window).
  */
-export function keyboardEventToAccelerator(event: KeyboardEvent): AcceleratorCaptureResult {
+export function keyboardEventToAccelerator(
+  event: KeyboardEvent,
+  options: { allowBare?: boolean } = {},
+): AcceleratorCaptureResult {
   if (event.key === 'Escape' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
     return { kind: 'cancel' };
   }
@@ -164,7 +172,7 @@ export function keyboardEventToAccelerator(event: KeyboardEvent): AcceleratorCap
   }
 
   const hasPrimaryModifier = event.metaKey || event.ctrlKey || event.altKey;
-  if (!hasPrimaryModifier) {
+  if (!hasPrimaryModifier && !options.allowBare) {
     return { kind: 'needs-modifier' };
   }
 
@@ -264,6 +272,10 @@ export interface ShortcutRecorderProps {
   saved?: boolean;
   ariaLabel?: string;
   size?: 'sm' | 'md';
+  /** Accept keys without ⌘/⌥/⌃ (for in-window shortcuts like P or C). */
+  allowBare?: boolean;
+  /** Shown instead of the recorder hint when the last recorded keys were rejected. */
+  error?: string | null;
 }
 
 export function ShortcutRecorder({
@@ -274,6 +286,8 @@ export function ShortcutRecorder({
   saved = false,
   ariaLabel = 'Record global capture shortcut',
   size = 'md',
+  allowBare = false,
+  error = null,
 }: ShortcutRecorderProps) {
   const [recording, setRecording] = useState(false);
   const [heldModifiers, setHeldModifiers] = useState<string[]>([]);
@@ -305,7 +319,7 @@ export function ShortcutRecorder({
 
       setHeldModifiers(readModifiers(e));
 
-      const result = keyboardEventToAccelerator(e);
+      const result = keyboardEventToAccelerator(e, { allowBare });
       if (result.kind === 'cancel') {
         stopRecording();
         return;
@@ -345,7 +359,7 @@ export function ShortcutRecorder({
       window.removeEventListener('mousedown', onPointerDown, true);
       window.removeEventListener('blur', onWindowBlur);
     };
-  }, [recording, onChange, stopRecording]);
+  }, [recording, onChange, stopRecording, allowBare]);
 
   const keys = parseAcceleratorToKeys(value);
   const isCustom = value.trim() !== '' && value.trim() !== defaultValue;
@@ -365,7 +379,7 @@ export function ShortcutRecorder({
             type="button"
             disabled={disabled}
             onClick={() => onChange(defaultValue)}
-            title="Reset to default (⌘⇧P)"
+            title={`Reset to default (${parseAcceleratorToKeys(defaultValue).join('')})`}
             aria-label="Reset shortcut to default"
             className="h-7 px-2 rounded-[6px] text-[11.5px] text-[#8E8E8E] hover:text-[#EDEDED] hover:bg-[#262626] inline-flex items-center gap-1 transition-colors disabled:opacity-45"
           >
@@ -422,6 +436,10 @@ export function ShortcutRecorder({
 
       {recording && hint ? (
         <span className="text-[11px] text-[#F5A66B]">{hint}</span>
+      ) : !recording && error ? (
+        <span role="alert" className="text-[11px] text-[#FF9EC5] max-w-[260px] text-right">
+          {error}
+        </span>
       ) : null}
     </div>
   );

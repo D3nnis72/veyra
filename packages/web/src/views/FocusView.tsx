@@ -21,6 +21,7 @@ import {
   useTodayQuery,
 } from '../api/queries';
 import { useAppShell } from '../app/AppShellContext';
+import { matchesAnyAccelerator, useHotkeys } from '../app/hotkeys';
 import { Button } from '../components/Button';
 import { GoalChip, GoalKindIconBadge } from '../components/GoalChip';
 import { ProjectBadge } from '../components/ProjectBadge';
@@ -50,6 +51,7 @@ export function FocusView() {
     closeDrawer,
     startFocusAndNavigate,
   } = useAppShell();
+  const hotkeys = useHotkeys();
 
   const todayQuery = useTodayQuery();
   const activeSession = focusStatus?.activeSession ?? null;
@@ -166,15 +168,13 @@ export function FocusView() {
         setPanelMode('complete');
         return;
       }
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const key = e.key.toLowerCase();
-      if (key === 'p') {
+      if (matchesAnyAccelerator(e, hotkeys.pauseFocus)) {
         e.preventDefault();
         setPanelMode('pause');
-      } else if (key === 'c') {
+      } else if (matchesAnyAccelerator(e, hotkeys.completeBlock)) {
         e.preventDefault();
         setPanelMode('complete');
-      } else if (key === 'n') {
+      } else if (matchesAnyAccelerator(e, hotkeys.toggleNotes)) {
         e.preventDefault();
         if (activeDrawer?.kind === 'block' && activeDrawer.blockId === activeBlock.id) {
           closeDrawer();
@@ -185,7 +185,7 @@ export function FocusView() {
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [panelMode, pauseMutation, activeSession, activeBlock, activeDrawer, closeDrawer, openBlockDrawer]);
+  }, [panelMode, pauseMutation, activeSession, activeBlock, activeDrawer, closeDrawer, openBlockDrawer, hotkeys]);
 
   const currentProject = useMemo(
     () => (activeBlock ? projects.find((p) => p.id === activeBlock.projectId) : undefined),

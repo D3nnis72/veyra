@@ -1,9 +1,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { resolveHotkey } from '@veyra/core';
 
 export const DEFAULT_CAPTURE_SHORTCUT = 'CommandOrControl+Shift+P';
 
 export type ClientConnectionMode = 'local' | 'remote';
+
+/** System-wide hotkeys besides Quick Capture; each id may bind several accelerators. */
+export interface GlobalHotkeys {
+  quickFocus: string[];
+  globalCommandPalette: string[];
+}
+
+export const DEFAULT_GLOBAL_HOTKEYS: GlobalHotkeys = {
+  quickFocus: resolveHotkey('quickFocus', undefined),
+  globalCommandPalette: resolveHotkey('globalCommandPalette', undefined),
+};
 
 export interface PersistedClientConfig {
   mode: ClientConnectionMode;
@@ -11,6 +23,7 @@ export interface PersistedClientConfig {
   remoteToken?: string;
   cachedShortcut: string;
   cachedRunInMenuBar: boolean;
+  cachedGlobalHotkeys: GlobalHotkeys;
 }
 
 export interface SaveClientConfigInput {
@@ -22,6 +35,8 @@ export interface SaveClientConfigInput {
 export interface DesktopPreferencesInput {
   globalCaptureShortcut: string;
   runInMenuBar: boolean;
+  /** Omitted by callers that only change the menu bar toggle; the cached hotkeys then stay. */
+  globalHotkeys?: GlobalHotkeys;
 }
 
 export interface RendererDesktopClientConfig {
@@ -36,6 +51,7 @@ export const DEFAULT_CLIENT_CONFIG: PersistedClientConfig = {
   mode: 'local',
   cachedShortcut: DEFAULT_CAPTURE_SHORTCUT,
   cachedRunInMenuBar: true,
+  cachedGlobalHotkeys: DEFAULT_GLOBAL_HOTKEYS,
 };
 
 function normalizeUrl(raw?: string | null): string | undefined {
@@ -66,6 +82,25 @@ function normalizeShortcut(raw?: string | null): string {
   return trimmed.length > 0 ? trimmed : DEFAULT_CAPTURE_SHORTCUT;
 }
 
+function normalizeAccelerators(raw: unknown, fallback: string[]): string[] {
+  if (!Array.isArray(raw)) return [...fallback];
+  const cleaned = raw
+    .filter((value): value is string => typeof value === 'string')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  return cleaned.length > 0 ? cleaned : [...fallback];
+}
+
+function normalizeGlobalHotkeys(raw: Partial<GlobalHotkeys> | undefined): GlobalHotkeys {
+  return {
+    quickFocus: normalizeAccelerators(raw?.quickFocus, DEFAULT_GLOBAL_HOTKEYS.quickFocus),
+    globalCommandPalette: normalizeAccelerators(
+      raw?.globalCommandPalette,
+      DEFAULT_GLOBAL_HOTKEYS.globalCommandPalette,
+    ),
+  };
+}
+
 function buildPersistedConfig(raw: Partial<PersistedClientConfig>): PersistedClientConfig {
   const remoteUrl = normalizeUrl(raw.remoteUrl);
   const mode: ClientConnectionMode =
@@ -79,6 +114,7 @@ function buildPersistedConfig(raw: Partial<PersistedClientConfig>): PersistedCli
     mode,
     cachedShortcut,
     cachedRunInMenuBar,
+    cachedGlobalHotkeys: normalizeGlobalHotkeys(raw.cachedGlobalHotkeys),
   };
 
   if (remoteUrl !== undefined) {
@@ -136,6 +172,7 @@ export function saveClientConfig(
     remoteToken: input.mode === 'remote' ? input.remoteToken : undefined,
     cachedShortcut: existing.cachedShortcut,
     cachedRunInMenuBar: existing.cachedRunInMenuBar,
+    cachedGlobalHotkeys: existing.cachedGlobalHotkeys,
   });
 
   writeConfigFile(configPath, next);
@@ -151,6 +188,7 @@ export function updateDesktopPreferences(
     ...existing,
     cachedShortcut: prefs.globalCaptureShortcut,
     cachedRunInMenuBar: prefs.runInMenuBar,
+    cachedGlobalHotkeys: prefs.globalHotkeys ?? existing.cachedGlobalHotkeys,
   });
 
   writeConfigFile(configPath, next);
