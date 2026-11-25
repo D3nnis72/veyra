@@ -58,6 +58,12 @@ const WEBHOOK_EVENTS: Array<{ id: WebhookEventName; label: string; description: 
     label: 'block.completed',
     description: 'Fires when a focus block is completed with outcome & energy',
   },
+  {
+    id: 'review.completed',
+    label: 'review.completed',
+    description:
+      "Fires when a Weekly Review is wrapped so T3 Code syncs next week's rule and snapshot",
+  },
 ];
 
 export function SettingsView({ section }: SettingsViewProps) {
@@ -598,19 +604,23 @@ function IntegrationsSettingsSection() {
           </div>
 
           <div className="space-y-2.5 pt-2 border-t border-[#2A2A2A]">
-            {WEBHOOK_EVENTS.map((ev) => (
-              <div key={ev.id} className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-[12.5px] font-mono text-[#EDEDED]">{ev.label}</div>
-                  <div className="text-[11.5px] text-[#9A9A9A]">{ev.description}</div>
+            {WEBHOOK_EVENTS.map((ev) => {
+              const switchId = `webhook-event-${ev.id}`;
+              return (
+                <div key={ev.id} className="flex items-center justify-between gap-3">
+                  <label htmlFor={switchId} className="cursor-pointer">
+                    <div className="text-[12.5px] font-mono text-[#EDEDED]">{ev.label}</div>
+                    <div className="text-[11.5px] text-[#9A9A9A]">{ev.description}</div>
+                  </label>
+                  <ToggleSwitch
+                    id={switchId}
+                    checked={webhookEvents.includes(ev.id)}
+                    onChange={() => toggleWebhookEvent(ev.id)}
+                    size="sm"
+                  />
                 </div>
-                <ToggleSwitch
-                  checked={webhookEvents.includes(ev.id)}
-                  onChange={() => toggleWebhookEvent(ev.id)}
-                  size="sm"
-                />
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="flex items-center justify-between gap-2 pt-2 border-t border-[#2A2A2A]">
