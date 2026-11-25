@@ -41,6 +41,7 @@ import {
 import { AutoSummarySection } from './AutoSummarySection';
 import { Button } from './Button';
 import { DockedDrawer } from './DockedDrawer';
+import { GoalKindIconBadge } from './GoalChip';
 import { LinkChip } from './LinkChip';
 import { LinkPickerPopover } from './LinkPickerPopover';
 import { goalChipStyle } from './goalTint';
@@ -129,7 +130,7 @@ export function BlockDetailDrawer({ blockId, onClose, onStartFocus }: BlockDetai
   const queryClient = useQueryClient();
   const detailQuery = useBlockDetailQuery(blockId);
   const projectsQuery = useProjectsQuery({ includeArchived: false });
-  const goalsQuery = useGoalsQuery({ includeArchived: false });
+  const goalsQuery = useGoalsQuery({ activeOnly: true });
 
   const block: BlockDetail | undefined = detailQuery.data?.block;
   const projects = projectsQuery.data?.projects ?? [];
@@ -780,17 +781,14 @@ export function BlockDetailDrawer({ blockId, onClose, onStartFocus }: BlockDetai
                   onClick={() => setOpenPicker((p) => (p === 'goal' ? null : 'goal'))}
                   style={currentGoal ? goalChipStyle(currentGoal.color) : undefined}
                   className={[
-                    'inline-flex items-center gap-2 h-9 px-3.5 rounded-[8px] border text-[13px] font-medium transition-[color,border-color,filter]',
+                    'inline-flex items-center gap-2 h-9 rounded-[8px] border text-[13px] font-medium transition-[color,border-color,filter]',
                     currentGoal
-                      ? 'hover:brightness-125'
-                      : 'bg-[#171717] border-[#3C3C3C] text-[#9A9A9A] hover:text-[#EDEDED] hover:border-[#525252]',
+                      ? 'pl-2 pr-3 hover:brightness-125'
+                      : 'px-3.5 bg-[#171717] border-[#3C3C3C] text-[#9A9A9A] hover:text-[#EDEDED] hover:border-[#525252]',
                   ].join(' ')}
                 >
                   {currentGoal ? (
-                    <span
-                      className="w-2 h-2 rounded-full shrink-0"
-                      style={{ backgroundColor: currentGoal.color }}
-                    />
+                    <GoalKindIconBadge kind={currentGoal.kind} color={currentGoal.color} size="xs" />
                   ) : (
                     <Target size={12} className="text-[#6E6E6E]" />
                   )}
@@ -826,10 +824,7 @@ export function BlockDetailDrawer({ blockId, onClose, onStartFocus }: BlockDetai
                           className="w-full px-3 py-2 rounded-[7px] text-left text-[13px] text-[#EDEDED] hover:bg-white/[0.07] flex items-center justify-between gap-2.5"
                         >
                           <span className="flex items-center gap-2 min-w-0">
-                            <span
-                              className="w-2 h-2 rounded-full shrink-0"
-                              style={{ backgroundColor: g.color }}
-                            />
+                            <GoalKindIconBadge kind={g.kind} color={g.color} size="xs" />
                             <span className="truncate">{g.name}</span>
                           </span>
                           {active ? <Check size={13} className="text-[#AEB8FF] shrink-0" /> : null}

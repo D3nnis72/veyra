@@ -406,6 +406,11 @@ describe('Veyra Web App Flows', () => {
       if (path === '/api/goals' && method === 'GET') {
         return jsonResponse({ goals: goalsState });
       }
+      if (path.startsWith('/api/goals/') && method === 'GET') {
+        const goalId = path.slice('/api/goals/'.length);
+        const match = goalsState.find((g) => g.id === goalId) ?? goalsState[0];
+        return jsonResponse({ goal: { ...match, history: [] } });
+      }
       if (path === '/api/goals' && method === 'POST') {
         const body = JSON.parse(String(init?.body ?? '{}'));
         const created: GoalWithStats = {
@@ -543,14 +548,21 @@ describe('Veyra Web App Flows', () => {
 
     expect(await screen.findByRole('dialog', { name: 'Create project' })).toBeInTheDocument();
 
-    // Inline "+ New Goal" flow
+    // Inline "+ New Goal" flow uses Personal/Company toggle and shared ColorPicker
     await user.click(screen.getByRole('button', { name: /New Goal/i }));
     const goalInput = screen.getByLabelText('New goal name');
     await user.type(goalInput, 'Automate Weekly Ops');
+    await user.click(screen.getByRole('button', { name: /^Company$/i }));
     await user.click(screen.getByRole('button', { name: 'Create Goal' }));
 
-    // Newly created goal appears as a selectable pill
-    expect(await screen.findByRole('button', { name: 'Automate Weekly Ops' })).toBeInTheDocument();
+    // Newly created goal appears as a selectable chip with GoalKindIconBadge
+    const createdGoalBtn = await screen.findByRole('button', { name: 'Automate Weekly Ops' });
+    expect(createdGoalBtn).toBeInTheDocument();
+    expect(createdGoalBtn.querySelector('[data-goal-kind="company"]')).toBeInTheDocument();
+
+    // Project color picker renders all 12 curated presets + custom slot
+    expect(screen.getByRole('button', { name: /^Sky$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Custom hex/i })).toBeInTheDocument();
 
     // Pin to sidebar switch works freely with no cap
     const pinSwitch = screen.getByRole('switch', { name: /Pin to sidebar/i });
@@ -813,5 +825,42 @@ describe('Veyra Web App Flows', () => {
     expect(
       within(opsRadar).getByText(/Flaky webhook retry test required manual rerun twice this week\./i),
     ).toBeInTheDocument();
+
+    // Review Progress Feed renders GoalChip with kind icon badge instead of plain dot
+    expect(feed.querySelector('[data-goal-kind="company"]')).toBeInTheDocument();
+  });
+
+  it('TodayView, BlockDetailDrawer, and CommandPalette render GoalChip/GoalKindIconBadge and CommandPalette opens GoalDetailDrawer', async () => {
+    const user = userEvent.setup();
+    const qc = createTestQueryClient();
+
+    const { container } = render(
+      <QueryClientProvider client={qc}>
+        <App />
+      </QueryClientProvider>,
+    );
+
+    // TodayView renders GoalChip with kind icon badge
+    await screen.findByText('Wire Weekly Review metrics');
+    expect(container.querySelector('[data-goal-kind="company"]')).toBeInTheDocument();
+
+    // BlockDetailDrawer renders GoalKindIconBadge in goal picker
+    await user.click(screen.getByText('Wire Weekly Review metrics'));
+    const blockDialog = await screen.findByRole('dialog', { name: 'Block detail' });
+    expect(blockDialog.querySelector('[data-goal-kind="company"]')).toBeInTheDocument();
+    await user.click(within(blockDialog).getByRole('button', { name: 'Close drawer' }));
+
+    // CommandPalette renders GoalKindIconBadge and opens GoalDetailDrawer (not Settings)
+    await user.click(screen.getByRole('button', { name: /Search/i }));
+    const palette = await screen.findByRole('dialog', { name: 'Command palette' });
+    await user.type(within(palette).getByRole('textbox', { name: 'Search' }), 'Ship Veyra');
+
+    const goalOption = await within(palette).findByText('Ship Veyra v1');
+    const goalRow = goalOption.closest('[data-palette-index]') as HTMLElement;
+    expect(goalRow.querySelector('[data-goal-kind="company"]')).toBeInTheDocument();
+
+    await user.click(goalRow);
+    const goalDrawer = await screen.findByRole('dialog', { name: 'Goal detail' });
+    expect(within(goalDrawer).getByText(/Goal Detail · Company/i)).toBeInTheDocument();
   });
 });

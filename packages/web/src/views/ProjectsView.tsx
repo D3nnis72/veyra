@@ -5,6 +5,7 @@ import { openExternalUrl } from '../api/client';
 import { useGoalsQuery, useProjectsQuery } from '../api/queries';
 import { useAppShell } from '../app/AppShellContext';
 import { Button } from '../components/Button';
+import { GoalChip } from '../components/GoalChip';
 import { Pill } from '../components/Pill';
 import { useProjectContextMenu } from '../components/entityMenus';
 import { ProjectBadge } from '../components/ProjectBadge';
@@ -26,7 +27,7 @@ export function ProjectsView() {
   const { openProject } = useAppShell();
   const projectMenu = useProjectContextMenu();
   const projectsQuery = useProjectsQuery({ includeArchived: true });
-  const goalsQuery = useGoalsQuery({ includeArchived: false });
+  const goalsQuery = useGoalsQuery({ activeOnly: true });
 
   const allProjects = projectsQuery.data?.projects ?? [];
   const goalsById = useMemo(() => {
@@ -217,9 +218,12 @@ export function ProjectsView() {
                 {/* Right: Goal pill, Notion link, Weekly focus, Open count, Last touched, Edit */}
                 <div className="flex items-center gap-3 shrink-0">
                   {goal ? (
-                    <Pill tone="goal" dot dotColor={goal.color} className="hidden sm:inline-flex">
-                      {goal.name}
-                    </Pill>
+                    <GoalChip
+                      name={goal.name}
+                      kind={goal.kind}
+                      color={goal.color}
+                      className="hidden sm:inline-flex"
+                    />
                   ) : null}
 
                   {project.notionUrl ? (

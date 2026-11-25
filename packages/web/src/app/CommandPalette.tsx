@@ -17,6 +17,7 @@ import {
 import { type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient, type DesktopCommandAction, queryKeys } from '../api/client';
 import { invalidateBlockRelated, useGoalsQuery, useProjectsQuery } from '../api/queries';
+import { GoalKindIconBadge } from '../components/GoalChip';
 import { Pill } from '../components/Pill';
 import { ProjectBadge } from '../components/ProjectBadge';
 import { formatShortDate } from '../components/icons';
@@ -48,7 +49,7 @@ export function CommandPalette({ open, standalone = false, onClose }: CommandPal
   // The standalone window has no app shell, so it loads its own lists. React Query
   // dedupes these with the shell's identical queries in the main window.
   const projectsQuery = useProjectsQuery({ includeArchived: false });
-  const goalsQuery = useGoalsQuery({ includeArchived: false });
+  const goalsQuery = useGoalsQuery({ activeOnly: true });
   const projects = shell?.projects ?? projectsQuery.data?.projects ?? [];
   const goals = shell?.goals ?? goalsQuery.data?.goals ?? [];
 
@@ -203,25 +204,36 @@ export function CommandPalette({ open, standalone = false, onClose }: CommandPal
         group: 'Actions',
         title: 'Go to Projects',
         keywords: 'projects workspace list',
+        shortcut: '⌘4',
         leading: <FolderKanban size={14} className="text-[#9A9A9A]" />,
         onSelect: () => run({ type: 'navigate', route: 'projects' }),
+      },
+      {
+        id: 'nav-goals',
+        group: 'Actions',
+        title: 'Go to Goals',
+        keywords: 'goals personal company outcomes quarterly',
+        shortcut: '⌘5',
+        leading: <Target size={14} className="text-[#9A9A9A]" />,
+        onSelect: () => run({ type: 'navigate', route: 'goals' }),
       },
       {
         id: 'nav-review',
         group: 'Actions',
         title: 'Go to Weekly Review',
         keywords: 'review weekly ops radar rule',
+        shortcut: '⌘6',
         leading: <CheckCircle2 size={14} className="text-[#9A9A9A]" />,
         onSelect: () => run({ type: 'navigate', route: 'review' }),
       },
       {
         id: 'nav-settings',
         group: 'Actions',
-        title: 'Open Settings & Goals',
-        keywords: 'settings goals integrations server cli appearance',
+        title: 'Go to Settings',
+        keywords: 'settings integrations server cli shortcuts appearance',
         shortcut: '⌘,',
         leading: <Settings size={14} className="text-[#9A9A9A]" />,
-        onSelect: () => run({ type: 'navigate', route: 'settings', settingsSection: 'goals' }),
+        onSelect: () => run({ type: 'navigate', route: 'settings', settingsSection: 'integrations' }),
       },
     ];
 
@@ -296,15 +308,22 @@ export function CommandPalette({ open, standalone = false, onClose }: CommandPal
         id: `goal-${goal.id}`,
         group: 'Goals',
         title: goal.name,
-        subtitle: goal.description || 'Goal',
-        keywords: `goal ${goal.name} ${goal.description}`,
-        leading: <Target size={14} style={{ color: goal.color || '#4DA3FF' }} />,
-        onSelect: () => run({ type: 'navigate', route: 'settings', settingsSection: 'goals' }),
+        subtitle: goal.description || (goal.kind === 'company' ? 'Company Goal' : 'Personal Goal'),
+        keywords: `goal ${goal.kind} ${goal.name} ${goal.description}`,
+        leading: <GoalKindIconBadge kind={goal.kind} color={goal.color} size="xs" />,
+        onSelect: () => {
+          if (!standalone && shell) {
+            onClose?.();
+            shell.openGoalDrawer(goal.id);
+          } else {
+            run({ type: 'navigate', route: 'goals' });
+          }
+        },
       });
     }
 
     return items;
-  }, [projects, goals, blocksQuery.data, projectsById, run]);
+  }, [projects, goals, blocksQuery.data, projectsById, run, standalone, shell, onClose]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

@@ -20,6 +20,7 @@ import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../api/client';
 import { invalidateBlockRelated } from '../api/queries';
 import { Button } from '../components/Button';
+import { GoalKindIconBadge } from '../components/GoalChip';
 import { LinkChip } from '../components/LinkChip';
 import { LinkPickerPopover } from '../components/LinkPickerPopover';
 import { ModalSheet } from '../components/ModalSheet';
@@ -304,10 +305,7 @@ export function CreateBlockModal({ open, defaults, onClose }: CreateBlockModalPr
             triggerClassName={selectedGoal ? '' : 'text-[#9A9A9A]'}
             leading={
               selectedGoal ? (
-                <span
-                  className="w-2 h-2 rounded-full shrink-0"
-                  style={{ backgroundColor: selectedGoal.color }}
-                />
+                <GoalKindIconBadge kind={selectedGoal.kind} color={selectedGoal.color} size="xs" />
               ) : (
                 <Target size={12} className="text-[#6E6E6E] shrink-0" />
               )
@@ -317,12 +315,7 @@ export function CreateBlockModal({ open, defaults, onClose }: CreateBlockModalPr
               ...goals.map((g) => ({
                 value: g.id,
                 label: g.name,
-                leading: (
-                  <span
-                    className="w-2 h-2 rounded-full shrink-0"
-                    style={{ backgroundColor: g.color }}
-                  />
-                ),
+                leading: <GoalKindIconBadge kind={g.kind} color={g.color} size="xs" />,
               })),
             ]}
           />

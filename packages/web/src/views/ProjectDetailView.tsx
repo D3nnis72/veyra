@@ -15,6 +15,7 @@ import { useMemo, useState } from 'react';
 import { useGoalsQuery, useProjectDetailQuery } from '../api/queries';
 import { useAppShell } from '../app/AppShellContext';
 import { Button } from '../components/Button';
+import { GoalChip } from '../components/GoalChip';
 import { LinkChip } from '../components/LinkChip';
 import { Pill } from '../components/Pill';
 import { useBlockContextMenu } from '../components/entityMenus';
@@ -57,7 +58,7 @@ export function ProjectDetailView({ projectId }: { projectId: string }) {
   const blockMenu = useBlockContextMenu();
 
   const detailQuery = useProjectDetailQuery(projectId);
-  const goalsQuery = useGoalsQuery({ includeArchived: false });
+  const goalsQuery = useGoalsQuery({ activeOnly: true });
   const [editOpen, setEditOpen] = useState(false);
 
   const goalsById = useMemo(() => {
@@ -168,9 +169,7 @@ export function ProjectDetailView({ projectId }: { projectId: string }) {
             {formatDuration(project.weeklyFocusMinutes)} focused this week
           </Pill>
           {defaultGoal ? (
-            <Pill tone="goal" dot dotColor={defaultGoal.color}>
-              {defaultGoal.name}
-            </Pill>
+            <GoalChip name={defaultGoal.name} kind={defaultGoal.kind} color={defaultGoal.color} />
           ) : null}
           {project.notionUrl ? (
             <LinkChip
@@ -264,9 +263,7 @@ export function ProjectDetailView({ projectId }: { projectId: string }) {
                             : 'Inbox'}
                       </Pill>
                       {goal ? (
-                        <Pill tone="goal" dot dotColor={goal.color}>
-                          {goal.name}
-                        </Pill>
+                        <GoalChip name={goal.name} kind={goal.kind} color={goal.color} />
                       ) : null}
                       {block.isOps ? (
                         <Pill tone="ops" icon={<Flame size={10} />}>

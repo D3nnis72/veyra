@@ -1,12 +1,14 @@
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  PROJECT_ACCENT_COLORS,
+  COLOR_PICKER_PRESETS,
+  type GoalKind,
   PROJECT_ICON_KEYS,
   type ProjectIconKey,
 } from '@veyra/core/types';
 import {
   ArrowLeft,
   ArrowRight,
+  Briefcase,
   Check,
   Copy,
   FolderKanban,
@@ -15,11 +17,13 @@ import {
   Server,
   Target,
   Trash2,
+  User,
 } from 'lucide-react';
 import { useState } from 'react';
 import { apiClient, isElectronDesktop, refreshClientConfig } from '../api/client';
 import { invalidateAllVeyraData } from '../api/queries';
 import { Button } from '../components/Button';
+import { ColorPicker } from '../components/ColorPicker';
 import { ModalSheet } from '../components/ModalSheet';
 import { ProjectBadge } from '../components/ProjectBadge';
 import { ProjectIcon } from '../components/icons';
@@ -32,6 +36,7 @@ export interface OnboardingFlowProps {
 interface DraftGoal {
   tempId: string;
   name: string;
+  kind: GoalKind;
   description: string;
   color: string;
 }
@@ -49,14 +54,16 @@ const DEFAULT_GOALS: DraftGoal[] = [
   {
     tempId: 'g-1',
     name: 'Ship core product milestones',
+    kind: 'company',
     description: 'Focus weekly build hours on high-leverage product work',
-    color: '#3B4BD8',
+    color: COLOR_PICKER_PRESETS[0].hex,
   },
   {
     tempId: 'g-2',
     name: 'Grow customer adoption',
+    kind: 'company',
     description: 'Unblock key rollouts, demos, and customer feedback loops',
-    color: '#2E9E6F',
+    color: COLOR_PICKER_PRESETS[4].hex,
   },
 ];
 
@@ -64,7 +71,7 @@ const DEFAULT_PROJECTS: DraftProject[] = [
   {
     tempId: 'p-1',
     name: 'Core App',
-    color: '#3B4BD8',
+    color: COLOR_PICKER_PRESETS[0].hex,
     icon: 'Rocket',
     goalTempId: 'g-1',
     isPinned: true,
@@ -72,7 +79,7 @@ const DEFAULT_PROJECTS: DraftProject[] = [
   {
     tempId: 'p-2',
     name: 'Customer Rollouts',
-    color: '#2E9E6F',
+    color: COLOR_PICKER_PRESETS[4].hex,
     icon: 'Briefcase',
     goalTempId: 'g-2',
     isPinned: true,
@@ -92,15 +99,15 @@ export function OnboardingFlow({ open, onComplete }: OnboardingFlowProps) {
   const [error, setError] = useState<string | null>(null);
 
   const addGoal = () => {
-    const color = PROJECT_ACCENT_COLORS[goals.length % PROJECT_ACCENT_COLORS.length];
+    const color = COLOR_PICKER_PRESETS[goals.length % COLOR_PICKER_PRESETS.length].hex;
     setGoals((prev) => [
       ...prev,
-      { tempId: `g-${Date.now()}`, name: '', description: '', color },
+      { tempId: `g-${Date.now()}`, name: '', kind: 'personal', description: '', color },
     ]);
   };
 
   const addProject = () => {
-    const color = PROJECT_ACCENT_COLORS[projects.length % PROJECT_ACCENT_COLORS.length];
+    const color = COLOR_PICKER_PRESETS[projects.length % COLOR_PICKER_PRESETS.length].hex;
     const icon = PROJECT_ICON_KEYS[projects.length % PROJECT_ICON_KEYS.length];
     setProjects((prev) => [
       ...prev,
@@ -161,6 +168,7 @@ export function OnboardingFlow({ open, onComplete }: OnboardingFlowProps) {
         if (!trimmed) continue;
         const created = await apiClient.createGoal({
           name: trimmed,
+          kind: g.kind,
           description: g.description.trim(),
           color: g.color,
         });
@@ -340,27 +348,57 @@ export function OnboardingFlow({ open, onComplete }: OnboardingFlowProps) {
                       placeholder="Short description (optional)"
                       className="flex-1 min-w-[220px] h-8 px-2.5 rounded-[6px] bg-[#171717] border border-[#2A2A2A] text-[12px] text-[#C4C4C4] placeholder:text-[#6E6E6E] focus:outline-none focus:border-[#5566F2]"
                     />
-                    <div className="flex items-center gap-1.5">
-                      {PROJECT_ACCENT_COLORS.map((hex) => (
-                        <button
-                          key={hex}
-                          type="button"
-                          aria-label={`Goal color ${hex}`}
-                          onClick={() =>
-                            setGoals((prev) =>
-                              prev.map((g, i) => (i === idx ? { ...g, color: hex } : g)),
-                            )
-                          }
-                          style={{ backgroundColor: hex }}
-                          className={`w-4 h-4 rounded-full transition-transform ${
-                            goal.color === hex
-                              ? 'ring-2 ring-white ring-offset-2 ring-offset-[#1C1C1C] scale-110'
-                              : 'opacity-70 hover:opacity-100'
-                          }`}
-                        />
-                      ))}
+                    <div
+                      className="inline-flex h-8 rounded-[8px] bg-[#262626] border border-[#3C3C3C] p-0.5 shrink-0"
+                      role="group"
+                      aria-label={`Goal ${idx + 1} kind`}
+                    >
+                      <button
+                        type="button"
+                        aria-pressed={goal.kind === 'personal'}
+                        onClick={() =>
+                          setGoals((prev) =>
+                            prev.map((g, i) => (i === idx ? { ...g, kind: 'personal' } : g)),
+                          )
+                        }
+                        className={[
+                          'h-full px-2.5 rounded-[6px] text-[11.5px] font-medium inline-flex items-center gap-1 transition-colors',
+                          goal.kind === 'personal'
+                            ? 'bg-[#3B4BD8] text-white'
+                            : 'text-[#9A9A9A] hover:text-[#EDEDED]',
+                        ].join(' ')}
+                      >
+                        <User size={11} />
+                        Personal
+                      </button>
+                      <button
+                        type="button"
+                        aria-pressed={goal.kind === 'company'}
+                        onClick={() =>
+                          setGoals((prev) =>
+                            prev.map((g, i) => (i === idx ? { ...g, kind: 'company' } : g)),
+                          )
+                        }
+                        className={[
+                          'h-full px-2.5 rounded-[6px] text-[11.5px] font-medium inline-flex items-center gap-1 transition-colors',
+                          goal.kind === 'company'
+                            ? 'bg-[#3B4BD8] text-white'
+                            : 'text-[#9A9A9A] hover:text-[#EDEDED]',
+                        ].join(' ')}
+                      >
+                        <Briefcase size={11} />
+                        Company
+                      </button>
                     </div>
                   </div>
+                  <ColorPicker
+                    value={goal.color}
+                    onChange={(hex) =>
+                      setGoals((prev) =>
+                        prev.map((g, i) => (i === idx ? { ...g, color: hex } : g)),
+                      )
+                    }
+                  />
                 </div>
               ))}
             </div>
@@ -456,28 +494,15 @@ export function OnboardingFlow({ open, onComplete }: OnboardingFlowProps) {
                     ) : null}
                   </div>
 
-                  <div className="flex items-center justify-between gap-2 flex-wrap pl-8">
-                    {/* Color swatches */}
-                    <div className="flex items-center gap-1.5">
-                      {PROJECT_ACCENT_COLORS.map((hex) => (
-                        <button
-                          key={hex}
-                          type="button"
-                          aria-label={`Project color ${hex}`}
-                          onClick={() =>
-                            setProjects((prev) =>
-                              prev.map((p, i) => (i === idx ? { ...p, color: hex } : p)),
-                            )
-                          }
-                          style={{ backgroundColor: hex }}
-                          className={`w-4 h-4 rounded-full ${
-                            proj.color === hex
-                              ? 'ring-2 ring-white ring-offset-2 ring-offset-[#1C1C1C]'
-                              : 'opacity-70 hover:opacity-100'
-                          }`}
-                        />
-                      ))}
-                    </div>
+                  <div className="space-y-2.5 pl-8">
+                    <ColorPicker
+                      value={proj.color}
+                      onChange={(hex) =>
+                        setProjects((prev) =>
+                          prev.map((p, i) => (i === idx ? { ...p, color: hex } : p)),
+                        )
+                      }
+                    />
 
                     {/* Icon picker (monogram or 8 Lucide vector icons) */}
                     <div className="flex items-center gap-1">

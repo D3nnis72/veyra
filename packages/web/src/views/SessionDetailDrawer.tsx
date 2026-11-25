@@ -35,6 +35,7 @@ import { useAppShell } from '../app/AppShellContext';
 import { AutoSummarySection } from '../components/AutoSummarySection';
 import { Button } from '../components/Button';
 import { DockedDrawer } from '../components/DockedDrawer';
+import { GoalChip } from '../components/GoalChip';
 import { LinkChip, inferLinkSource, inferLinkTitle } from '../components/LinkChip';
 import { Pill } from '../components/Pill';
 import { ProjectBadge } from '../components/ProjectBadge';
@@ -96,7 +97,7 @@ export function SessionDetailDrawer({ sessionId, onClose }: SessionDetailDrawerP
   const block = blockDetailQuery.data?.block;
 
   const projectsQuery = useProjectsQuery({ includeArchived: false });
-  const goalsQuery = useGoalsQuery({ includeArchived: false });
+  const goalsQuery = useGoalsQuery({ activeOnly: true });
   const projects = projectsQuery.data?.projects ?? [];
   const goals = goalsQuery.data?.goals ?? [];
 
@@ -379,9 +380,7 @@ export function SessionDetailDrawer({ sessionId, onClose }: SessionDetailDrawerP
                 </Pill>
               ) : null}
               {goal ? (
-                <Pill tone="goal" dot dotColor={goal.color}>
-                  {goal.name}
-                </Pill>
+                <GoalChip name={goal.name} kind={goal.kind} color={goal.color} />
               ) : null}
               {block?.isOps || calendarSession?.isOps ? (
                 <Pill tone="ops" icon={<Flame size={10} />}>

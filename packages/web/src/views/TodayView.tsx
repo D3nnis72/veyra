@@ -20,6 +20,7 @@ import { openExternalUrl } from '../api/client';
 import { useCalendarQuery, useTodayQuery } from '../api/queries';
 import { useAppShell } from '../app/AppShellContext';
 import { Button } from '../components/Button';
+import { GoalChip } from '../components/GoalChip';
 import { Pill } from '../components/Pill';
 import { useBlockContextMenu, useMeetingContextMenu } from '../components/entityMenus';
 import { ProjectBadge } from '../components/ProjectBadge';
@@ -612,9 +613,7 @@ function TodayBlockCard({
             ) : null}
 
             {goal ? (
-              <Pill tone="goal" dot dotColor={goal.color}>
-                {goal.name}
-              </Pill>
+              <GoalChip name={goal.name} kind={goal.kind} color={goal.color} />
             ) : null}
 
             {block.isOps ? (

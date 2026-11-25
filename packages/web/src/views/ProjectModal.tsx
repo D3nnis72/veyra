@@ -1,18 +1,21 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  PROJECT_ACCENT_COLORS,
+  COLOR_PICKER_PRESETS,
+  type GoalKind,
   PROJECT_ICON_KEYS,
   type Project,
   type ProjectIconKey,
   type ProjectStatus,
   type ProjectWithStats,
 } from '@veyra/core/types';
-import { Archive, Check, Plus, Trash2 } from 'lucide-react';
+import { Archive, Briefcase, Plus, Trash2, User } from 'lucide-react';
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { apiClient } from '../api/client';
 import { useGoalsQuery } from '../api/queries';
 import { Button } from '../components/Button';
+import { ColorPicker } from '../components/ColorPicker';
 import { DockedDrawer } from '../components/DockedDrawer';
+import { GoalKindIconBadge } from '../components/GoalChip';
 import { ProjectBadge } from '../components/ProjectBadge';
 import { ToggleSwitch } from '../components/ToggleSwitch';
 import { goalTint } from '../components/goalTint';
@@ -43,14 +46,14 @@ export function ProjectModal({
   const isEdit = Boolean(project);
   const isSystem = Boolean(project?.isSystem);
 
-  const goalsQuery = useGoalsQuery({ includeArchived: false });
+  const goalsQuery = useGoalsQuery({ activeOnly: true });
   const goals = goalsQuery.data?.goals ?? [];
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [badgeMode, setBadgeMode] = useState<'icon' | 'monogram'>('icon');
   const [selectedIcon, setSelectedIcon] = useState<ProjectIconKey>('Rocket');
-  const [color, setColor] = useState<string>(PROJECT_ACCENT_COLORS[0]);
+  const [color, setColor] = useState<string>(COLOR_PICKER_PRESETS[0].hex);
   const [defaultGoalId, setDefaultGoalId] = useState<string | null>(null);
   const [notionUrl, setNotionUrl] = useState('');
   const [keywordsText, setKeywordsText] = useState('');
@@ -61,7 +64,8 @@ export function ProjectModal({
   // Inline "+ New Goal" creator state
   const [creatingGoal, setCreatingGoal] = useState(false);
   const [newGoalName, setNewGoalName] = useState('');
-  const [newGoalColor, setNewGoalColor] = useState<string>(PROJECT_ACCENT_COLORS[0]);
+  const [newGoalKind, setNewGoalKind] = useState<GoalKind>('personal');
+  const [newGoalColor, setNewGoalColor] = useState<string>(COLOR_PICKER_PRESETS[0].hex);
   const [newGoalError, setNewGoalError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -76,7 +80,7 @@ export function ProjectModal({
         setBadgeMode('monogram');
         setSelectedIcon('Rocket');
       }
-      setColor(project.color || PROJECT_ACCENT_COLORS[0]);
+      setColor(project.color || COLOR_PICKER_PRESETS[0].hex);
       setDefaultGoalId(project.defaultGoalId);
       setNotionUrl(project.notionUrl ?? '');
       setKeywordsText((project.matchKeywords ?? []).join(', '));
@@ -87,7 +91,7 @@ export function ProjectModal({
       setDescription('');
       setBadgeMode('icon');
       setSelectedIcon('Rocket');
-      setColor(PROJECT_ACCENT_COLORS[0]);
+      setColor(COLOR_PICKER_PRESETS[0].hex);
       setDefaultGoalId(null);
       setNotionUrl('');
       setKeywordsText('');
@@ -97,7 +101,8 @@ export function ProjectModal({
     setError(null);
     setCreatingGoal(false);
     setNewGoalName('');
-    setNewGoalColor(PROJECT_ACCENT_COLORS[0]);
+    setNewGoalKind('personal');
+    setNewGoalColor(COLOR_PICKER_PRESETS[0].hex);
     setNewGoalError(null);
   }, [open, project]);
 
@@ -111,12 +116,13 @@ export function ProjectModal({
   };
 
   const createGoalMutation = useMutation({
-    mutationFn: (input: { name: string; color: string }) =>
-      apiClient.createGoal({ name: input.name, color: input.color }),
+    mutationFn: (input: { name: string; kind: GoalKind; color: string }) =>
+      apiClient.createGoal({ name: input.name, kind: input.kind, color: input.color }),
     onSuccess: (res) => {
       void queryClient.invalidateQueries({ queryKey: ['goals'] });
       setDefaultGoalId(res.goal.id);
       setNewGoalName('');
+      setNewGoalKind('personal');
       setCreatingGoal(false);
       setNewGoalError(null);
     },
@@ -242,7 +248,7 @@ export function ProjectModal({
       return;
     }
     setNewGoalError(null);
-    createGoalMutation.mutate({ name: trimmed, color: newGoalColor });
+    createGoalMutation.mutate({ name: trimmed, kind: newGoalKind, color: newGoalColor });
   };
 
   const previewIcon = badgeMode === 'icon' ? selectedIcon : null;
@@ -433,29 +439,7 @@ export function ProjectModal({
             </div>
           )}
 
-          <div className="flex flex-wrap items-center gap-2.5" role="radiogroup" aria-label="Accent color">
-            {PROJECT_ACCENT_COLORS.map((swatch) => {
-              const active = color.toUpperCase() === swatch.toUpperCase();
-              return (
-                <button
-                  key={swatch}
-                  type="button"
-                  aria-label={`Color ${swatch}`}
-                  aria-pressed={active}
-                  onClick={() => setColor(swatch)}
-                  style={{ backgroundColor: swatch }}
-                  className={[
-                    'w-7 h-7 rounded-full inline-flex items-center justify-center transition-all',
-                    active
-                      ? 'ring-2 ring-offset-2 ring-offset-[#1C1C1C] ring-white'
-                      : 'opacity-75 hover:opacity-100',
-                  ].join(' ')}
-                >
-                  {active ? <Check size={13} className="text-white" strokeWidth={2.5} /> : null}
-                </button>
-              );
-            })}
-          </div>
+          <ColorPicker value={color} onChange={setColor} />
         </section>
 
         {/* Default Goal */}
@@ -504,16 +488,13 @@ export function ProjectModal({
                       : undefined
                   }
                   className={[
-                    'h-9 px-3.5 rounded-[8px] border text-[13px] font-medium inline-flex items-center gap-2 transition-colors',
+                    'h-9 pl-2 pr-3.5 rounded-[8px] border text-[13px] font-medium inline-flex items-center gap-2 transition-colors',
                     active
                       ? ''
                       : 'bg-[#171717] border-[#3C3C3C] text-[#C4C4C4] hover:border-[#4E4E4E]',
                   ].join(' ')}
                 >
-                  <span
-                    className="w-2 h-2 rounded-full shrink-0"
-                    style={{ backgroundColor: tint.dot }}
-                  />
+                  <GoalKindIconBadge kind={goal.kind} color={goal.color} size="xs" />
                   <span>{goal.name}</span>
                 </button>
               );
@@ -521,7 +502,7 @@ export function ProjectModal({
           </div>
 
           {creatingGoal ? (
-            <div className="p-3.5 rounded-[10px] bg-[#171717] border border-[#2A2A2A] space-y-3">
+            <div className="pt-3 border-t border-[#2A2A2A] space-y-3">
               <div className="flex items-center gap-2">
                 <input
                   autoFocus
@@ -557,22 +538,27 @@ export function ProjectModal({
                   Cancel
                 </Button>
               </div>
-              <div className="flex items-center gap-2">
-                {PROJECT_ACCENT_COLORS.map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    aria-label={`Goal color ${c}`}
-                    onClick={() => setNewGoalColor(c)}
-                    style={{ backgroundColor: c }}
-                    className={`w-5 h-5 rounded-full ${
-                      newGoalColor === c
-                        ? 'ring-2 ring-offset-2 ring-offset-[#171717] ring-white'
-                        : 'opacity-70 hover:opacity-100'
-                    }`}
-                  />
-                ))}
+              <div className="inline-flex h-8 rounded-[8px] bg-[#262626] border border-[#3C3C3C] p-0.5">
+                <button
+                  type="button"
+                  aria-pressed={newGoalKind === 'personal'}
+                  onClick={() => setNewGoalKind('personal')}
+                  className={`${segmentButton(newGoalKind === 'personal', true)} inline-flex items-center gap-1.5`}
+                >
+                  <User size={12} />
+                  Personal
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={newGoalKind === 'company'}
+                  onClick={() => setNewGoalKind('company')}
+                  className={`${segmentButton(newGoalKind === 'company', true)} inline-flex items-center gap-1.5`}
+                >
+                  <Briefcase size={12} />
+                  Company
+                </button>
               </div>
+              <ColorPicker value={newGoalColor} onChange={setNewGoalColor} />
               {newGoalError ? (
                 <div className="text-[12px] text-[#FF9EC5]">{newGoalError}</div>
               ) : null}

@@ -22,7 +22,7 @@ import {
 } from '../api/queries';
 import { useAppShell } from '../app/AppShellContext';
 import { Button } from '../components/Button';
-import { Pill } from '../components/Pill';
+import { GoalChip } from '../components/GoalChip';
 import { ProjectBadge } from '../components/ProjectBadge';
 import { formatDuration, formatLocalTime } from '../components/icons';
 
@@ -349,9 +349,7 @@ export function FocusView() {
             </button>
           ) : null}
           {currentGoal ? (
-            <Pill tone="goal" dot dotColor={currentGoal.color}>
-              {currentGoal.name}
-            </Pill>
+            <GoalChip name={currentGoal.name} kind={currentGoal.kind} color={currentGoal.color} />
           ) : null}
         </div>
 

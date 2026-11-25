@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ContextMenu } from '../src/components/ContextMenu';
+import { GoalChip } from '../src/components/GoalChip';
 import { Pill } from '../src/components/Pill';
 import {
   ShortcutBinding,
@@ -46,6 +47,18 @@ describe('goal tint', () => {
     expect(green.style.backgroundColor).not.toBe('rgb(21, 43, 71)');
     expect(green.style.color).toBe('rgb(123, 224, 176)');
     expect(green.className).toContain('border');
+  });
+
+  it('GoalChip renders kind icon badge with curated preset tints and no plain dot', () => {
+    const { container } = render(
+      <>
+        <GoalChip name="Deep Craft" kind="personal" color="#4DA3FF" />
+        <GoalChip name="askLio Core" kind="company" color="#34D399" />
+      </>,
+    );
+    expect(container.querySelector('[data-goal-kind="personal"] svg')).toBeInTheDocument();
+    expect(container.querySelector('[data-goal-kind="company"] svg')).toBeInTheDocument();
+    expect(container.querySelector('.rounded-full.w-1\\.5')).not.toBeInTheDocument();
   });
 });
 

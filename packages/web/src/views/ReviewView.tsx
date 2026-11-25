@@ -27,6 +27,7 @@ import { apiClient } from '../api/client';
 import { invalidateBlockRelated, useReviewQuery } from '../api/queries';
 import { useAppShell } from '../app/AppShellContext';
 import { Button } from '../components/Button';
+import { GoalChip } from '../components/GoalChip';
 import { Pill } from '../components/Pill';
 import { ProjectBadge } from '../components/ProjectBadge';
 import {
@@ -385,9 +386,7 @@ export function ReviewView() {
                           </span>
                         ) : null}
                         {goal ? (
-                          <Pill tone="goal" dot dotColor={goal.color}>
-                            {goal.name}
-                          </Pill>
+                          <GoalChip name={goal.name} kind={goal.kind} color={goal.color} />
                         ) : null}
                         {item.isOps ? (
                           <Pill tone="ops" icon={<Flame size={10} />}>
@@ -439,9 +438,7 @@ export function ReviewView() {
 
                     <div className="flex items-center flex-wrap gap-1.5">
                       {goal ? (
-                        <Pill tone="goal" dot dotColor={goal.color}>
-                          {goal.name}
-                        </Pill>
+                        <GoalChip name={goal.name} kind={goal.kind} color={goal.color} />
                       ) : null}
                       {item.isOps ? (
                         <Pill tone="ops" icon={<Flame size={10} />}>
