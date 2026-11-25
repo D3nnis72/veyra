@@ -420,7 +420,12 @@ export function updateBlock(
     energySignal:
       parsed.energySignal !== undefined ? parsed.energySignal : existing.energySignal,
     senseSignal: parsed.senseSignal !== undefined ? parsed.senseSignal : existing.senseSignal,
-    dropReason: parsed.dropReason !== undefined ? parsed.dropReason : existing.dropReason,
+    dropReason:
+      parsed.dropReason !== undefined
+        ? parsed.dropReason
+        : parsed.status === 'todo'
+          ? null
+          : existing.dropReason,
     outcomeNote: parsed.outcomeNote !== undefined ? parsed.outcomeNote : existing.outcomeNote,
     resumeNote: parsed.resumeNote !== undefined ? parsed.resumeNote : existing.resumeNote,
     autoSummary: parsed.autoSummary !== undefined ? parsed.autoSummary : existing.autoSummary,

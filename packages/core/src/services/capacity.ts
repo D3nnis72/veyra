@@ -425,10 +425,12 @@ function computeMotionHotSpots(
   const seriesCounts = new Map<string, { rated: number; motion: number }>();
 
   for (const blk of ratedDoneBlocks) {
-    const pStats = projectCounts.get(blk.projectId) ?? { rated: 0, motion: 0 };
-    pStats.rated += 1;
-    if (blk.senseSignal === 'motion') pStats.motion += 1;
-    projectCounts.set(blk.projectId, pStats);
+    if (blk.projectId !== SYSTEM_OTHER_PROJECT_ID) {
+      const pStats = projectCounts.get(blk.projectId) ?? { rated: 0, motion: 0 };
+      pStats.rated += 1;
+      if (blk.senseSignal === 'motion') pStats.motion += 1;
+      projectCounts.set(blk.projectId, pStats);
+    }
 
     if (blk.seriesId) {
       const sStats = seriesCounts.get(blk.seriesId) ?? { rated: 0, motion: 0 };
