@@ -31,7 +31,9 @@ Blocks get a rough size (30 min, 1 h, 2 h). The default comes from your history 
 
 In `Today → UP NEXT` a thin line sits where the room runs out. Blocks above it fit, blocks below it are shown quieter under "Probably not today". No red, no counter of missing items.
 
-Figma concept (Today, Plan, day look back and Weekly Review, current state left, proposal right): [Proposal · Prioritization · Dark](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=109-3). Concept only, not decided. In `Plan` each day header shows planned against room ("4 h planned · room about 3 h"), so overplanning is visible while dragging, before the day starts.
+In `Plan` each day header shows planned against room ("4 h planned · room about 3 h"), so overplanning is visible while dragging, before the day starts.
+
+Figma concept (Today, Plan, day look back and Weekly Review, current state left, proposal right): [Proposal · Prioritization · Dark](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=109-3). Concept only, not decided.
 
 ```text
 UP NEXT                                  Room today ≈ 3h 40m
