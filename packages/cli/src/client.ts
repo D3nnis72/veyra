@@ -15,6 +15,9 @@ import {
   type CreateGoalInput,
   type CreateProjectInput,
   type DailyNote,
+  type DayLookBackSummary,
+  type DropReason,
+  type FitLineSummary,
   type FocusSession,
   type FocusStatus,
   type Goal,
@@ -25,14 +28,17 @@ import {
   type MoveBlockInput,
   type NormalizedCalendarEvent,
   type ParkBlockInput,
+  type PlanProjectTimeItem,
   type Project,
   type ProjectStatus,
   type ProjectWithStats,
   type PublicSettings,
   type ReorderBlockInput,
   type ReorderGoalInput,
+  type RoomTodaySummary,
   type SplitSessionInput,
   type SplitSessionResult,
+  type SuggestedOrderItem,
   type TrimSessionInput,
   type UpdateBlockInput,
   type UpdateCalendarEventInput,
@@ -59,12 +65,18 @@ export interface TodayResponse {
   dailyNotesCount: number;
   projects: ProjectWithStats[];
   goals: GoalWithStats[];
+  roomToday: RoomTodaySummary;
+  suggestedOrder: SuggestedOrderItem[];
+  fitLine: FitLineSummary;
+  dayLookBack: DayLookBackSummary | null;
 }
 
 export interface PlanDayBucket {
   date: string;
   blocks: Block[];
   events: CalendarEvent[];
+  plannedMinutes: number;
+  roomMinutes: number;
 }
 
 export interface PlanResponse {
@@ -73,6 +85,7 @@ export interface PlanResponse {
   today: string;
   timezone: string;
   days: PlanDayBucket[];
+  projectTimeStrip: PlanProjectTimeItem[];
   inbox: Block[];
   later: Block[];
   projects: ProjectWithStats[];
@@ -260,6 +273,12 @@ export class VeyraClient {
     return this.request<TodayResponse>('GET', '/api/today');
   }
 
+  applySuggestedOrder(blockIds: string[]): Promise<{ blocks: Block[] }> {
+    return this.request<{ blocks: Block[] }>('POST', '/api/today/apply-suggested-order', {
+      body: { blockIds },
+    });
+  }
+
   plan(weekStart?: string): Promise<PlanResponse> {
     return this.request<PlanResponse>('GET', '/api/plan', { query: { weekStart } });
   }
@@ -431,7 +450,10 @@ export class VeyraClient {
     });
   }
 
-  dropBlock(id: string, input?: { stopSeries?: boolean }): Promise<{ block: Block }> {
+  dropBlock(
+    id: string,
+    input?: { stopSeries?: boolean; dropReason?: DropReason | null },
+  ): Promise<{ block: Block }> {
     return this.request<{ block: Block }>('POST', `/api/blocks/${encodeURIComponent(id)}/drop`, {
       body: input ?? {},
     });

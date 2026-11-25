@@ -11,6 +11,8 @@ import {
   type CalendarEvent,
   type CalendarSyncStatus,
   type DailyNote,
+  type DayLookBackSummary,
+  type FitLineSummary,
   type FocusSession,
   type FocusStatus,
   type Goal,
@@ -21,9 +23,12 @@ import {
   type NormalizedCalendarEvent,
   type NotionOAuthStartResponse,
   type NotionTestConnectionResult,
+  type PlanProjectTimeItem,
   type ProjectWithStats,
   type PublicSettings,
+  type RoomTodaySummary,
   type Settings,
+  type SuggestedOrderItem,
   ValidationError,
   VeyraError,
   type VeyraDb,
@@ -31,11 +36,14 @@ import {
   activityActorSchema,
   addDailyNote,
   addDaysToDateString,
+  applySuggestedOrder,
   blockBucketSchema,
   blockStatusSchema,
   calendarEventSourceSchema,
   closeGoal,
   completeBlock,
+  computePlanCapacity,
+  computeTodayCapacity,
   createBlock,
   createGoal,
   autoMatchUnassignedCalendarEvents,
@@ -47,6 +55,7 @@ import {
   deleteProject,
   deleteSession,
   dropBlock,
+  dropReasonSchema,
   formatLocalDate,
   getActiveWeeklyRule,
   getBlockDetail,
@@ -80,6 +89,7 @@ import {
   reorderGoal,
   resumeFocus,
   runDailyRolloverAndRecurrence,
+  senseSignalSchema,
   setWeeklyRule,
   splitSession,
   startFocus,
@@ -159,12 +169,18 @@ export interface TodayResponse {
   dailyNotesCount: number;
   projects: ProjectWithStats[];
   goals: GoalWithStats[];
+  roomToday: RoomTodaySummary;
+  suggestedOrder: SuggestedOrderItem[];
+  fitLine: FitLineSummary;
+  dayLookBack: DayLookBackSummary | null;
 }
 
 export interface PlanDayBucket {
   date: string;
   blocks: Block[];
   events: CalendarEvent[];
+  plannedMinutes: number;
+  roomMinutes: number;
 }
 
 export interface PlanResponse {
@@ -173,6 +189,7 @@ export interface PlanResponse {
   today: string;
   timezone: string;
   days: PlanDayBucket[];
+  projectTimeStrip: PlanProjectTimeItem[];
   inbox: Block[];
   later: Block[];
   projects: ProjectWithStats[];
@@ -248,11 +265,17 @@ const focusPauseBodySchema = z.object({
 const focusCompleteBodySchema = z.object({
   blockId: z.string().uuid().optional(),
   energySignal: z.enum(['up', 'neutral', 'down']).nullable().optional(),
+  senseSignal: senseSignalSchema.nullable().optional(),
   outcomeNote: z.string().nullable().optional(),
 });
 
 const dropBlockBodySchema = z.object({
   stopSeries: z.boolean().optional(),
+  dropReason: dropReasonSchema.nullable().optional(),
+});
+
+const applySuggestedOrderBodySchema = z.object({
+  blockIds: z.array(z.string().uuid()),
 });
 
 const setWeeklyRuleBodySchema = z.object({
@@ -692,6 +715,15 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
     const notesToday = listDailyNotes(db, { date });
     const projects = listProjects(db, now, { includeArchived: false });
     const goals = listGoals(db, { activeOnly: true }, now);
+    const capacity = computeTodayCapacity(db, {
+      date,
+      upNext,
+      completedToday,
+      todayEvents,
+      projects,
+      goals,
+      now,
+    });
 
     const payload: TodayResponse = {
       date,
@@ -706,9 +738,26 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
       dailyNotesCount: notesToday.length,
       projects,
       goals,
+      roomToday: capacity.roomToday,
+      suggestedOrder: capacity.suggestedOrder,
+      fitLine: capacity.fitLine,
+      dayLookBack: capacity.dayLookBack,
     };
 
     return c.json(payload);
+  });
+
+  app.post('/api/today/apply-suggested-order', async (c) => {
+    const now = getNow(c);
+    const actor = getActor(c);
+    const raw = await readJsonBody(c);
+    const parsed = applySuggestedOrderBodySchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid apply-suggested-order payload (expected { blockIds: UUID[] })');
+    }
+    const reordered = applySuggestedOrder(db, parsed.data.blockIds, { now, actor });
+    emitSse('block.reordered', 'block', undefined, now);
+    return c.json({ blocks: reordered });
   });
 
   app.get('/api/plan', (c) => {
@@ -729,7 +778,7 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
 
     const { weekStartDate, weekEndDate } = getWeekRange(rawWeekStart ?? today);
 
-    const days: PlanDayBucket[] = [];
+    const rawDays: Array<{ date: string; blocks: Block[]; events: CalendarEvent[] }> = [];
     for (let offset = 0; offset < 7; offset++) {
       const date = addDaysToDateString(weekStartDate, offset);
       const { startIso, endIso } = getLocalDayBoundsIso(date, timezone);
@@ -739,7 +788,7 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
         includeDropped: false,
       });
       const dayEvents = listCalendarEvents(db, startIso, endIso);
-      days.push({ date, blocks: dayBlocks, events: dayEvents });
+      rawDays.push({ date, blocks: dayBlocks, events: dayEvents });
     }
 
     const inbox = listBlocks(db, { bucket: 'inbox', status: 'todo' });
@@ -747,12 +796,20 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
     const projects = listProjects(db, now, { includeArchived: false });
     const goals = listGoals(db, { activeOnly: true }, now);
 
+    const planCapacity = computePlanCapacity(db, rawDays, projects, now);
+    const days: PlanDayBucket[] = rawDays.map((day, idx) => ({
+      ...day,
+      plannedMinutes: planCapacity.dayCapacities[idx]?.plannedMinutes ?? 0,
+      roomMinutes: planCapacity.dayCapacities[idx]?.roomMinutes ?? 0,
+    }));
+
     const payload: PlanResponse = {
       weekStartDate,
       weekEndDate,
       today,
       timezone,
       days,
+      projectTimeStrip: planCapacity.projectTimeStrip,
       inbox,
       later,
       projects,
@@ -1115,6 +1172,7 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
     }
     const block = dropBlock(db, c.req.param('id'), {
       stopSeries: parsed.data.stopSeries,
+      dropReason: parsed.data.dropReason,
       now,
       actor,
     });
@@ -1312,6 +1370,7 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
       parsed.data.blockId,
       {
         energySignal: parsed.data.energySignal,
+        senseSignal: parsed.data.senseSignal,
         outcomeNote: parsed.data.outcomeNote,
       },
       now,

@@ -14,7 +14,10 @@ import type {
   CreateGoalInput,
   CreateProjectInput,
   DailyNote,
+  DayLookBackSummary,
+  DropReason,
   EnergySignal,
+  FitLineSummary,
   FocusSession,
   FocusStatus,
   Goal,
@@ -35,14 +38,18 @@ import type {
   NotionSearchResponse,
   NotionTestConnectionResult,
   ParkBlockInput,
+  PlanProjectTimeItem,
   Project,
   ProjectWithStats,
   PublicSettings,
   ReorderBlockInput,
   ReorderGoalInput,
+  RoomTodaySummary,
+  SenseSignal,
   SplitSessionInput,
   SplitSessionResult,
   StartFocusResult,
+  SuggestedOrderItem,
   TrimSessionInput,
   UpdateBlockInput,
   UpdateCalendarEventInput,
@@ -152,12 +159,18 @@ export interface TodayResponse {
   dailyNotesCount: number;
   projects: ProjectWithStats[];
   goals: GoalWithStats[];
+  roomToday: RoomTodaySummary;
+  suggestedOrder: SuggestedOrderItem[];
+  fitLine: FitLineSummary;
+  dayLookBack: DayLookBackSummary | null;
 }
 
 export interface PlanDayBucket {
   date: string;
   blocks: Block[];
   events: CalendarEvent[];
+  plannedMinutes: number;
+  roomMinutes: number;
 }
 
 export interface PlanResponse {
@@ -166,6 +179,7 @@ export interface PlanResponse {
   today: string;
   timezone: string;
   days: PlanDayBucket[];
+  projectTimeStrip: PlanProjectTimeItem[];
   inbox: Block[];
   later: Block[];
   projects: ProjectWithStats[];
@@ -455,6 +469,10 @@ export const apiClient = {
     return request<TodayResponse>('GET', '/api/today');
   },
 
+  applySuggestedOrder(blockIds: string[]): Promise<{ blocks: Block[] }> {
+    return request<{ blocks: Block[] }>('POST', '/api/today/apply-suggested-order', { blockIds });
+  },
+
   getPlan(weekStart?: string): Promise<PlanResponse> {
     return request<PlanResponse>('GET', `/api/plan${buildQuery({ weekStart })}`);
   },
@@ -593,7 +611,10 @@ export const apiClient = {
     );
   },
 
-  dropBlock(id: string, input?: { stopSeries?: boolean }): Promise<{ block: Block }> {
+  dropBlock(
+    id: string,
+    input?: { stopSeries?: boolean; dropReason?: DropReason | null },
+  ): Promise<{ block: Block }> {
     return request<{ block: Block }>(
       'POST',
       `/api/blocks/${encodeURIComponent(id)}/drop`,
@@ -633,6 +654,7 @@ export const apiClient = {
   completeFocus(input?: {
     blockId?: string;
     energySignal?: EnergySignal | null;
+    senseSignal?: SenseSignal | null;
     outcomeNote?: string | null;
   }): Promise<FocusCompleteResponse> {
     return request<FocusCompleteResponse>('POST', '/api/focus/complete', input ?? {});

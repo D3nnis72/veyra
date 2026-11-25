@@ -740,4 +740,78 @@ describe('@veyra/cli integration', () => {
     expect(allAfterClose.exitCode).toBe(0);
     expect((JSON.parse(allAfterClose.stdout) as { goals: Array<{ id: string }> }).goals).toHaveLength(1);
   });
+
+  it('veyra project create --weekly-time 4h, veyra add --size 1h, veyra done --sense moved, veyra drop --reason no_room, and veyra today --json round-trip cleanly', async () => {
+    const projRes = await execCli(
+      ['project', 'create', 'Core Engine', '--weekly-time', '4h', '--json'],
+      baseEnv(),
+    );
+    expect(projRes.exitCode).toBe(0);
+    const proj = JSON.parse(projRes.stdout) as { id: string; weeklyTimeMinutes: number | null };
+    expect(proj.weeklyTimeMinutes).toBe(240);
+
+    const projUpdateRes = await execCli(
+      ['project', 'update', proj.id, '--weekly-time', '2.5h', '--json'],
+      baseEnv(),
+    );
+    expect(projUpdateRes.exitCode).toBe(0);
+    expect((JSON.parse(projUpdateRes.stdout) as { weeklyTimeMinutes: number | null }).weeklyTimeMinutes).toBe(150);
+
+    const add1 = await execCli(
+      ['add', 'Ship capacity', '--project', proj.id, '--date', '2026-11-23', '--size', '1h', '--json'],
+      baseEnv(),
+    );
+    expect(add1.exitCode).toBe(0);
+    const blk1 = JSON.parse(add1.stdout) as { id: string; sizeMinutes: number | null };
+    expect(blk1.sizeMinutes).toBe(60);
+
+    const add2 = await execCli(
+      ['add', 'Overflow item', '--project', proj.id, '--date', '2026-11-23', '--size', '2h', '--json'],
+      baseEnv(),
+    );
+    expect(add2.exitCode).toBe(0);
+    const blk2 = JSON.parse(add2.stdout) as { id: string; sizeMinutes: number | null };
+    expect(blk2.sizeMinutes).toBe(120);
+
+    // Check today --json returns roomToday, suggestedOrder, fitLine
+    const todayJsonRes = await execCli(['today', '--json'], baseEnv());
+    expect(todayJsonRes.exitCode).toBe(0);
+    const todayData = JSON.parse(todayJsonRes.stdout) as {
+      roomToday: { roomMinutes: number; baselineFocusMinutes: number };
+      suggestedOrder: Array<{ blockId: string; effectiveSizeMinutes: number }>;
+      fitLine: { fitLineIndex: number; fittingMinutes: number };
+      dayLookBack: unknown;
+    };
+    expect(todayData.roomToday.roomMinutes).toBeGreaterThanOrEqual(0);
+    expect(todayData.suggestedOrder.length).toBeGreaterThanOrEqual(2);
+    expect(typeof todayData.fitLine.fitLineIndex).toBe('number');
+
+    // Update size to auto (clears to null)
+    const autoSizeRes = await execCli(['update', blk2.id, '--size', 'auto', '--json'], baseEnv());
+    expect(autoSizeRes.exitCode).toBe(0);
+    expect((JSON.parse(autoSizeRes.stdout) as { sizeMinutes: number | null }).sizeMinutes).toBeNull();
+
+    // Done with --sense moved
+    const doneRes = await execCli(
+      ['done', blk1.id, '--energy', 'up', '--sense', 'moved', '--outcome', 'Shipped', '--json'],
+      baseEnv(),
+    );
+    expect(doneRes.exitCode).toBe(0);
+    const doneData = JSON.parse(doneRes.stdout) as { block: { senseSignal: string | null } };
+    expect(doneData.block.senseSignal).toBe('moved');
+
+    // Drop with --reason no_room
+    const dropRes = await execCli(['drop', blk2.id, '--reason', 'no_room', '--json'], baseEnv());
+    expect(dropRes.exitCode).toBe(0);
+    const dropped = JSON.parse(dropRes.stdout) as { dropReason: string | null; status: string };
+    expect(dropped).toMatchObject({ status: 'dropped', dropReason: 'no_room' });
+
+    // Clear weekly-time with none
+    const clearProjRes = await execCli(
+      ['project', 'update', proj.id, '--weekly-time', 'none', '--json'],
+      baseEnv(),
+    );
+    expect(clearProjRes.exitCode).toBe(0);
+    expect((JSON.parse(clearProjRes.stdout) as { weeklyTimeMinutes: number | null }).weeklyTimeMinutes).toBeNull();
+  });
 });

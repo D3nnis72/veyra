@@ -912,4 +912,206 @@ describe('@veyra/server REST API', () => {
     const personalData = (await personalRes.json()) as { goals: Array<{ id: string }> };
     expect(personalData.goals.map((g) => g.id)).toEqual([p1.id, p2.id]);
   });
+
+  it('GET /api/today returns roomToday, suggestedOrder, fitLine, and POST /api/today/apply-suggested-order persists new block order', async () => {
+    const { baseUrl } = await startTestVeyraServer();
+    const nowHeader = { 'X-Veyra-Now': '2026-11-25T09:00:00.000Z' };
+    const json = { 'Content-Type': 'application/json', ...nowHeader };
+
+    await fetch(`${baseUrl}/api/settings`, {
+      method: 'PATCH',
+      headers: json,
+      body: JSON.stringify({ timezone: 'UTC' }),
+    });
+
+    // Add a 1h meeting today -> fallback 240 - 60 = 180m room
+    await fetch(`${baseUrl}/api/events/upsert`, {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({
+        source: 'manual',
+        events: [
+          {
+            externalId: 'sync-1',
+            title: 'Weekly sync',
+            startAt: '2026-11-25T11:00:00.000Z',
+            endAt: '2026-11-25T12:00:00.000Z',
+          },
+        ],
+      }),
+    });
+
+    const opsRes = await fetch(`${baseUrl}/api/blocks`, {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({
+        title: 'Inbox triage',
+        isOps: true,
+        bucket: 'scheduled',
+        scheduledDate: '2026-11-25',
+        sizeMinutes: 60,
+      }),
+    });
+    const { block: opsBlock } = (await opsRes.json()) as { block: { id: string } };
+
+    const dueRes = await fetch(`${baseUrl}/api/blocks`, {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({
+        title: 'Client deliverable',
+        bucket: 'scheduled',
+        scheduledDate: '2026-11-25',
+        dueDate: '2026-11-25',
+        sizeMinutes: 120,
+      }),
+    });
+    const { block: dueBlock } = (await dueRes.json()) as { block: { id: string } };
+
+    const extraRes = await fetch(`${baseUrl}/api/blocks`, {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({
+        title: 'Overflow block',
+        bucket: 'scheduled',
+        scheduledDate: '2026-11-25',
+        sizeMinutes: 60,
+      }),
+    });
+    const { block: extraBlock } = (await extraRes.json()) as { block: { id: string } };
+
+    const todayRes = await fetch(`${baseUrl}/api/today`, { headers: nowHeader });
+    expect(todayRes.status).toBe(200);
+    const todayData = (await todayRes.json()) as {
+      upNext: Array<{ id: string }>;
+      roomToday: { roomMinutes: number; baselineFocusMinutes: number; meetingMinutes: number };
+      suggestedOrder: Array<{ blockId: string; effectiveSizeMinutes: number; reason: string }>;
+      fitLine: { fitLineIndex: number; fittingMinutes: number; overflowBlockCount: number; overflowMinutes: number };
+      dayLookBack: unknown;
+    };
+
+    expect(todayData.roomToday).toMatchObject({
+      roomMinutes: 180,
+      baselineFocusMinutes: 240,
+      meetingMinutes: 60,
+    });
+    expect(todayData.suggestedOrder[0].blockId).toBe(dueBlock.id);
+    expect(todayData.fitLine).toMatchObject({
+      fitLineIndex: 2,
+      fittingMinutes: 180,
+      overflowBlockCount: 1,
+      overflowMinutes: 60,
+    });
+
+    const applyRes = await fetch(`${baseUrl}/api/today/apply-suggested-order`, {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({ blockIds: [dueBlock.id, extraBlock.id, opsBlock.id] }),
+    });
+    expect(applyRes.status).toBe(200);
+    const applied = (await applyRes.json()) as { blocks: Array<{ id: string }> };
+    expect(applied.blocks.map((b) => b.id)).toEqual([dueBlock.id, extraBlock.id, opsBlock.id]);
+
+    const todayAfter = (await (await fetch(`${baseUrl}/api/today`, { headers: nowHeader })).json()) as {
+      upNext: Array<{ id: string }>;
+    };
+    expect(todayAfter.upNext.map((b) => b.id)).toEqual([dueBlock.id, extraBlock.id, opsBlock.id]);
+  });
+
+  it('GET /api/plan returns projectTimeStrip and per-day plannedMinutes and roomMinutes', async () => {
+    const { baseUrl } = await startTestVeyraServer();
+    const nowHeader = { 'X-Veyra-Now': '2026-11-25T09:00:00.000Z' };
+    const json = { 'Content-Type': 'application/json', ...nowHeader };
+
+    await fetch(`${baseUrl}/api/settings`, {
+      method: 'PATCH',
+      headers: json,
+      body: JSON.stringify({ timezone: 'UTC' }),
+    });
+
+    const projRes = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({ name: 'Platform', weeklyTimeMinutes: 240 }),
+    });
+    const { project } = (await projRes.json()) as { project: { id: string; weeklyTimeMinutes: number } };
+    expect(project.weeklyTimeMinutes).toBe(240);
+
+    await fetch(`${baseUrl}/api/blocks`, {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({
+        title: 'API refactor',
+        projectId: project.id,
+        bucket: 'scheduled',
+        scheduledDate: '2026-11-25',
+        sizeMinutes: 120,
+      }),
+    });
+
+    const planRes = await fetch(`${baseUrl}/api/plan?weekStart=2026-11-23`, { headers: nowHeader });
+    expect(planRes.status).toBe(200);
+    const planData = (await planRes.json()) as {
+      days: Array<{ date: string; plannedMinutes: number; roomMinutes: number }>;
+      projectTimeStrip: Array<{ projectId: string; plannedMinutes: number; loggedMinutes: number; weeklyTimeMinutes: number | null }>;
+    };
+
+    const wed = planData.days.find((d) => d.date === '2026-11-25');
+    expect(wed).toMatchObject({ date: '2026-11-25', plannedMinutes: 120, roomMinutes: 240 });
+    expect(planData.projectTimeStrip).toContainEqual({
+      projectId: project.id,
+      plannedMinutes: 120,
+      loggedMinutes: 0,
+      weeklyTimeMinutes: 240,
+    });
+  });
+
+  it('POST /api/blocks/:id/drop persists dropReason and POST /api/focus/complete persists senseSignal', async () => {
+    const { baseUrl } = await startTestVeyraServer();
+    const nowHeader = { 'X-Veyra-Now': '2026-11-25T09:00:00.000Z' };
+    const json = { 'Content-Type': 'application/json', ...nowHeader };
+
+    const b1Res = await fetch(`${baseUrl}/api/blocks`, {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({ title: 'Block to drop', sizeMinutes: 30 }),
+    });
+    const { block: b1 } = (await b1Res.json()) as { block: { id: string; sizeMinutes: number } };
+    expect(b1.sizeMinutes).toBe(30);
+
+    const dropRes = await fetch(`${baseUrl}/api/blocks/${b1.id}/drop`, {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({ dropReason: 'no_room' }),
+    });
+    expect(dropRes.status).toBe(200);
+    const { block: dropped } = (await dropRes.json()) as { block: { status: string; dropReason: string | null } };
+    expect(dropped).toMatchObject({ status: 'dropped', dropReason: 'no_room' });
+
+    const b2Res = await fetch(`${baseUrl}/api/blocks`, {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({ title: 'Block to finish' }),
+    });
+    const { block: b2 } = (await b2Res.json()) as { block: { id: string } };
+
+    const completeRes = await fetch(`${baseUrl}/api/focus/complete`, {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({
+        blockId: b2.id,
+        energySignal: 'up',
+        senseSignal: 'moved',
+        outcomeNote: 'Landed cleanly',
+      }),
+    });
+    expect(completeRes.status).toBe(200);
+    const { block: completed } = (await completeRes.json()) as {
+      block: { status: string; senseSignal: string | null; energySignal: string | null };
+    };
+    expect(completed).toMatchObject({
+      status: 'done',
+      energySignal: 'up',
+      senseSignal: 'moved',
+    });
+  });
 });

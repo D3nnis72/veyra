@@ -1,10 +1,12 @@
 import fs from 'node:fs';
 import {
   type Block,
+  type BlockSizeMinutes,
   type CalendarEvent,
   type CalendarEventSource,
   type CreateBlockInput,
   type DailyNote,
+  type DropReason,
   type EnergySignal,
   type ExternalLink,
   type FocusSession,
@@ -19,15 +21,18 @@ import {
   type ProjectWithStats,
   type RecurrenceRule,
   type RevisitHorizon,
+  type SenseSignal,
   type UpdateBlockInput,
   type UpdateCalendarEventInput,
   type UpdateGoalInput,
   type UpdateProjectInput,
   type WeeklyReview,
   blockBucketSchema,
+  blockSizeMinutesSchema,
   blockStatusSchema,
   calendarEventSourceSchema,
   dateOnlySchema,
+  dropReasonSchema,
   energySignalSchema,
   goalKindSchema,
   goalStatusSchema,
@@ -35,6 +40,7 @@ import {
   projectStatusSchema,
   recurrenceRuleSchema,
   revisitHorizonSchema,
+  senseSignalSchema,
 } from '@veyra/core/types';
 import { Command, CommanderError } from 'commander';
 import { z } from 'zod';
@@ -152,6 +158,60 @@ export function parseExternalLink(rawUrl: string): ExternalLink {
     title: trimmed,
     source,
   };
+}
+
+export function parseWeeklyTimeOption(raw: string): number | null {
+  const cleaned = raw.trim().toLowerCase();
+  if (!cleaned || cleaned === 'none' || cleaned === 'clear' || cleaned === 'null') {
+    return null;
+  }
+
+  let minutes: number | null = null;
+  const hmMatch = /^(\d+(?:\.\d+)?)h\s*(\d+)m$/.exec(cleaned);
+  if (hmMatch) {
+    minutes = Math.round(Number(hmMatch[1]) * 60 + Number(hmMatch[2]));
+  } else {
+    const hMatch = /^(\d+(?:\.\d+)?)h$/.exec(cleaned);
+    if (hMatch) {
+      minutes = Math.round(Number(hMatch[1]) * 60);
+    } else {
+      const mMatch = /^(\d+)m?$/.exec(cleaned);
+      if (mMatch) {
+        minutes = Number(mMatch[1]);
+      }
+    }
+  }
+
+  if (minutes === null || !Number.isInteger(minutes) || minutes < 15 || minutes > 4800) {
+    throw new CliUsageError(
+      `Invalid --weekly-time '${raw}'. Expected e.g. 4h, 2.5h, 90m, 240 (15–4800m), or "none" to clear.`,
+    );
+  }
+  return minutes;
+}
+
+export function parseBlockSizeOption(raw: string): BlockSizeMinutes | null {
+  const cleaned = raw.trim().toLowerCase();
+  if (cleaned === 'auto' || cleaned === 'none' || cleaned === 'clear' || cleaned === 'null') {
+    return null;
+  }
+
+  let minutes: number | null = null;
+  if (cleaned === '30' || cleaned === '30m' || cleaned === '0.5h') {
+    minutes = 30;
+  } else if (cleaned === '60' || cleaned === '60m' || cleaned === '1h') {
+    minutes = 60;
+  } else if (cleaned === '120' || cleaned === '120m' || cleaned === '2h') {
+    minutes = 120;
+  }
+
+  const parsed = blockSizeMinutesSchema.safeParse(minutes);
+  if (!parsed.success) {
+    throw new CliUsageError(
+      `Invalid --size '${raw}'. Expected 30, 60, 120, 30m, 1h, 2h, or auto.`,
+    );
+  }
+  return parsed.data;
 }
 
 function formatLocalDate(date: Date, timezone: string): string {
@@ -378,6 +438,9 @@ export function createProgram(ctx: ProgramContext): Command {
       emit<TodayResponse>(data, (d) => {
         const lines: string[] = [`Today (${d.date}, ${d.timezone})`];
         if (d.weeklyRule) lines.push(`Rule: ${d.weeklyRule}`);
+        lines.push(
+          `Room today: ${formatDuration(d.roomToday.roomMinutes)} (baseline ${formatDuration(d.roomToday.baselineFocusMinutes)} - ${formatDuration(d.roomToday.meetingMinutes)} meetings)`,
+        );
         if (d.focusStatus.activeBlock) {
           const mins = Math.floor(d.focusStatus.elapsedSeconds / 60);
           lines.push(
@@ -560,6 +623,7 @@ export function createProgram(ctx: ProgramContext): Command {
     .option('--end <timeOrIso>', 'Planned end time (HH:MM or ISO timestamp)')
     .option('--bucket <bucket>', 'Target bucket (inbox|scheduled|later)')
     .option('--due <YYYY-MM-DD>', 'Due date')
+    .option('--size <size>', 'Rough block size (30|60|120|30m|1h|2h|auto)')
     .option('--revisit <horizon>', 'Revisit horizon (next-week|2w|next-month|next-quarter|YYYY-MM-DD)')
     .option('--repeat <rule>', 'Recurrence rule (weekdays|weekly|days:[mon,wed,fri]|mon,wed,fri)')
     .option('--notes <text>', 'Block notes')
@@ -576,6 +640,7 @@ export function createProgram(ctx: ProgramContext): Command {
           end?: string;
           bucket?: string;
           due?: string;
+          size?: string;
           revisit?: string;
           repeat?: string;
           notes?: string;
@@ -597,6 +662,9 @@ export function createProgram(ctx: ProgramContext): Command {
         }
         if (opts.due) {
           payload.dueDate = validateDateOnly(opts.due, '--due');
+        }
+        if (opts.size !== undefined) {
+          payload.sizeMinutes = parseBlockSizeOption(opts.size);
         }
         if (opts.revisit) {
           payload.revisitAt = validateRevisit(opts.revisit);
@@ -669,6 +737,7 @@ export function createProgram(ctx: ProgramContext): Command {
     .option('--bucket <bucket>', 'Target bucket (inbox|scheduled|later)')
     .option('--date <YYYY-MM-DD>', 'Scheduled date')
     .option('--due <YYYY-MM-DD>', 'Due date (or "none" to clear)')
+    .option('--size <size>', 'Rough block size (30|60|120|30m|1h|2h|auto)')
     .option('--revisit <horizon>', 'Revisit horizon (or "none" to clear)')
     .option('--repeat <rule>', 'Recurrence rule')
     .option('--no-repeat', 'Remove recurrence rule')
@@ -687,6 +756,7 @@ export function createProgram(ctx: ProgramContext): Command {
           bucket?: string;
           date?: string;
           due?: string;
+          size?: string;
           revisit?: string;
           repeat?: string | false;
           notes?: string;
@@ -722,6 +792,9 @@ export function createProgram(ctx: ProgramContext): Command {
         }
         if (opts.due !== undefined) {
           payload.dueDate = isClearToken(opts.due) ? null : validateDateOnly(opts.due, '--due');
+        }
+        if (opts.size !== undefined) {
+          payload.sizeMinutes = parseBlockSizeOption(opts.size);
         }
         if (opts.revisit !== undefined) {
           payload.revisitAt = isClearToken(opts.revisit) ? null : validateRevisit(opts.revisit);
@@ -876,9 +949,21 @@ export function createProgram(ctx: ProgramContext): Command {
     .command('drop <id>')
     .description('Drop a block (optionally stopping its recurring series)')
     .option('--stop-series', 'Clear recurrence rule across the entire series')
-    .action(async (id: string, opts: { stopSeries?: boolean }) => {
+    .option('--reason <reason>', 'Drop reason (not_important|someone_else|no_room)')
+    .action(async (id: string, opts: { stopSeries?: boolean; reason?: string }) => {
+      let dropReason: DropReason | undefined;
+      if (opts.reason !== undefined) {
+        const parsed = dropReasonSchema.safeParse(opts.reason);
+        if (!parsed.success) {
+          throw new CliUsageError(
+            `Invalid --reason '${opts.reason}'. Expected not_important, someone_else, or no_room.`,
+          );
+        }
+        dropReason = parsed.data;
+      }
       const { block } = await ctx.getClient().dropBlock(id, {
         stopSeries: Boolean(opts.stopSeries),
+        ...(dropReason !== undefined ? { dropReason } : {}),
       });
       emit<Block>(block, (b) => `Dropped block ${b.id} ("${b.title}")`);
     });
@@ -905,6 +990,7 @@ export function createProgram(ctx: ProgramContext): Command {
     .option('--status <status>', 'Initial status (active|paused|archived)')
     .option('--notion-url <url>', 'Linked Notion URL')
     .option('--keywords <csv>', 'Calendar sync keywords that auto-match meetings by title (comma-separated)')
+    .option('--weekly-time <value>', 'Weekly time intention (e.g. 4h, 2.5h, 90m, 240, or "none")')
     .action(
       async (
         name: string,
@@ -917,6 +1003,7 @@ export function createProgram(ctx: ProgramContext): Command {
           status?: string;
           notionUrl?: string;
           keywords?: string;
+          weeklyTime?: string;
         },
       ) => {
         const client = ctx.getClient();
@@ -932,6 +1019,8 @@ export function createProgram(ctx: ProgramContext): Command {
           }
           status = parsed.data;
         }
+        const weeklyTimeMinutes =
+          opts.weeklyTime !== undefined ? parseWeeklyTimeOption(opts.weeklyTime) : undefined;
         const { project } = await client.createProject({
           name,
           ...(opts.description !== undefined ? { description: opts.description } : {}),
@@ -942,6 +1031,7 @@ export function createProgram(ctx: ProgramContext): Command {
           ...(status !== undefined ? { status } : {}),
           ...(opts.notionUrl !== undefined ? { notionUrl: opts.notionUrl } : {}),
           ...(opts.keywords !== undefined ? { matchKeywords: parseKeywordsCsv(opts.keywords) } : {}),
+          ...(weeklyTimeMinutes !== undefined ? { weeklyTimeMinutes } : {}),
         });
         emit<Project>(project, (p) => `Created project ${p.id}  ${p.name}`);
       },
@@ -960,6 +1050,7 @@ export function createProgram(ctx: ProgramContext): Command {
     .option('--status <status>', 'Project status (active|paused|archived)')
     .option('--notion-url <url>', 'Linked Notion URL (or "none" to clear)')
     .option('--keywords <csv>', 'Calendar sync keywords, comma-separated (or "none" to clear)')
+    .option('--weekly-time <value>', 'Weekly time intention (e.g. 4h, 2.5h, 90m, 240, or "none" to clear)')
     .action(
       async (
         idOrName: string,
@@ -973,6 +1064,7 @@ export function createProgram(ctx: ProgramContext): Command {
           status?: string;
           notionUrl?: string;
           keywords?: string;
+          weeklyTime?: string;
         },
       ) => {
         const client = ctx.getClient();
@@ -1000,6 +1092,9 @@ export function createProgram(ctx: ProgramContext): Command {
         }
         if (opts.keywords !== undefined) {
           payload.matchKeywords = parseKeywordsCsv(opts.keywords);
+        }
+        if (opts.weeklyTime !== undefined) {
+          payload.weeklyTimeMinutes = parseWeeklyTimeOption(opts.weeklyTime);
         }
 
         const { project } = await client.updateProject(projectId, payload);
@@ -1270,27 +1365,42 @@ export function createProgram(ctx: ProgramContext): Command {
     .command('done [id]')
     .description('Complete the active focus block or a specified block ID')
     .option('--energy <signal>', 'Energy signal (up|neutral|down)')
+    .option('--sense <signal>', 'Sense signal (moved|partly|motion)')
     .option('--outcome <text>', 'Short outcome note')
-    .action(async (id: string | undefined, opts: { energy?: string; outcome?: string }) => {
-      let energySignal: EnergySignal | undefined;
-      if (opts.energy !== undefined) {
-        const parsed = energySignalSchema.safeParse(opts.energy);
-        if (!parsed.success) {
-          throw new CliUsageError(`Invalid --energy '${opts.energy}'. Expected up, neutral, or down.`);
+    .action(
+      async (
+        id: string | undefined,
+        opts: { energy?: string; sense?: string; outcome?: string },
+      ) => {
+        let energySignal: EnergySignal | undefined;
+        if (opts.energy !== undefined) {
+          const parsed = energySignalSchema.safeParse(opts.energy);
+          if (!parsed.success) {
+            throw new CliUsageError(`Invalid --energy '${opts.energy}'. Expected up, neutral, or down.`);
+          }
+          energySignal = parsed.data;
         }
-        energySignal = parsed.data;
-      }
-      const data = await ctx.getClient().completeFocus({
-        ...(id ? { blockId: id } : {}),
-        ...(energySignal !== undefined ? { energySignal } : {}),
-        ...(opts.outcome !== undefined ? { outcomeNote: opts.outcome } : {}),
-      });
-      emit<FocusCompleteResponse>(
-        data,
-        (d) =>
-          `Completed "${d.block.title}" (${formatDuration(d.totalBlockMinutes)} total${d.block.energySignal ? `, energy=${d.block.energySignal}` : ''})`,
-      );
-    });
+        let senseSignal: SenseSignal | undefined;
+        if (opts.sense !== undefined) {
+          const parsed = senseSignalSchema.safeParse(opts.sense);
+          if (!parsed.success) {
+            throw new CliUsageError(`Invalid --sense '${opts.sense}'. Expected moved, partly, or motion.`);
+          }
+          senseSignal = parsed.data;
+        }
+        const data = await ctx.getClient().completeFocus({
+          ...(id ? { blockId: id } : {}),
+          ...(energySignal !== undefined ? { energySignal } : {}),
+          ...(senseSignal !== undefined ? { senseSignal } : {}),
+          ...(opts.outcome !== undefined ? { outcomeNote: opts.outcome } : {}),
+        });
+        emit<FocusCompleteResponse>(
+          data,
+          (d) =>
+            `Completed "${d.block.title}" (${formatDuration(d.totalBlockMinutes)} total${d.block.energySignal ? `, energy=${d.block.energySignal}` : ''}${d.block.senseSignal ? `, sense=${d.block.senseSignal}` : ''})`,
+        );
+      },
+    );
 
   const summaryCmd = program.command('summary').description('Manage block summaries');
   summaryCmd
