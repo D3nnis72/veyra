@@ -1,31 +1,48 @@
-import type { Block, CalendarEvent, EnergySignal, Goal, ProjectWithStats } from '@veyra/core/types';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import type {
+  Block,
+  CalendarEvent,
+  DayLookBackSummary,
+  DropReason,
+  EnergySignal,
+  Goal,
+  ProjectWithStats,
+  RoomTodaySummary,
+  SuggestedOrderItem,
+} from '@veyra/core/types';
 import {
   ArrowDown,
   ArrowUp,
+  ArrowUpDown,
   Calendar,
   Check,
   Clock,
   ExternalLink,
   Flame,
   Link2,
+  MessageSquare,
   Minus,
   NotebookPen,
   Play,
   Plus,
   Repeat,
+  RotateCcw,
   Video,
+  X,
 } from 'lucide-react';
 import { type MouseEvent as ReactMouseEvent, useEffect, useMemo, useState } from 'react';
-import { openExternalUrl } from '../api/client';
-import { useCalendarQuery, useTodayQuery } from '../api/queries';
+import { apiClient, openExternalUrl } from '../api/client';
+import { invalidateBlockRelated, useCalendarQuery, useTodayQuery } from '../api/queries';
 import { useAppShell } from '../app/AppShellContext';
 import { Button } from '../components/Button';
 import { GoalChip } from '../components/GoalChip';
 import { Pill } from '../components/Pill';
-import { useBlockContextMenu, useMeetingContextMenu } from '../components/entityMenus';
 import { ProjectBadge } from '../components/ProjectBadge';
+import { TellSomeonePopover } from '../components/TellSomeonePopover';
+import { useBlockContextMenu, useMeetingContextMenu } from '../components/entityMenus';
 import { activeCardStyle, goalTint } from '../components/goalTint';
 import {
+  addDaysDateString,
   formatDateHeading,
   formatDuration,
   formatElapsedTimer,
@@ -35,6 +52,45 @@ import {
   getSessionDurationMinutes,
   getTodayDateString,
 } from '../components/icons';
+
+const DAY_LOOK_BACK_DISMISS_PREFIX = 'veyra.dayLookBack.dismissed.';
+
+const DROP_REASON_OPTIONS: ReadonlyArray<{ value: DropReason; label: string }> = [
+  { value: 'not_important', label: 'Not important anymore' },
+  { value: 'someone_else', label: 'Someone else did it' },
+  { value: 'no_room', label: 'No room' },
+];
+
+function isLookBackDismissedInStorage(date: string): boolean {
+  try {
+    return window.localStorage.getItem(`${DAY_LOOK_BACK_DISMISS_PREFIX}${date}`) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function persistLookBackDismissed(date: string): void {
+  try {
+    window.localStorage.setItem(`${DAY_LOOK_BACK_DISMISS_PREFIX}${date}`, '1');
+  } catch {
+    // Ignore storage errors in restricted environments
+  }
+}
+
+function formatRoomTodayLine(room: RoomTodaySummary): string {
+  const baselinePart = room.hasLearnedBaseline
+    ? `your usual ${room.weekdayLabel} focus`
+    : `default ${formatDuration(room.baselineFocusMinutes)} baseline`;
+  const meetingPart =
+    room.meetingMinutes > 0
+      ? `minus ${formatDuration(room.meetingMinutes)} of meetings`
+      : 'no meetings';
+  return `Room today ≈ ${formatDuration(room.roomMinutes)} · ${baselinePart}, ${meetingPart}`;
+}
+
+function canTellSomeone(block: Block): boolean {
+  return Boolean(block.dueDate) || /^follow-up:/i.test(block.title.trim());
+}
 
 function EnergyPill({ signal }: { signal: EnergySignal | null }) {
   if (!signal) return null;
@@ -72,6 +128,7 @@ function formatFullTodayHeading(dateStr: string): string {
 }
 
 export function TodayView() {
+  const queryClient = useQueryClient();
   const {
     activeDrawer,
     focusStatus: shellFocusStatus,
@@ -125,12 +182,139 @@ export function TodayView() {
   const upNext = data?.upNext ?? [];
   const completedToday = data?.completedToday ?? [];
   const upcomingEvents = data?.upcomingEvents ?? [];
+  const roomToday = data?.roomToday;
+  const suggestedOrder = data?.suggestedOrder ?? [];
+  const fitLine = data?.fitLine;
+  const dayLookBack = data?.dayLookBack ?? null;
+
   // Only surface a meeting that is still ahead — never fall back to one that already ended.
   const nextEvent: CalendarEvent | undefined = upcomingEvents[0];
   const blockMenu = useBlockContextMenu();
   const meetingMenu = useMeetingContextMenu();
 
+  // Retain recently dropped blocks in local state so SSE block.dropped refetches do not clear
+  // the inline Drop reason / Undo strip before the user chooses a reason, skips, or undoes.
+  const [recentlyDroppedBlocks, setRecentlyDroppedBlocks] = useState<Block[]>([]);
+  const [openTellSomeoneBlockId, setOpenTellSomeoneBlockId] = useState<string | null>(null);
+  const [dismissedLookBackDates, setDismissedLookBackDates] = useState<Record<string, boolean>>({});
   const [selectedIndex, setSelectedIndex] = useState(0);
+
+  const recentlyDroppedIds = useMemo(
+    () => new Set(recentlyDroppedBlocks.map((b) => b.id)),
+    [recentlyDroppedBlocks],
+  );
+
+  const suggestedOrderByBlockId = useMemo(() => {
+    const map = new Map<string, SuggestedOrderItem>();
+    for (const item of suggestedOrder) {
+      map.set(item.blockId, item);
+    }
+    return map;
+  }, [suggestedOrder]);
+
+  const suggestedBlockIds = useMemo(
+    () => suggestedOrder.map((item) => item.blockId),
+    [suggestedOrder],
+  );
+
+  const hasSuggestedOrderDiff = useMemo(() => {
+    if (upNext.length < 2 || suggestedBlockIds.length !== upNext.length) {
+      return false;
+    }
+    for (let i = 0; i < upNext.length; i++) {
+      if (upNext[i].id !== suggestedBlockIds[i]) {
+        return true;
+      }
+    }
+    return false;
+  }, [upNext, suggestedBlockIds]);
+
+  const fitLineIndex = fitLine ? Math.min(fitLine.fitLineIndex, upNext.length) : upNext.length;
+
+  const fittingBlocks = useMemo(
+    () => upNext.slice(0, fitLineIndex).filter((b) => !recentlyDroppedIds.has(b.id)),
+    [upNext, fitLineIndex, recentlyDroppedIds],
+  );
+
+  const overflowBlocks = useMemo(
+    () => upNext.slice(fitLineIndex).filter((b) => !recentlyDroppedIds.has(b.id)),
+    [upNext, fitLineIndex, recentlyDroppedIds],
+  );
+
+  const showFitLine = Boolean(fitLine && upNext.length > fitLine.fitLineIndex);
+  const showOverflowSection = overflowBlocks.length > 0 || recentlyDroppedBlocks.length > 0;
+  const showDayLookBack = Boolean(
+    dayLookBack &&
+      !dismissedLookBackDates[dayLookBack.date] &&
+      !isLookBackDismissedInStorage(dayLookBack.date),
+  );
+
+  const applySuggestedOrderMutation = useMutation({
+    mutationFn: (blockIds: string[]) => apiClient.applySuggestedOrder(blockIds),
+    onSuccess: () => {
+      invalidateBlockRelated(queryClient);
+    },
+  });
+
+  const moveTomorrowMutation = useMutation({
+    mutationFn: (blockId: string) =>
+      apiClient.moveBlock(blockId, {
+        bucket: 'scheduled',
+        scheduledDate: addDaysDateString(dateStr, 1),
+      }),
+    onSuccess: (_, blockId) => {
+      invalidateBlockRelated(queryClient, blockId);
+    },
+  });
+
+  const parkLaterMutation = useMutation({
+    mutationFn: (blockId: string) => apiClient.parkBlock(blockId, { revisitAt: '2w' }),
+    onSuccess: (_, blockId) => {
+      invalidateBlockRelated(queryClient, blockId);
+    },
+  });
+
+  const dropBlockMutation = useMutation({
+    mutationFn: (block: Block) => apiClient.dropBlock(block.id),
+    onSuccess: (_, block) => {
+      invalidateBlockRelated(queryClient, block.id);
+    },
+    onError: (_, block) => {
+      setRecentlyDroppedBlocks((prev) => prev.filter((item) => item.id !== block.id));
+    },
+  });
+
+  const updateDropReasonMutation = useMutation({
+    mutationFn: ({ blockId, dropReason }: { blockId: string; dropReason: DropReason }) =>
+      apiClient.updateBlock(blockId, { dropReason }),
+    onSuccess: (_, { blockId }) => {
+      setRecentlyDroppedBlocks((prev) => prev.filter((item) => item.id !== blockId));
+      invalidateBlockRelated(queryClient, blockId);
+    },
+  });
+
+  const reopenBlockMutation = useMutation({
+    mutationFn: (blockId: string) => apiClient.reopenBlock(blockId),
+    onSuccess: (_, blockId) => {
+      setRecentlyDroppedBlocks((prev) => prev.filter((item) => item.id !== blockId));
+      invalidateBlockRelated(queryClient, blockId);
+    },
+  });
+
+  const handleDropBlock = (block: Block) => {
+    if (openTellSomeoneBlockId === block.id) {
+      setOpenTellSomeoneBlockId(null);
+    }
+    setRecentlyDroppedBlocks((prev) =>
+      prev.some((item) => item.id === block.id) ? prev : [...prev, block],
+    );
+    dropBlockMutation.mutate(block);
+  };
+
+  const handleDismissLookBack = (lookBack: DayLookBackSummary) => {
+    persistLookBackDismissed(lookBack.date);
+    setDismissedLookBackDates((prev) => ({ ...prev, [lookBack.date]: true }));
+  };
 
   useEffect(() => {
     if (selectedIndex >= upNext.length) {
@@ -151,7 +335,7 @@ export function TodayView() {
       ) {
         return;
       }
-      if (activeDrawer !== null || upNext.length === 0) return;
+      if (activeDrawer !== null || openTellSomeoneBlockId !== null || upNext.length === 0) return;
 
       if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -170,7 +354,7 @@ export function TodayView() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeDrawer, upNext, selectedIndex, startFocusAndNavigate]);
+  }, [activeDrawer, openTellSomeoneBlockId, upNext, selectedIndex, startFocusAndNavigate]);
 
   const drawerSelectedBlockId = activeDrawer?.kind === 'block' ? activeDrawer.blockId : null;
   const drawerSelectedEventId = activeDrawer?.kind === 'meeting' ? activeDrawer.eventId : null;
@@ -214,7 +398,7 @@ export function TodayView() {
 
       {/* Main Calm Single-Column Content */}
       <div className="w-full max-w-[780px] mx-auto px-8 py-8 space-y-7">
-        {/* Header Row: Date + Weekly Rule on left; Focused pill on right */}
+        {/* Header Row: Date + Room today + Weekly Rule on left; Focused pill on right */}
         <header className="space-y-2">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <h1 className="font-display text-[28px] font-semibold leading-tight text-[#EDEDED]">
@@ -228,6 +412,13 @@ export function TodayView() {
               {formatDuration(focusedTodayMinutes)} focused today
             </Pill>
           </div>
+
+          {roomToday ? (
+            <p className="text-[13px] text-[#9A9A9A] tabular-nums">
+              {formatRoomTodayLine(roomToday)}
+            </p>
+          ) : null}
+
           {data?.weeklyRule ? (
             <button
               type="button"
@@ -243,278 +434,541 @@ export function TodayView() {
           ) : null}
         </header>
 
-      {/* Active Focus Banner when a timer is running */}
-      {focusStatus?.activeSession && focusStatus.activeBlock ? (() => {
-        const activeColor = projectsById.get(focusStatus.activeBlock.projectId)?.color ?? '#3B4BD8';
-        const tint = goalTint(activeColor);
-        return (
-          <div
-            style={activeCardStyle(activeColor)}
-            className="veyra-card flex items-center justify-between gap-4"
-          >
-            <div className="min-w-0 flex items-center gap-3">
-              <span
-                className="w-2.5 h-2.5 rounded-full animate-pulse shrink-0"
-                style={{ backgroundColor: activeColor }}
-              />
-              <div className="min-w-0">
-                <div
-                  className="text-[11px] font-semibold uppercase tracking-[0.07em]"
-                  style={{ color: tint.text }}
-                >
-                  Focusing Now
+        {/* Active Focus Banner when a timer is running */}
+        {focusStatus?.activeSession && focusStatus.activeBlock ? (() => {
+          const activeColor = projectsById.get(focusStatus.activeBlock.projectId)?.color ?? '#3B4BD8';
+          const tint = goalTint(activeColor);
+          return (
+            <div
+              style={activeCardStyle(activeColor)}
+              className="veyra-card flex items-center justify-between gap-4"
+            >
+              <div className="min-w-0 flex items-center gap-3">
+                <span
+                  className="w-2.5 h-2.5 rounded-full animate-pulse shrink-0"
+                  style={{ backgroundColor: activeColor }}
+                />
+                <div className="min-w-0">
+                  <div
+                    className="text-[11px] font-semibold uppercase tracking-[0.07em]"
+                    style={{ color: tint.text }}
+                  >
+                    Focusing Now
+                  </div>
+                  <div className="text-[14px] font-medium text-[#EDEDED] truncate">
+                    {focusStatus.activeBlock.title}
+                  </div>
                 </div>
-                <div className="text-[14px] font-medium text-[#EDEDED] truncate">
-                  {focusStatus.activeBlock.title}
+              </div>
+              <div className="flex items-center gap-3 shrink-0">
+                <span className="font-display text-[17px] font-semibold text-[#EDEDED] tabular-nums">
+                  {formatElapsedTimer(liveElapsedSeconds)}
+                </span>
+                <Button variant="primary" size="sm" onClick={() => navigate('focus')}>
+                  Open Focus
+                </Button>
+              </div>
+            </div>
+          );
+        })() : null}
+
+        {/* Quiet Day Look Back Card */}
+        {showDayLookBack && dayLookBack ? (
+          <DayLookBackCard
+            lookBack={dayLookBack}
+            onDismiss={() => handleDismissLookBack(dayLookBack)}
+          />
+        ) : null}
+
+        {/* Quiet Upcoming Meeting Bar */}
+        {nextEvent ? (
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => openMeetingDrawer(nextEvent.id)}
+            onContextMenu={(e) => meetingMenu.open(e, nextEvent)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                openMeetingDrawer(nextEvent.id);
+              }
+            }}
+            style={
+              drawerSelectedEventId === nextEvent.id
+                ? activeCardStyle(
+                    nextEvent.projectId ? projectsById.get(nextEvent.projectId)?.color : undefined,
+                  )
+                : undefined
+            }
+            className={[
+              'flex items-center justify-between gap-3 px-5 py-3.5 rounded-[10px] bg-[#181818] border transition-colors cursor-pointer focus:outline-none focus-visible:border-[#5566F2]',
+              drawerSelectedEventId === nextEvent.id
+                ? ''
+                : 'border-[#2A2A2A] hover:border-[#3C3C3C]',
+            ].join(' ')}
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="w-7 h-7 rounded-[6px] bg-[#242424] border border-[#2A2A2A] inline-flex items-center justify-center text-[#9A9A9A] shrink-0">
+                <Video size={13} />
+              </span>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-[12px] font-medium text-[#9A9A9A] tabular-nums">
+                    {formatTimeRange(nextEvent.startAt, nextEvent.endAt)}
+                  </span>
+                  {upcomingEvents.length > 1 ? (
+                    <span className="text-[11px] text-[#6E6E6E] tabular-nums">
+                      +{upcomingEvents.length - 1} more today
+                    </span>
+                  ) : null}
+                </div>
+                <div className="text-[13.5px] font-medium text-[#EDEDED] truncate">
+                  {nextEvent.title}
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-3 shrink-0">
-              <span className="font-display text-[17px] font-semibold text-[#EDEDED] tabular-nums">
-                {formatElapsedTimer(liveElapsedSeconds)}
-              </span>
-              <Button variant="primary" size="sm" onClick={() => navigate('focus')}>
-                Open Focus
+
+            <div className="flex items-center gap-2 shrink-0">
+              {nextEvent.meetingUrl ? (
+                <Button
+                  variant="secondary"
+                  size="xs"
+                  rightIcon={<ExternalLink size={11} />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openExternalUrl(nextEvent.meetingUrl!);
+                  }}
+                >
+                  Join
+                </Button>
+              ) : null}
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate('calendar');
+                }}
+              >
+                Calendar
               </Button>
             </div>
           </div>
-        );
-      })() : null}
+        ) : null}
 
-      {/* Quiet Upcoming Meeting Bar */}
-      {nextEvent ? (
-        <div
-          role="button"
-          tabIndex={0}
-          onClick={() => openMeetingDrawer(nextEvent.id)}
-          onContextMenu={(e) => meetingMenu.open(e, nextEvent)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              openMeetingDrawer(nextEvent.id);
-            }
-          }}
-          style={
-            drawerSelectedEventId === nextEvent.id
-              ? activeCardStyle(
-                  nextEvent.projectId ? projectsById.get(nextEvent.projectId)?.color : undefined,
-                )
-              : undefined
-          }
-          className={[
-            'flex items-center justify-between gap-3 px-5 py-3.5 rounded-[10px] bg-[#181818] border transition-colors cursor-pointer focus:outline-none focus-visible:border-[#5566F2]',
-            drawerSelectedEventId === nextEvent.id
-              ? ''
-              : 'border-[#2A2A2A] hover:border-[#3C3C3C]',
-          ].join(' ')}
-        >
-          <div className="flex items-center gap-3 min-w-0">
-            <span className="w-7 h-7 rounded-[6px] bg-[#242424] border border-[#2A2A2A] inline-flex items-center justify-center text-[#9A9A9A] shrink-0">
-              <Video size={13} />
-            </span>
-            <div className="min-w-0">
+        {/* UP NEXT Section */}
+        <section className="space-y-3" aria-label="Up Next">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="space-y-0.5">
               <div className="flex items-center gap-2">
-                <span className="text-[12px] font-medium text-[#9A9A9A] tabular-nums">
-                  {formatTimeRange(nextEvent.startAt, nextEvent.endAt)}
+                <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#6E6E6E]">
+                  Up Next
+                </h2>
+                <span className="text-[11.5px] text-[#6E6E6E] tabular-nums">{upNext.length}</span>
+              </div>
+              {upNext.length > 0 ? (
+                <p className="text-[11.5px] text-[#6E6E6E]">
+                  Order: commitments, goal work, project time, Ops last
+                </p>
+              ) : null}
+            </div>
+
+            <div className="flex items-center gap-2.5 shrink-0">
+              {hasSuggestedOrderDiff ? (
+                <Button
+                  variant="secondary"
+                  size="xs"
+                  leftIcon={<ArrowUpDown size={11} />}
+                  loading={applySuggestedOrderMutation.isPending}
+                  onClick={() => applySuggestedOrderMutation.mutate(suggestedBlockIds)}
+                >
+                  Use suggested order
+                </Button>
+              ) : null}
+              {upNext.length > 0 ? (
+                <span className="text-[11.5px] text-[#6E6E6E]">
+                  Press <kbd className="text-[#9A9A9A] font-medium">Enter</kbd> to start focus
                 </span>
-                {upcomingEvents.length > 1 ? (
-                  <span className="text-[11px] text-[#6E6E6E] tabular-nums">
-                    +{upcomingEvents.length - 1} more today
+              ) : null}
+            </div>
+          </div>
+
+          {todayQuery.isLoading ? (
+            <div className="veyra-card text-[13px] text-[#6E6E6E]">Loading today’s blocks…</div>
+          ) : upNext.length === 0 && recentlyDroppedBlocks.length === 0 ? (
+            <div className="veyra-card text-center py-8 space-y-3">
+              <div className="text-[14px] font-medium text-[#C4C4C4]">
+                Nothing queued for today yet
+              </div>
+              <p className="text-[12.5px] text-[#6E6E6E] max-w-[360px] mx-auto">
+                Pull a block in from Plan or create a new focus block to get started.
+              </p>
+              <div className="flex items-center justify-center gap-2 pt-1">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  leftIcon={<Plus size={13} />}
+                  onClick={() => openCreateBlock({ bucket: 'scheduled', scheduledDate: dateStr })}
+                >
+                  New Block
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  leftIcon={<Calendar size={13} />}
+                  onClick={() => navigate('plan')}
+                >
+                  Open Plan
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3.5">
+              {fittingBlocks.map((block, index) => {
+                const project = projectsById.get(block.projectId);
+                const goal = block.goalId ? goalsById.get(block.goalId) : undefined;
+                const suggested = suggestedOrderByBlockId.get(block.id);
+                const isRunning = activeBlockId === block.id;
+                const isSelected =
+                  drawerSelectedBlockId === block.id ||
+                  (!drawerSelectedBlockId && selectedIndex === index);
+
+                return (
+                  <TodayBlockCard
+                    key={block.id}
+                    block={block}
+                    project={project}
+                    goal={goal}
+                    suggested={suggested}
+                    isRunning={isRunning}
+                    isSelected={isSelected}
+                    onSelect={() => {
+                      setSelectedIndex(index);
+                      openBlockDrawer(block.id);
+                    }}
+                    onPlay={() => void startFocusAndNavigate(block.id)}
+                    onContextMenu={(e) => blockMenu.open(e, block)}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        {/* Fit Line Divider */}
+        {showFitLine && fitLine ? (
+          <div className="flex items-center gap-3 py-0.5" role="separator" aria-label="Fit line">
+            <div className="flex-1 h-px bg-[#2A2A2A]" />
+            <span className="text-[11.5px] font-medium text-[#9A9A9A] tabular-nums shrink-0">
+              {fitLine.remainingMinutes > 0
+                ? `fits today · about ${formatDuration(fitLine.remainingMinutes)} left`
+                : 'fits today · room full'}
+            </span>
+            <div className="flex-1 h-px bg-[#2A2A2A]" />
+          </div>
+        ) : null}
+
+        {/* PROBABLY NOT TODAY Section */}
+        {showOverflowSection ? (
+          <section className="space-y-3" aria-label="Probably not today">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#6E6E6E]">
+                  Probably not today
+                </h2>
+                {overflowBlocks.length > 0 && fitLine ? (
+                  <span className="text-[11.5px] text-[#6E6E6E] tabular-nums">
+                    {overflowBlocks.length} {overflowBlocks.length === 1 ? 'block' : 'blocks'} ·{' '}
+                    {formatDuration(fitLine.overflowMinutes)} past the room
                   </span>
                 ) : null}
               </div>
-              <div className="text-[13.5px] font-medium text-[#EDEDED] truncate">
-                {nextEvent.title}
-              </div>
             </div>
-          </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            {nextEvent.meetingUrl ? (
-              <Button
-                variant="secondary"
-                size="xs"
-                rightIcon={<ExternalLink size={11} />}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openExternalUrl(nextEvent.meetingUrl!);
-                }}
-              >
-                Join
-              </Button>
-            ) : null}
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={(e) => {
-                e.stopPropagation();
-                navigate('calendar');
-              }}
-            >
-              Calendar
-            </Button>
-          </div>
-        </div>
-      ) : null}
+            <div className="space-y-3">
+              {overflowBlocks.map((block) => {
+                const project = projectsById.get(block.projectId);
+                const goal = block.goalId ? goalsById.get(block.goalId) : undefined;
+                const suggested = suggestedOrderByBlockId.get(block.id);
+                const effectiveSize = suggested?.effectiveSizeMinutes ?? block.sizeMinutes ?? 60;
+                const isDrawerOpen = drawerSelectedBlockId === block.id;
+                const showTellSomeone = canTellSomeone(block);
+                const isPopoverOpen = openTellSomeoneBlockId === block.id;
 
-      {/* UP NEXT Section */}
-      <section className="space-y-3" aria-label="Up Next">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#6E6E6E]">
-              Up Next
-            </h2>
-            <span className="text-[11.5px] text-[#6E6E6E] tabular-nums">{upNext.length}</span>
-          </div>
-          {upNext.length > 0 ? (
-            <span className="text-[11.5px] text-[#6E6E6E]">
-              Press <kbd className="text-[#9A9A9A] font-medium">Enter</kbd> to start focus
-            </span>
-          ) : null}
-        </div>
+                return (
+                  <div key={block.id} className="relative">
+                    <div
+                      data-overflow-row={block.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => openBlockDrawer(block.id)}
+                      onContextMenu={(e) => blockMenu.open(e, block)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          openBlockDrawer(block.id);
+                        }
+                      }}
+                      className={[
+                        'rounded-[12px] bg-[#171717] border p-[18px] space-y-3 transition-colors cursor-pointer focus:outline-none focus-visible:border-[#5566F2]',
+                        isDrawerOpen
+                          ? 'border-[#5566F2]'
+                          : 'border-[#2A2A2A] hover:border-[#3C3C3C]',
+                      ].join(' ')}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 space-y-1.5">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[14px] font-medium leading-snug text-[#C4C4C4]">
+                              {block.title}
+                            </span>
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-[6px] bg-[#242424] border border-[#2A2A2A] text-[11px] font-medium text-[#9A9A9A] tabular-nums">
+                              {formatDuration(effectiveSize)}
+                            </span>
+                          </div>
 
-        {todayQuery.isLoading ? (
-          <div className="veyra-card text-[13px] text-[#6E6E6E]">Loading today’s blocks…</div>
-        ) : upNext.length === 0 ? (
-          <div className="veyra-card text-center py-8 space-y-3">
-            <div className="text-[14px] font-medium text-[#C4C4C4]">
-              Nothing queued for today yet
-            </div>
-            <p className="text-[12.5px] text-[#6E6E6E] max-w-[360px] mx-auto">
-              Pull a block in from Plan or create a new focus block to get started.
-            </p>
-            <div className="flex items-center justify-center gap-2 pt-1">
-              <Button
-                variant="primary"
-                size="sm"
-                leftIcon={<Plus size={13} />}
-                onClick={() => openCreateBlock({ bucket: 'scheduled', scheduledDate: dateStr })}
-              >
-                New Block
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                leftIcon={<Calendar size={13} />}
-                onClick={() => navigate('plan')}
-              >
-                Open Plan
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-3.5">
-            {upNext.map((block, index) => {
-              const project = projectsById.get(block.projectId);
-              const goal = block.goalId ? goalsById.get(block.goalId) : undefined;
-              const isRunning = activeBlockId === block.id;
-              const isSelected =
-                drawerSelectedBlockId === block.id ||
-                (!drawerSelectedBlockId && selectedIndex === index);
+                          <div className="flex items-center flex-wrap gap-1.5">
+                            {project ? (
+                              <span className="inline-flex items-center gap-1.5 text-[12px] text-[#9A9A9A] mr-1">
+                                <ProjectBadge
+                                  name={project.name}
+                                  color={project.color}
+                                  icon={project.icon}
+                                  size="xs"
+                                />
+                                <span className="truncate max-w-[140px]">{project.name}</span>
+                              </span>
+                            ) : null}
 
-              return (
-                <TodayBlockCard
-                  key={block.id}
-                  block={block}
-                  project={project}
-                  goal={goal}
-                  isRunning={isRunning}
-                  isSelected={isSelected}
-                  onSelect={() => {
-                    setSelectedIndex(index);
-                    openBlockDrawer(block.id);
-                  }}
-                  onPlay={() => void startFocusAndNavigate(block.id)}
-                  onContextMenu={(e) => blockMenu.open(e, block)}
-                />
-              );
-            })}
-          </div>
-        )}
-      </section>
+                            {goal ? (
+                              <GoalChip name={goal.name} kind={goal.kind} color={goal.color} />
+                            ) : null}
 
-      {/* COMPLETED TODAY Section */}
-      {completedToday.length > 0 ? (
-        <section className="space-y-2.5 pt-2" aria-label="Completed Today">
-          <div className="flex items-center gap-2">
-            <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#6E6E6E]">
-              Completed Today
-            </h2>
-            <span className="text-[11.5px] text-[#6E6E6E] tabular-nums">
-              {completedToday.length}
-            </span>
-          </div>
+                            {block.isOps ? (
+                              <Pill tone="ops" icon={<Flame size={10} />}>
+                                Ops
+                              </Pill>
+                            ) : null}
 
-          <div className="space-y-2.5">
-            {completedToday.map((block) => {
-              const project = projectsById.get(block.projectId);
-              const measuredMins = measuredMinutesByBlock.get(block.id) ?? 0;
-              const isDrawerOpen = drawerSelectedBlockId === block.id;
+                            {block.dueDate ? (
+                              <Pill tone="due">Due {formatShortDate(block.dueDate)}</Pill>
+                            ) : null}
+                          </div>
 
-              return (
-                <div
-                  key={block.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => openBlockDrawer(block.id)}
-                  onContextMenu={(e) => blockMenu.open(e, block)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      openBlockDrawer(block.id);
-                    }
-                  }}
-                  className={[
-                    'px-5 py-3.5 rounded-[10px] bg-[#171717] border transition-colors cursor-pointer focus:outline-none focus-visible:border-[#5566F2]',
-                    isDrawerOpen
-                      ? 'border-[#5566F2]'
-                      : 'border-[#2A2A2A] hover:border-[#3C3C3C]',
-                  ].join(' ')}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <span className="w-5 h-5 rounded-full bg-[#14331F] text-[#7BE0A0] inline-flex items-center justify-center shrink-0">
-                        <Check size={11} strokeWidth={2.5} />
-                      </span>
-                      {project ? (
-                        <ProjectBadge
-                          name={project.name}
-                          color={project.color}
-                          icon={project.icon}
-                          size="xs"
-                        />
-                      ) : null}
-                      <span className="text-[13.5px] font-medium text-[#C4C4C4] truncate">
-                        {block.title}
-                      </span>
+                          {suggested?.reason ? (
+                            <p className="text-[12px] text-[#6E6E6E] truncate">
+                              {suggested.reason}
+                            </p>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      {/* Quiet inline exits beneath a single 1px hairline — zero card-in-card */}
+                      <div
+                        className="pt-2.5 border-t border-[#2A2A2A] flex items-center justify-between gap-2 flex-wrap"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <Button
+                            variant="secondary"
+                            size="xs"
+                            disabled={moveTomorrowMutation.isPending}
+                            onClick={() => moveTomorrowMutation.mutate(block.id)}
+                          >
+                            Tomorrow
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            size="xs"
+                            disabled={parkLaterMutation.isPending}
+                            onClick={() => parkLaterMutation.mutate(block.id)}
+                          >
+                            Later
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            disabled={dropBlockMutation.isPending}
+                            onClick={() => handleDropBlock(block)}
+                          >
+                            Drop
+                          </Button>
+                        </div>
+
+                        {showTellSomeone ? (
+                          <Button
+                            variant={isPopoverOpen ? 'accent-soft' : 'secondary'}
+                            size="xs"
+                            leftIcon={<MessageSquare size={11} />}
+                            onClick={() =>
+                              setOpenTellSomeoneBlockId((current) =>
+                                current === block.id ? null : block.id,
+                              )
+                            }
+                          >
+                            Tell someone
+                          </Button>
+                        ) : null}
+                      </div>
                     </div>
 
+                    {isPopoverOpen ? (
+                      <div className="absolute right-0 top-full mt-2 z-30">
+                        <TellSomeonePopover
+                          block={block}
+                          project={project}
+                          todayDate={dateStr}
+                          onClose={() => setOpenTellSomeoneBlockId(null)}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+
+              {/* Inline Drop Reason & Undo strips retained across SSE refetches */}
+              {recentlyDroppedBlocks.map((block) => (
+                <div
+                  key={block.id}
+                  data-dropped-row={block.id}
+                  className="rounded-[12px] bg-[#171717] border border-[#2A2A2A] p-[18px] space-y-3"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[13.5px] text-[#6E6E6E] line-through truncate">
+                      {block.title}
+                    </span>
                     <div className="flex items-center gap-2 shrink-0">
-                      {block.isOps ? (
-                        <Pill tone="ops" dot>
-                          Ops
-                        </Pill>
-                      ) : null}
-                      <EnergyPill signal={block.energySignal} />
-                      {measuredMins > 0 ? (
-                        <span className="text-[12px] font-medium text-[#9A9A9A] tabular-nums">
-                          {formatDuration(measuredMins)}
-                        </span>
-                      ) : null}
+                      <span className="text-[11.5px] font-medium text-[#9A9A9A]">Dropped</span>
+                      <Button
+                        variant="secondary"
+                        size="xs"
+                        leftIcon={<RotateCcw size={11} />}
+                        disabled={reopenBlockMutation.isPending}
+                        onClick={() => reopenBlockMutation.mutate(block.id)}
+                      >
+                        Undo
+                      </Button>
                     </div>
                   </div>
 
-                  {block.outcomeNote ? (
-                    <p className="mt-1.5 pl-7 text-[12.5px] text-[#9A9A9A] truncate">
-                      {block.outcomeNote}
-                    </p>
-                  ) : null}
+                  <div className="pt-2.5 border-t border-[#2A2A2A] flex items-center gap-2 flex-wrap">
+                    <span className="text-[11.5px] text-[#9A9A9A] mr-1">Why? (optional)</span>
+                    {DROP_REASON_OPTIONS.map((opt) => (
+                      <Button
+                        key={opt.value}
+                        variant="secondary"
+                        size="xs"
+                        disabled={updateDropReasonMutation.isPending}
+                        onClick={() =>
+                          updateDropReasonMutation.mutate({
+                            blockId: block.id,
+                            dropReason: opt.value,
+                          })
+                        }
+                      >
+                        {opt.label}
+                      </Button>
+                    ))}
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() =>
+                        setRecentlyDroppedBlocks((prev) =>
+                          prev.filter((item) => item.id !== block.id),
+                        )
+                      }
+                    >
+                      Skip
+                    </Button>
+                  </div>
                 </div>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {/* COMPLETED TODAY Section */}
+        {completedToday.length > 0 ? (
+          <section className="space-y-2.5 pt-2" aria-label="Completed Today">
+            <div className="flex items-center gap-2">
+              <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#6E6E6E]">
+                Completed Today
+              </h2>
+              <span className="text-[11.5px] text-[#6E6E6E] tabular-nums">
+                {completedToday.length}
+              </span>
+            </div>
+
+            <div className="space-y-2.5">
+              {completedToday.map((block) => {
+                const project = projectsById.get(block.projectId);
+                const measuredMins = measuredMinutesByBlock.get(block.id) ?? 0;
+                const isDrawerOpen = drawerSelectedBlockId === block.id;
+
+                return (
+                  <div
+                    key={block.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => openBlockDrawer(block.id)}
+                    onContextMenu={(e) => blockMenu.open(e, block)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        openBlockDrawer(block.id);
+                      }
+                    }}
+                    className={[
+                      'px-5 py-3.5 rounded-[10px] bg-[#171717] border transition-colors cursor-pointer focus:outline-none focus-visible:border-[#5566F2]',
+                      isDrawerOpen
+                        ? 'border-[#5566F2]'
+                        : 'border-[#2A2A2A] hover:border-[#3C3C3C]',
+                    ].join(' ')}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className="w-5 h-5 rounded-full bg-[#14331F] text-[#7BE0A0] inline-flex items-center justify-center shrink-0">
+                          <Check size={11} strokeWidth={2.5} />
+                        </span>
+                        {project ? (
+                          <ProjectBadge
+                            name={project.name}
+                            color={project.color}
+                            icon={project.icon}
+                            size="xs"
+                          />
+                        ) : null}
+                        <span className="text-[13.5px] font-medium text-[#C4C4C4] truncate">
+                          {block.title}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        {block.isOps ? (
+                          <Pill tone="ops" dot>
+                            Ops
+                          </Pill>
+                        ) : null}
+                        <EnergyPill signal={block.energySignal} />
+                        {measuredMins > 0 ? (
+                          <span className="text-[12px] font-medium text-[#9A9A9A] tabular-nums">
+                            {formatDuration(measuredMins)}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    {block.outcomeNote ? (
+                      <p className="mt-1.5 pl-7 text-[12.5px] text-[#9A9A9A] truncate">
+                        {block.outcomeNote}
+                      </p>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
       </div>
       {blockMenu.menu}
       {meetingMenu.menu}
@@ -522,10 +976,73 @@ export function TodayView() {
   );
 }
 
+interface DayLookBackCardProps {
+  lookBack: DayLookBackSummary;
+  onDismiss: () => void;
+}
+
+function DayLookBackCard({ lookBack, onDismiss }: DayLookBackCardProps) {
+  const blockWord = lookBack.movedGoalCount === 1 ? 'block' : 'blocks';
+  const dayLabel = lookBack.isYesterday
+    ? `Yesterday · ${formatShortDate(lookBack.date)}`
+    : `Today · ${formatShortDate(lookBack.date)}`;
+
+  return (
+    <section
+      aria-label="Day look back"
+      className="veyra-card space-y-3"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#9A9A9A]">
+            DAY LOOK BACK
+          </span>
+          <span className="text-[11.5px] text-[#6E6E6E] tabular-nums">{dayLabel}</span>
+        </div>
+        <button
+          type="button"
+          aria-label="Dismiss day look back"
+          onClick={onDismiss}
+          className="h-6 w-6 rounded-[6px] inline-flex items-center justify-center text-[#9A9A9A] hover:bg-[#262626] hover:text-[#EDEDED] transition-colors shrink-0"
+        >
+          <X size={13} />
+        </button>
+      </div>
+
+      <p className="font-display text-[16px] font-semibold text-[#EDEDED] tabular-nums">
+        {formatDuration(lookBack.focusedMinutes)} focused · {lookBack.goalSharePct}% on goals ·{' '}
+        {lookBack.movedGoalCount} {blockWord} moved a goal
+      </p>
+
+      {lookBack.notFitBlocks.length > 0 ? (
+        <div className="pt-2.5 border-t border-[#2A2A2A] space-y-1.5">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#6E6E6E]">
+            Did not fit
+          </div>
+          <ul className="space-y-1">
+            {lookBack.notFitBlocks.map((item) => (
+              <li
+                key={item.id}
+                className="flex items-center justify-between gap-3 text-[12.5px]"
+              >
+                <span className="text-[#C4C4C4] truncate">{item.title}</span>
+                <span className="text-[11.5px] text-[#6E6E6E] shrink-0">{item.destination}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      <p className="text-[12px] text-[#6E6E6E]">What did not fit is capacity, not failure.</p>
+    </section>
+  );
+}
+
 interface TodayBlockCardProps {
   block: Block;
   project?: ProjectWithStats;
   goal?: Goal;
+  suggested?: SuggestedOrderItem;
   isRunning: boolean;
   isSelected: boolean;
   onSelect: () => void;
@@ -537,6 +1054,7 @@ function TodayBlockCard({
   block,
   project,
   goal,
+  suggested,
   isRunning,
   isSelected,
   onSelect,
@@ -545,6 +1063,7 @@ function TodayBlockCard({
 }: TodayBlockCardProps) {
   const highlighted = isSelected || isRunning;
   const projectColor = project?.color ?? '#3B4BD8';
+  const effectiveSize = suggested?.effectiveSizeMinutes ?? block.sizeMinutes ?? 60;
 
   return (
     <div
@@ -592,11 +1111,16 @@ function TodayBlockCard({
             <span className="text-[14.5px] font-medium leading-snug text-[#EDEDED]">
               {block.title}
             </span>
-            {block.plannedStartAt ? (
-              <span className="text-[11.5px] text-[#9A9A9A] tabular-nums shrink-0 mt-0.5">
-                {formatLocalTime(block.plannedStartAt)}
+            <div className="flex items-center gap-2 shrink-0 mt-0.5">
+              <span className="inline-flex items-center px-2 py-0.5 rounded-[6px] bg-[#242424] border border-[#2A2A2A] text-[11px] font-medium text-[#9A9A9A] tabular-nums">
+                {formatDuration(effectiveSize)}
               </span>
-            ) : null}
+              {block.plannedStartAt ? (
+                <span className="text-[11.5px] text-[#9A9A9A] tabular-nums">
+                  {formatLocalTime(block.plannedStartAt)}
+                </span>
+              ) : null}
+            </div>
           </div>
 
           <div className="flex items-center flex-wrap gap-1.5">
@@ -649,6 +1173,10 @@ function TodayBlockCard({
               </span>
             ) : null}
           </div>
+
+          {suggested?.reason ? (
+            <p className="text-[12px] text-[#9A9A9A] truncate">{suggested.reason}</p>
+          ) : null}
         </div>
       </div>
 
