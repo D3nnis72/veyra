@@ -24,4 +24,4 @@ visual:
 | 01 | Native macOS pure neutral dark design system & Figma screens (synced with built app) | Done — [design-system-tokens.md](../../../knowledge/architecture/design-system-tokens.md) |
 | 02 | Lean MVP + daily-driver polish: SQLite core, Hono server + live Outlook CLI/ICS sync + webhooks, global `veyra` CLI + T3 skill, Web/Electron cockpit (with global `⌘⇧P` & `⌥K` Liquid Glass floating windows, installable `Veyra.app`), Docker | Done — [docs/knowledge/README.md](../../../knowledge/README.md) |
 | 03 | [Ecosystem loop: T3 Code, auto-summary, and iOS](03_ecosystem_loop.md) | Open |
-| 04 | [Company goals next to personal goals](04_company_goals.md) | Brainstorming |
+| 04 | [Richer goals, personal and company](04_company_goals.md) | Brainstorming |
