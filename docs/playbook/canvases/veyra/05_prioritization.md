@@ -33,7 +33,7 @@ In `Today → UP NEXT` a thin line sits where the room runs out. Blocks above it
 
 In `Plan` each day header shows planned against room ("4 h planned · room about 3 h"), so overplanning is visible while dragging, before the day starts.
 
-Figma concept (Today, Plan, day look back and Weekly Review, current state left, proposal right): [Proposal · Prioritization · Dark](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=109-3). Concept only, not decided.
+Drawn on the Figma page Screens (target design since 2026-11-25): [Today with room, fit line, Tell someone, Drop reason and Day look back](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=22-6), [Plan with planned against room](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=23-607) and the findings in [Weekly Review](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=24-2350). The proposal page is deleted.
 
 ```text
 UP NEXT                                  Room today ≈ 3h 40m

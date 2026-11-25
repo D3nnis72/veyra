@@ -93,7 +93,7 @@ The right click menu on a goal row (sidebar and Settings) uses the shared `Conte
 
 Wanted by the user: at the end of a block and in the Weekly Review, a short look at whether the block made sense for its goal. The completion card in the Focus view already asks how the block felt (energy) and what actually moved forward. The concept adds one more question, "Did this block make sense for its goal?", with three answers: moved the goal, partly, just motion. The Weekly Review then splits goal alignment into company and personal focus time and lists the blocks marked partly or just motion under "Worth a second look". Fits principle 6 in [VISION.md](../../../VISION.md) (progress over motion).
 
-Figma concept (three before and after pairs, current state left, proposal right): [Proposal · Company Goals · Dark](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=94-4478). Concept only, not decided. Since 2026-11-25 it also shows the richer goal cards in Settings, the `GOALS` sidebar section with its right click menu, the `GoalDetailDrawer` and the per goal rows in the Weekly Review.
+Drawn on the Figma page Screens, which since 2026-11-25 holds the target design: [Today with the goals sidebar, goal menu and GoalDetailDrawer](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=22-6), [Focus · Inline Complete with the sense question](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=22-881), [Settings · Goals](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=54-2475) and [Weekly Review](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=24-2350). The proposal page is deleted.
 
 ## What the Weekly Review does with it {#review updated=2026-11-25}
 

@@ -21,6 +21,8 @@ Wanted by the user on 2026-11-25: the review deserves more detail than it has to
 
 Today the review is one page of facts side by side: four KPIs (total focus, goal alignment, build versus ops, energy), the progress feed, daily notes, the Ops radar, carryovers and Later check in, and the rule for next week. Everything is there, but nothing says in which order to look at it or what to conclude.
 
+Drawn on the Figma page Screens: [Weekly Review, two states](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=24-2350) and [Projects with weekly time](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=24-1427), plus the strip in [Plan](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=23-607).
+
 The rework keeps one scrolling page and orders it into four chapters, each answering one question. A thin chapter bar at the top jumps between them and shows which ones you have walked through. Every chapter opens with one computed sentence, so a quick look at the four sentences already tells the week, and the detail below is there when you want it.
 
 ## The four chapters {#chapters updated=2026-11-25}
