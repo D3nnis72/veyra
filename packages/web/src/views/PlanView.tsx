@@ -38,6 +38,7 @@ import { SelectPopover } from '../components/SelectPopover';
 import { activeCardStyle } from '../components/goalTint';
 import {
   addDaysDateString,
+  formatDuration,
   formatLocalTime,
   formatShortDate,
   getTodayDateString,
@@ -278,6 +279,45 @@ export function PlanView() {
         </div>
       </header>
 
+      {/* Week Time Strip */}
+      {(data?.projectTimeStrip?.length ?? 0) > 0 ? (
+        <section
+          aria-label="Week time strip"
+          className="shrink-0 flex items-center gap-2.5 px-6 py-2.5 border-b border-[#222222] overflow-x-auto"
+        >
+          <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-[#6E6E6E] shrink-0">
+            Week time
+          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            {(data?.projectTimeStrip ?? []).map((item) => {
+              const project = projectsById.get(item.projectId);
+              if (!project) return null;
+              const timeLabel =
+                item.weeklyTimeMinutes !== null
+                  ? `${formatDuration(item.plannedMinutes)} / ${formatDuration(item.weeklyTimeMinutes)}`
+                  : `${formatDuration(item.plannedMinutes)} planned`;
+              return (
+                <div
+                  key={item.projectId}
+                  className="inline-flex items-center gap-2 h-7 px-2.5 rounded-[7px] bg-[#1C1C1C] border border-[#2A2A2A] shrink-0"
+                >
+                  <ProjectBadge
+                    name={project.name}
+                    color={project.color}
+                    icon={project.icon}
+                    size="xs"
+                  />
+                  <span className="text-[12px] font-medium text-[#C4C4C4] max-w-[130px] truncate">
+                    {project.name}
+                  </span>
+                  <span className="text-[11.5px] text-[#9A9A9A] tabular-nums">{timeLabel}</span>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
       {/* Borderless Columns Canvas directly on #131313 */}
       <DndContext
         sensors={sensors}
@@ -384,22 +424,28 @@ export function PlanView() {
                   id={`day:${day.date}`}
                   className="min-w-[272px] w-[272px] shrink-0 space-y-2.5 min-h-[240px] rounded-[10px]"
                 >
-                  <ColumnHeader
-                    leading={
-                      <span
-                        aria-hidden
-                        className="w-[3px] h-4 rounded-full shrink-0"
-                        style={{ backgroundColor: DAY_BAR_COLORS[weekday] ?? '#6E7280' }}
-                      />
-                    }
-                    label={weekday}
-                    labelClassName={isToday ? 'text-[#AEB8FF]' : 'text-[#EDEDED]'}
-                    meta={shortDate}
-                    badge={isToday ? <Pill tone="accent">Today</Pill> : null}
-                    count={day.blocks.length}
-                    addLabel={`Add block for ${weekday}`}
-                    onAdd={() => openCreateBlock({ bucket: 'scheduled', scheduledDate: day.date })}
-                  />
+                  <div className="space-y-0.5">
+                    <ColumnHeader
+                      leading={
+                        <span
+                          aria-hidden
+                          className="w-[3px] h-4 rounded-full shrink-0"
+                          style={{ backgroundColor: DAY_BAR_COLORS[weekday] ?? '#6E7280' }}
+                        />
+                      }
+                      label={weekday}
+                      labelClassName={isToday ? 'text-[#AEB8FF]' : 'text-[#EDEDED]'}
+                      meta={shortDate}
+                      badge={isToday ? <Pill tone="accent">Today</Pill> : null}
+                      count={day.blocks.length}
+                      addLabel={`Add block for ${weekday}`}
+                      onAdd={() => openCreateBlock({ bucket: 'scheduled', scheduledDate: day.date })}
+                    />
+                    <div className="px-0.5 text-[11.5px] text-[#6E6E6E] tabular-nums">
+                      {formatDuration(day.plannedMinutes)} planned · room about{' '}
+                      {formatDuration(day.roomMinutes)}
+                    </div>
+                  </div>
 
                   {/* Quiet Day-Top Meetings as Prep Context */}
                   {day.events.length > 0 ? (
@@ -447,7 +493,7 @@ export function PlanView() {
                     pending={quickCreateMutation.isPending}
                   />
 
-                  {/* Scheduled Blocks (zero time estimates!) */}
+                  {/* Scheduled Blocks */}
                   <div className="space-y-3">
                     {day.blocks.map((block) => (
                       <DraggablePlanCard
@@ -581,6 +627,7 @@ function PlanCardContent({
 }) {
   const isDone = block.status === 'done';
   const revisitIsPast = Boolean(isLater && block.revisitAt && block.revisitAt < todayStr);
+  const effectiveSizeMinutes = block.sizeMinutes ?? project?.learnedBlockSizeMinutes ?? null;
 
   return (
     <div
@@ -619,6 +666,14 @@ function PlanCardContent({
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
+          {effectiveSizeMinutes !== null ? (
+            <span
+              title={block.sizeMinutes !== null ? 'Block size' : 'Learned block size'}
+              className="inline-flex items-center h-5 px-1.5 rounded-[5px] bg-[#242424] border border-[#2E2E2E] text-[11px] font-medium text-[#9A9A9A] tabular-nums"
+            >
+              {formatDuration(effectiveSizeMinutes)}
+            </span>
+          ) : null}
           {block.dueDate ? <Pill tone="due">Due {formatShortDate(block.dueDate)}</Pill> : null}
           {block.isOps ? (
             <Pill tone="ops" dot>

@@ -4,14 +4,18 @@ import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom/vitest';
 import type {
   Block,
+  BlockDetail,
   GoalWithStats,
   Project,
   ProjectWeekPoint,
   ProjectWithStats,
 } from '@veyra/core/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ProjectDetailResponse } from '../src/api/client';
+import type { PlanResponse, ProjectDetailResponse } from '../src/api/client';
 import { AppShellContext, type AppShellContextValue } from '../src/app/AppShellContext';
+import { CreateBlockModal } from '../src/app/CreateBlockModal';
+import { BlockDetailDrawer } from '../src/components/BlockDetailDrawer';
+import { PlanView } from '../src/views/PlanView';
 import { ProjectDetailView } from '../src/views/ProjectDetailView';
 import { ProjectModal } from '../src/views/ProjectModal';
 import { ProjectsView } from '../src/views/ProjectsView';
@@ -467,5 +471,259 @@ describe('Project Weekly Time UI (Task 9)', () => {
       expect(within(weeklyCard).getByText(label)).toBeInTheDocument();
     }
     expect(within(weeklyCard).getByText('4h')).toBeInTheDocument();
+  });
+});
+
+describe('Plan Week Time Strip, Day Room & Block Rough Size (Task 10)', () => {
+  it('PlanView renders Week Time Strip per project and planned vs room under each day header', async () => {
+    const qc = createTestQueryClient();
+    const shell = createMockShell({ route: 'plan' });
+
+    const blockExplicitSize: Block = {
+      ...SAMPLE_BLOCK,
+      id: '33333333-3333-4333-8333-333333333310',
+      projectId: PROJ_OVER_ID,
+      title: 'Explicit 2h architecture pass',
+      scheduledDate: '2026-11-23',
+      sizeMinutes: 120,
+    };
+
+    const blockLearnedSize: Block = {
+      ...SAMPLE_BLOCK,
+      id: '33333333-3333-4333-8333-333333333311',
+      projectId: PROJ_UNPLANNED_ID, // learnedBlockSizeMinutes: 30
+      title: 'Rotate staging keys',
+      scheduledDate: '2026-11-24',
+      sizeMinutes: null,
+    };
+
+    const blockNoSize: Block = {
+      ...SAMPLE_BLOCK,
+      id: '33333333-3333-4333-8333-333333333312',
+      projectId: PROJ_UNTOUCHED_ID, // learnedBlockSizeMinutes: null
+      title: 'Audit dark contrast',
+      scheduledDate: '2026-11-25',
+      sizeMinutes: null,
+    };
+
+    const planResponse: PlanResponse = {
+      weekStartDate: '2026-11-23',
+      weekEndDate: '2026-11-29',
+      today: '2026-11-25',
+      timezone: 'UTC',
+      days: [
+        {
+          date: '2026-11-23',
+          blocks: [blockExplicitSize],
+          events: [],
+          plannedMinutes: 240,
+          roomMinutes: 300,
+        },
+        {
+          date: '2026-11-24',
+          blocks: [blockLearnedSize],
+          events: [],
+          plannedMinutes: 300,
+          roomMinutes: 180, // planned > room, still calm neutral (never red)
+        },
+        {
+          date: '2026-11-25',
+          blocks: [blockNoSize],
+          events: [],
+          plannedMinutes: 60,
+          roomMinutes: 240,
+        },
+        {
+          date: '2026-11-26',
+          blocks: [],
+          events: [],
+          plannedMinutes: 0,
+          roomMinutes: 240,
+        },
+        {
+          date: '2026-11-27',
+          blocks: [],
+          events: [],
+          plannedMinutes: 0,
+          roomMinutes: 210,
+        },
+      ],
+      projectTimeStrip: [
+        {
+          projectId: PROJ_OVER_ID,
+          plannedMinutes: 240,
+          loggedMinutes: 120,
+          weeklyTimeMinutes: 240,
+        },
+        {
+          projectId: PROJ_UNPLANNED_ID,
+          plannedMinutes: 120,
+          loggedMinutes: 45,
+          weeklyTimeMinutes: null,
+        },
+      ],
+      inbox: [],
+      later: [],
+      projects: [PROJECT_OVER, PROJECT_UNDER, PROJECT_UNTOUCHED, PROJECT_UNPLANNED],
+      goals: [SAMPLE_GOAL],
+    };
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('/api/plan')) {
+          return jsonResponse(planResponse);
+        }
+        return jsonResponse({});
+      }),
+    );
+
+    render(
+      <QueryClientProvider client={qc}>
+        <AppShellContext.Provider value={shell}>
+          <PlanView />
+        </AppShellContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    // Week Time Strip renders per-project chips with planned/weeklyTime or planned only
+    const strip = await screen.findByRole('region', { name: /Week time strip/i });
+    expect(within(strip).getByText('Veyra Core')).toBeInTheDocument();
+    expect(within(strip).getByText('4h / 4h')).toBeInTheDocument();
+    expect(within(strip).getByText('Ad-hoc Ops')).toBeInTheDocument();
+    expect(within(strip).getByText('2h planned')).toBeInTheDocument();
+
+    // Per-day planned vs room headers
+    expect(screen.getByText('4h planned · room about 5h')).toBeInTheDocument();
+    const overRoomLine = screen.getByText('5h planned · room about 3h');
+    expect(overRoomLine).toBeInTheDocument();
+    expect(overRoomLine.className).not.toMatch(/red|rose|FF9EC5|C94A6A/i);
+    expect(screen.getByText('1h planned · room about 4h')).toBeInTheDocument();
+
+    // Block cards show rough size chip for explicit (2h) and learned (30m), none when unset + unlearned
+    const explicitCard = screen.getByText('Explicit 2h architecture pass').closest('[role="button"]') as HTMLElement;
+    expect(within(explicitCard).getByText('2h')).toBeInTheDocument();
+
+    const learnedCard = screen.getByText('Rotate staging keys').closest('[role="button"]') as HTMLElement;
+    expect(within(learnedCard).getByText('30m')).toBeInTheDocument();
+
+    const noSizeCard = screen.getByText('Audit dark contrast').closest('[role="button"]') as HTMLElement;
+    expect(within(noSizeCard).queryByText(/^(30m|1h|2h)$/)).not.toBeInTheDocument();
+  });
+
+  it('CreateBlockModal and BlockDetailDrawer let the user choose 30m, 1h, or 2h block size', async () => {
+    const user = userEvent.setup();
+    const qc = createTestQueryClient();
+    const shell = createMockShell();
+    const createdPayloads: Array<Record<string, unknown>> = [];
+    const patchedPayloads: Array<Record<string, unknown>> = [];
+
+    let currentBlock: BlockDetail = {
+      ...SAMPLE_BLOCK,
+      sizeMinutes: 60,
+      sessions: [],
+      totalFocusMinutes: 0,
+    };
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        const method = (init?.method ?? 'GET').toUpperCase();
+        if (url.includes('/api/projects')) {
+          return jsonResponse({ projects: [PROJECT_OVER, PROJECT_UNDER] });
+        }
+        if (url.includes('/api/goals')) {
+          return jsonResponse({ goals: [SAMPLE_GOAL] });
+        }
+        if (url.includes('/api/blocks') && method === 'POST') {
+          const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+          createdPayloads.push(body);
+          return jsonResponse(
+            { block: { ...SAMPLE_BLOCK, title: String(body.title ?? ''), sizeMinutes: body.sizeMinutes ?? null } },
+            201,
+          );
+        }
+        if (url.includes(`/api/blocks/${BLOCK_1_ID}`) && method === 'GET') {
+          return jsonResponse({ block: currentBlock });
+        }
+        if (url.includes(`/api/blocks/${BLOCK_1_ID}`) && method === 'PATCH') {
+          const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+          patchedPayloads.push(body);
+          currentBlock = {
+            ...currentBlock,
+            sizeMinutes:
+              'sizeMinutes' in body
+                ? (body.sizeMinutes as BlockDetail['sizeMinutes'])
+                : currentBlock.sizeMinutes,
+          };
+          return jsonResponse({ block: currentBlock });
+        }
+        return jsonResponse({});
+      }),
+    );
+
+    // 1. CreateBlockModal: select 2h and submit
+    const onCloseModal = vi.fn();
+    render(
+      <QueryClientProvider client={qc}>
+        <AppShellContext.Provider value={shell}>
+          <CreateBlockModal open onClose={onCloseModal} />
+        </AppShellContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    const createDialog = screen.getByRole('dialog', { name: 'Create Block' });
+    const createSizeGroup = within(createDialog).getByRole('group', { name: /Block size/i });
+    expect(within(createSizeGroup).getByRole('button', { name: 'Auto' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    await user.click(within(createSizeGroup).getByRole('button', { name: '2h' }));
+    expect(within(createSizeGroup).getByRole('button', { name: '2h' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+
+    await user.type(
+      within(createDialog).getByPlaceholderText(/What do you want to finish/i),
+      'Deep capacity refactor',
+    );
+    await user.click(within(createDialog).getByRole('button', { name: /Create Block/i }));
+
+    await waitFor(() => expect(onCloseModal).toHaveBeenCalled());
+    expect(createdPayloads[0]).toMatchObject({
+      title: 'Deep capacity refactor',
+      sizeMinutes: 120,
+    });
+
+    cleanup();
+
+    // 2. BlockDetailDrawer: switch from 1h to 30m, then to Auto (null)
+    render(
+      <QueryClientProvider client={qc}>
+        <AppShellContext.Provider value={shell}>
+          <BlockDetailDrawer blockId={BLOCK_1_ID} onClose={vi.fn()} />
+        </AppShellContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    const drawer = await screen.findByRole('dialog', { name: 'Block detail' });
+    const drawerSizeGroup = await within(drawer).findByRole('group', { name: /Block size/i });
+    expect(within(drawerSizeGroup).getByRole('button', { name: '1h' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+
+    await user.click(within(drawerSizeGroup).getByRole('button', { name: '30m' }));
+    await waitFor(() => {
+      expect(patchedPayloads).toContainEqual({ sizeMinutes: 30 });
+    });
+
+    await user.click(within(drawerSizeGroup).getByRole('button', { name: 'Auto' }));
+    await waitFor(() => {
+      expect(patchedPayloads).toContainEqual({ sizeMinutes: null });
+    });
   });
 });

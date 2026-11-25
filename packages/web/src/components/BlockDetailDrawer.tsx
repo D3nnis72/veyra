@@ -1,10 +1,11 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import type {
-  BlockDetail,
-  ExternalLink,
-  FocusSession,
-  RecurrenceRule,
-  UpdateBlockInput,
+import {
+  BLOCK_SIZE_OPTIONS,
+  type BlockDetail,
+  type ExternalLink,
+  type FocusSession,
+  type RecurrenceRule,
+  type UpdateBlockInput,
 } from '@veyra/core/types';
 import {
   Archive,
@@ -282,6 +283,7 @@ export function BlockDetailDrawer({ blockId, onClose, onStartFocus }: BlockDetai
         bucket: block!.bucket,
         scheduledDate: block!.scheduledDate,
         dueDate: block!.dueDate,
+        sizeMinutes: block!.sizeMinutes,
         notes: block!.notes,
         externalLinks: block!.externalLinks,
       }),
@@ -1004,6 +1006,37 @@ export function BlockDetailDrawer({ blockId, onClose, onStartFocus }: BlockDetai
                     })}
                   </div>
                 ) : null}
+              </div>
+
+              {/* Rough Size Chip Selector (Auto / 30m / 1h / 2h) */}
+              <div
+                role="group"
+                aria-label="Block size"
+                className="inline-flex items-center h-9 p-0.5 rounded-[8px] bg-[#171717] border border-[#3C3C3C]"
+              >
+                <span className="px-2 text-[11.5px] font-medium text-[#6E6E6E] select-none">
+                  Size
+                </span>
+                {([null, ...BLOCK_SIZE_OPTIONS] as const).map((opt) => {
+                  const active = block.sizeMinutes === opt;
+                  const label = opt === null ? 'Auto' : formatDuration(opt);
+                  return (
+                    <button
+                      key={opt ?? 'auto'}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => updateMutation.mutate({ sizeMinutes: opt })}
+                      className={[
+                        'h-full px-2 rounded-[6px] text-[12px] font-medium tabular-nums transition-colors',
+                        active
+                          ? 'bg-[#262626] text-[#EDEDED]'
+                          : 'text-[#9A9A9A] hover:text-[#EDEDED]',
+                      ].join(' ')}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>
