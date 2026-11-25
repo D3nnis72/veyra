@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { runCli } from '../../packages/cli/src/index.js';
+import { runCli, startHookListener } from '../../packages/cli/src/index.js';
 import { createVeyraServer, type VeyraServerInstance } from '../../packages/server/src/app.js';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -890,5 +890,543 @@ console.log(JSON.stringify([
     expect(nextWeekReview.status).toBe(200);
     expect(nextWeekReview.data.activeRuleText).toBe('No meetings before 11:00 Mon-Thu');
     expect(nextWeekReview.data.ruleForNextWeek).toBeNull();
+  });
+
+  it('full target design lifecycle: personal/company goals, project weekly time, today room/fit-line/drop-reason/sense, and 4-chapter review auto-sync', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'veyra-e2e-target-'));
+    cleanups.push(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+
+    const dbPath = path.join(tmpDir, 'veyra.db');
+    const cliConfigPath = path.join(tmpDir, 'cli-config.json');
+    const hookCapturePath = path.join(tmpDir, 'review-hook-capture.json');
+
+    const server: VeyraServerInstance = createVeyraServer({
+      dbPath,
+      port: 0,
+      host: '127.0.0.1',
+      enableTestClock: true,
+      rolloverCheckIntervalMs: 600_000,
+    });
+    const started = await server.start();
+    cleanups.push(() => server.stop());
+    const baseUrl = started.url;
+
+    const api = async <T = Record<string, unknown>>(
+      method: string,
+      route: string,
+      opts?: { body?: unknown; now?: string; actor?: string },
+    ): Promise<{ status: number; data: T }> => {
+      const headers: Record<string, string> = {
+        Accept: 'application/json',
+        'X-Veyra-Actor': opts?.actor ?? 'user',
+      };
+      if (opts?.body !== undefined) {
+        headers['Content-Type'] = 'application/json';
+      }
+      if (opts?.now) {
+        headers['X-Veyra-Now'] = opts.now;
+      }
+      const res = await fetch(`${baseUrl}${route}`, {
+        method,
+        headers,
+        body: opts?.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      });
+      const text = await res.text();
+      const data = text.trim() ? (JSON.parse(text) as T) : ({} as T);
+      return { status: res.status, data };
+    };
+
+    const cliEnv = (nowIso: string) => ({
+      VEYRA_SERVER_URL: baseUrl,
+      VEYRA_TOKEN: undefined,
+      VEYRA_CONFIG_PATH: cliConfigPath,
+      VEYRA_ACTOR: 'cli',
+      VEYRA_NOW: nowIso,
+    });
+
+    const week4Start = '2026-11-23'; // ISO Week 48
+    const mondayMorning = '2026-11-23T08:00:00.000Z';
+
+    // Initialize deterministic UTC timezone
+    const initSettings = await api('PATCH', '/api/settings', {
+      now: mondayMorning,
+      body: { timezone: 'UTC', onboardingCompleted: true },
+    });
+    expect(initSettings.status).toBe(200);
+
+    // -----------------------------------------------------------------------
+    // 1. Slice 1 — Company & Personal Goals, custom hex, CLI goals & close
+    // -----------------------------------------------------------------------
+    const companyGoalCli = await execCli(
+      [
+        'goal',
+        'create',
+        'Generate upsells',
+        '--kind',
+        'company',
+        '--color',
+        '#12AB34',
+        '--description',
+        'Expand enterprise accounts with measurable ROI',
+        '--done-when',
+        '3 upsell contracts signed in Q4',
+        '--check-in',
+        '2026-11-27',
+        '--measure',
+        '1 / 3 closed',
+        '--if-it-stalls',
+        'Pair with CS leads on executive ROI briefs',
+        '--json',
+      ],
+      cliEnv(mondayMorning),
+    );
+    expect(companyGoalCli.exitCode).toBe(0);
+    const companyGoal = JSON.parse(companyGoalCli.stdout) as {
+      id: string;
+      name: string;
+      kind: string;
+      color: string;
+      doneWhen: string;
+      checkInDate: string;
+      measure: string;
+      ifItStalls: string;
+    };
+    expect(companyGoal.kind).toBe('company');
+    expect(companyGoal.color).toBe('#12AB34');
+    expect(companyGoal.doneWhen).toBe('3 upsell contracts signed in Q4');
+    expect(companyGoal.checkInDate).toBe('2026-11-27');
+    expect(companyGoal.measure).toBe('1 / 3 closed');
+    expect(companyGoal.ifItStalls).toBe('Pair with CS leads on executive ROI briefs');
+
+    const personalGoalRes = await api<{ goal: { id: string; name: string } }>('POST', '/api/goals', {
+      now: mondayMorning,
+      body: {
+        name: 'Q4 Security Readiness',
+        kind: 'personal',
+        color: '#4DA3FF',
+        doneWhen: 'All audit findings closed',
+      },
+    });
+    expect(personalGoalRes.status).toBe(201);
+    const personalGoal = personalGoalRes.data.goal;
+
+    // Verify `veyra goals --json` lists both active goals
+    const goalsListCli = await execCli(['goals', '--json'], cliEnv(mondayMorning));
+    expect(goalsListCli.exitCode).toBe(0);
+    const goalsPayload = JSON.parse(goalsListCli.stdout) as {
+      goals: Array<{ id: string; name: string; kind: string; status: string }>;
+    };
+    expect(goalsPayload.goals.some((g) => g.id === companyGoal.id && g.kind === 'company')).toBe(
+      true,
+    );
+    expect(goalsPayload.goals.some((g) => g.id === personalGoal.id && g.kind === 'personal')).toBe(
+      true,
+    );
+
+    // Close the second goal via `veyra goal close --status achieved --note "..."`
+    const closeGoalCli = await execCli(
+      [
+        'goal',
+        'close',
+        personalGoal.id,
+        '--status',
+        'achieved',
+        '--note',
+        'Zero open audit issues remaining',
+        '--json',
+      ],
+      cliEnv(mondayMorning),
+    );
+    expect(closeGoalCli.exitCode).toBe(0);
+    const closedGoal = JSON.parse(closeGoalCli.stdout) as {
+      id: string;
+      status: string;
+      closingNote: string;
+    };
+    expect(closedGoal.status).toBe('achieved');
+    expect(closedGoal.closingNote).toBe('Zero open audit issues remaining');
+
+    // Confirm closed goal is hidden from GET /api/today active goals
+    const todayAfterClose = await api<{ goals: Array<{ id: string; status: string }> }>(
+      'GET',
+      '/api/today',
+      { now: mondayMorning },
+    );
+    expect(todayAfterClose.status).toBe(200);
+    expect(todayAfterClose.data.goals.some((g) => g.id === companyGoal.id)).toBe(true);
+    expect(todayAfterClose.data.goals.some((g) => g.id === personalGoal.id)).toBe(false);
+
+    // -----------------------------------------------------------------------
+    // 2. Slice 2 — Project weeklyTimeMinutes = 240, 4-week seeded history,
+    //    8-week history & size drift on /api/projects/:id, /api/plan strip & roomMinutes
+    // -----------------------------------------------------------------------
+    const projectRes = await api<{
+      project: { id: string; name: string; weeklyTimeMinutes: number | null };
+    }>('POST', '/api/projects', {
+      now: '2026-11-02T08:00:00.000Z',
+      body: {
+        name: 'LioCare',
+        color: '#2E9E6F',
+        icon: 'Briefcase',
+        defaultGoalId: companyGoal.id,
+        isPinned: true,
+        weeklyTimeMinutes: 240,
+      },
+    });
+    expect(projectRes.status).toBe(201);
+    expect(projectRes.data.project.weeklyTimeMinutes).toBe(240);
+    const lioCare = projectRes.data.project;
+
+    // Seed focus sessions across 4 weeks (Mon Nov 2, Nov 9, Nov 16, Nov 23) with size 60m -> actual 90m to create measurable size drift
+    const historicalWeeks = [
+      { date: '2026-11-02', start: '2026-11-02T09:00:00.000Z', end: '2026-11-02T10:30:00.000Z' },
+      { date: '2026-11-09', start: '2026-11-09T09:00:00.000Z', end: '2026-11-09T10:30:00.000Z' },
+      { date: '2026-11-16', start: '2026-11-16T09:00:00.000Z', end: '2026-11-16T10:30:00.000Z' },
+      { date: '2026-11-23', start: '2026-11-23T09:00:00.000Z', end: '2026-11-23T10:30:00.000Z' },
+    ];
+    for (const [idx, wk] of historicalWeeks.entries()) {
+      const blkRes = await api<{ block: { id: string } }>('POST', '/api/blocks', {
+        now: wk.start,
+        body: {
+          title: `LioCare enterprise sync week ${idx + 1}`,
+          projectId: lioCare.id,
+          goalId: companyGoal.id,
+          bucket: 'scheduled',
+          scheduledDate: wk.date,
+          sizeMinutes: 60,
+        },
+      });
+      expect(blkRes.status).toBe(201);
+      await api('POST', '/api/sessions', {
+        now: wk.end,
+        body: {
+          blockId: blkRes.data.block.id,
+          startedAt: wk.start,
+          endedAt: wk.end,
+        },
+      });
+      await api('POST', '/api/focus/complete', {
+        now: wk.end,
+        body: {
+          blockId: blkRes.data.block.id,
+          energySignal: 'up',
+          senseSignal: 'moved',
+          outcomeNote: `Advanced upsell track ${idx + 1}`,
+        },
+      });
+    }
+
+    const projectDetailRes = await api<{
+      project: {
+        id: string;
+        weeklyTimeMinutes: number | null;
+        weeklyHistory8w: Array<{ weekStartDate: string; focusMinutes: number }>;
+        sizeDriftPct: number | null;
+      };
+    }>('GET', `/api/projects/${lioCare.id}`, { now: '2026-11-24T08:00:00.000Z' });
+    expect(projectDetailRes.status).toBe(200);
+    expect(projectDetailRes.data.project.weeklyTimeMinutes).toBe(240);
+    expect(projectDetailRes.data.project.weeklyHistory8w).toHaveLength(8);
+    expect(
+      projectDetailRes.data.project.weeklyHistory8w.filter((pt) => pt.focusMinutes === 90).length,
+    ).toBe(4);
+    expect(projectDetailRes.data.project.sizeDriftPct).toBe(50);
+
+    // Verify GET /api/plan returns projectTimeStrip and day roomMinutes
+    const planRes = await api<{
+      weekStartDate: string;
+      days: Array<{ date: string; roomMinutes: number; plannedMinutes: number }>;
+      projectTimeStrip: Array<{
+        projectId: string;
+        weeklyTimeMinutes: number | null;
+        loggedMinutes: number;
+      }>;
+    }>('GET', `/api/plan?weekStart=${week4Start}`, { now: '2026-11-24T08:00:00.000Z' });
+    expect(planRes.status).toBe(200);
+    expect(planRes.data.days.length).toBeGreaterThanOrEqual(5);
+    expect(planRes.data.days.every((d) => typeof d.roomMinutes === 'number' && d.roomMinutes >= 0)).toBe(
+      true,
+    );
+    const lioStrip = planRes.data.projectTimeStrip.find((p) => p.projectId === lioCare.id);
+    expect(lioStrip).toBeDefined();
+    expect(lioStrip?.weeklyTimeMinutes).toBe(240);
+    expect(lioStrip?.loggedMinutes).toBe(90);
+
+    // -----------------------------------------------------------------------
+    // 3. Slice 3 — Today roomToday, suggestedOrder, fitLine, applySuggestedOrder,
+    //    drop with dropReason: 'no_room', CLI `veyra done --sense moved --energy up`, dayLookBack
+    // -----------------------------------------------------------------------
+    const tuesdayMorning = '2026-11-24T08:00:00.000Z';
+    const tuesdayDate = '2026-11-24';
+
+    // Schedule 3 blocks on Tuesday so the third overflows roomToday (240m baseline with 1h meeting -> 180m room)
+    await api('POST', '/api/events/upsert', {
+      now: tuesdayMorning,
+      body: {
+        source: 'manual',
+        events: [
+          {
+            externalId: 'tue-meeting-1',
+            title: 'Enterprise customer check-in',
+            startAt: '2026-11-24T13:00:00.000Z',
+            endAt: '2026-11-24T14:00:00.000Z',
+          },
+        ],
+      },
+    });
+
+    const opsOverflowRes = await api<{ block: { id: string } }>('POST', '/api/blocks', {
+      now: tuesdayMorning,
+      body: {
+        title: 'Clean up old Jira tags',
+        projectId: lioCare.id,
+        isOps: true,
+        bucket: 'scheduled',
+        scheduledDate: tuesdayDate,
+        sizeMinutes: 120,
+      },
+    });
+    const opsBlockId = opsOverflowRes.data.block.id;
+
+    const priorityBlockRes = await api<{ block: { id: string } }>('POST', '/api/blocks', {
+      now: tuesdayMorning,
+      body: {
+        title: 'Send Acme upsell proposal',
+        projectId: lioCare.id,
+        goalId: companyGoal.id,
+        bucket: 'scheduled',
+        scheduledDate: tuesdayDate,
+        dueDate: tuesdayDate,
+        sizeMinutes: 120,
+      },
+    });
+    const priorityBlockId = priorityBlockRes.data.block.id;
+
+    // Verify GET /api/today and `veyra today --json` return roomToday, suggestedOrder, fitLine
+    const todayApiRes = await api<{
+      roomToday: { roomMinutes: number; meetingMinutes: number };
+      suggestedOrder: Array<{ blockId: string; reason: string }>;
+      fitLine: { fitLineIndex: number; overflowBlockCount: number };
+    }>('GET', '/api/today', { now: tuesdayMorning });
+    expect(todayApiRes.status).toBe(200);
+    expect(todayApiRes.data.roomToday.meetingMinutes).toBe(60);
+    expect(todayApiRes.data.roomToday.roomMinutes).toBeGreaterThan(0);
+    expect(todayApiRes.data.suggestedOrder[0]?.blockId).toBe(priorityBlockId);
+    expect(todayApiRes.data.fitLine.overflowBlockCount).toBeGreaterThanOrEqual(1);
+
+    const todayCliRes = await execCli(['today', '--json'], cliEnv(tuesdayMorning));
+    expect(todayCliRes.exitCode).toBe(0);
+    const todayCliJson = JSON.parse(todayCliRes.stdout) as {
+      roomToday: { roomMinutes: number };
+      suggestedOrder: Array<{ blockId: string }>;
+      fitLine: { fitLineIndex: number };
+    };
+    expect(todayCliJson.roomToday.roomMinutes).toBe(todayApiRes.data.roomToday.roomMinutes);
+    expect(todayCliJson.suggestedOrder.map((s) => s.blockId)).toEqual(
+      todayApiRes.data.suggestedOrder.map((s) => s.blockId),
+    );
+    expect(todayCliJson.fitLine.fitLineIndex).toBe(todayApiRes.data.fitLine.fitLineIndex);
+
+    // Apply suggested order
+    const applyOrderRes = await api<{ blocks: Array<{ id: string }> }>(
+      'POST',
+      '/api/today/apply-suggested-order',
+      {
+        now: tuesdayMorning,
+        body: { blockIds: todayApiRes.data.suggestedOrder.map((s) => s.blockId) },
+      },
+    );
+    expect(applyOrderRes.status).toBe(200);
+    expect(applyOrderRes.data.blocks[0]?.id).toBe(priorityBlockId);
+
+    // Drop overflow Ops block with dropReason: 'no_room'
+    const dropRes = await api<{ block: { id: string; status: string; dropReason: string | null } }>(
+      'POST',
+      `/api/blocks/${opsBlockId}/drop`,
+      {
+        now: '2026-11-24T08:15:00.000Z',
+        body: { dropReason: 'no_room' },
+      },
+    );
+    expect(dropRes.status).toBe(200);
+    expect(dropRes.data.block.status).toBe('dropped');
+    expect(dropRes.data.block.dropReason).toBe('no_room');
+
+    // Focus and complete priority block via CLI `veyra done --sense moved --energy up --outcome "..."`
+    const startCli = await execCli(
+      ['start', priorityBlockId, '--json'],
+      cliEnv('2026-11-24T09:00:00.000Z'),
+    );
+    expect(startCli.exitCode).toBe(0);
+
+    const doneCli = await execCli(
+      [
+        'done',
+        '--sense',
+        'moved',
+        '--energy',
+        'up',
+        '--outcome',
+        'Sent signed ROI proposal to Acme VP',
+        '--json',
+      ],
+      cliEnv('2026-11-24T11:00:00.000Z'),
+    );
+    expect(doneCli.exitCode).toBe(0);
+    const doneJson = JSON.parse(doneCli.stdout) as {
+      block: { id: string; senseSignal: string; energySignal: string; outcomeNote: string };
+    };
+    expect(doneJson.block.senseSignal).toBe('moved');
+    expect(doneJson.block.energySignal).toBe('up');
+    expect(doneJson.block.outcomeNote).toBe('Sent signed ROI proposal to Acme VP');
+
+    // Verify dayLookBack is populated once upNext is clear and completedToday > 0
+    const todayEveningRes = await api<{
+      dayLookBack: {
+        date: string;
+        focusedMinutes: number;
+        completedCount: number;
+        movedGoalCount: number;
+        notFitBlocks: Array<{ id: string; destination: string }>;
+      } | null;
+    }>('GET', '/api/today', { now: '2026-11-24T17:30:00.000Z' });
+    expect(todayEveningRes.status).toBe(200);
+    expect(todayEveningRes.data.dayLookBack).not.toBeNull();
+    expect(todayEveningRes.data.dayLookBack?.date).toBe(tuesdayDate);
+    expect(todayEveningRes.data.dayLookBack?.focusedMinutes).toBe(120);
+    expect(todayEveningRes.data.dayLookBack?.completedCount).toBe(1);
+    expect(todayEveningRes.data.dayLookBack?.movedGoalCount).toBe(1);
+    expect(
+      todayEveningRes.data.dayLookBack?.notFitBlocks.some(
+        (b) => b.id === opsBlockId && b.destination === 'Dropped (no room)',
+      ),
+    ).toBe(true);
+
+    // -----------------------------------------------------------------------
+    // 4. Slice 4 — startHookListener(onReviewComplete), review.completed webhook,
+    //    update goal measure, POST /api/review/complete, `veyra review --week <N> --json`
+    // -----------------------------------------------------------------------
+    const captureScript = path.join(tmpDir, 'capture-review-hook.mjs');
+    fs.writeFileSync(
+      captureScript,
+      `
+import fs from 'node:fs';
+fs.writeFileSync(
+  ${JSON.stringify(hookCapturePath)},
+  JSON.stringify({
+    event: process.env.VEYRA_EVENT ?? null,
+    weekNumber: process.env.VEYRA_WEEK_NUMBER ?? null,
+    weekStart: process.env.VEYRA_WEEK_START ?? null,
+    ruleForNextWeek: process.env.VEYRA_RULE_FOR_NEXT_WEEK ?? null,
+  }),
+  'utf8',
+);
+`,
+      'utf8',
+    );
+
+    const hookListener = await startHookListener({
+      port: 0,
+      host: '127.0.0.1',
+      handlers: {
+        onReviewComplete: `"${process.execPath}" "${captureScript}"`,
+      },
+    });
+    cleanups.push(() => hookListener.stop());
+
+    const fridayNow = '2026-11-27T17:00:00.000Z';
+
+    // Subscribe server webhook to review.completed pointing at hookListener.url
+    const hookSettingsRes = await api('PATCH', '/api/settings', {
+      now: fridayNow,
+      body: {
+        webhookUrl: hookListener.url,
+        webhookEvents: ['review.completed'],
+      },
+    });
+    expect(hookSettingsRes.status).toBe(200);
+
+    // Update goal measure inline during review
+    const measurePatchRes = await api<{ goal: { measure: string | null } }>(
+      'PATCH',
+      `/api/goals/${companyGoal.id}`,
+      {
+        now: fridayNow,
+        body: {
+          measure: '2 / 3 closed',
+          measureWeekStartDate: week4Start,
+        },
+      },
+    );
+    expect(measurePatchRes.status).toBe(200);
+    expect(measurePatchRes.data.goal.measure).toBe('2 / 3 closed');
+
+    // Complete review via POST /api/review/complete
+    const nextRuleText = 'Protect 09:00-11:00 Mon-Thu for LioCare upsell proposals';
+    const completeReviewRes = await api<{
+      review: { completedAt: string | null; ruleForNextWeek: string };
+      snapshot: {
+        weekNumber: number;
+        weekStartDate: string;
+        ruleForNextWeek: string;
+        goalsMoved: Array<{ goalId: string; measure: string | null }>;
+      };
+    }>('POST', '/api/review/complete', {
+      now: fridayNow,
+      body: {
+        weekStartDate: week4Start,
+        ruleForNextWeek: nextRuleText,
+        previousRuleKept: 'yes',
+        projectWeeklyTimes: { [lioCare.id]: 300 },
+      },
+    });
+    expect(completeReviewRes.status).toBe(200);
+    expect(completeReviewRes.data.review.completedAt).toBeTruthy();
+    expect(completeReviewRes.data.snapshot.weekNumber).toBe(48);
+    expect(completeReviewRes.data.snapshot.ruleForNextWeek).toBe(nextRuleText);
+    expect(
+      completeReviewRes.data.snapshot.goalsMoved.find((g) => g.goalId === companyGoal.id)?.measure,
+    ).toBe('2 / 3 closed');
+
+    // Wait for hook handler to write captured env variables
+    await waitFor(() => fs.existsSync(hookCapturePath), 5000);
+    await hookListener.waitForIdle();
+
+    const capturedHook = JSON.parse(fs.readFileSync(hookCapturePath, 'utf8')) as {
+      event: string | null;
+      weekNumber: string | null;
+      weekStart: string | null;
+      ruleForNextWeek: string | null;
+    };
+    expect(capturedHook).toEqual({
+      event: 'review.completed',
+      weekNumber: '48',
+      weekStart: week4Start,
+      ruleForNextWeek: nextRuleText,
+    });
+
+    // Verify `veyra review --week 48 --json` returns the persisted snapshot matching `GET /api/review`
+    const reviewHttpRes = await api<{
+      weekNumber: number;
+      completedAt: string | null;
+      ruleForNextWeek: string | null;
+      snapshot: { weekNumber: number; ruleForNextWeek: string } | null;
+    }>('GET', `/api/review?week=48`, { now: fridayNow });
+    expect(reviewHttpRes.status).toBe(200);
+    expect(reviewHttpRes.data.completedAt).toBeTruthy();
+    expect(reviewHttpRes.data.snapshot).not.toBeNull();
+
+    const reviewCliRes = await execCli(['review', '--week', '48', '--json'], cliEnv(fridayNow));
+    expect(reviewCliRes.exitCode).toBe(0);
+    const reviewCliJson = JSON.parse(reviewCliRes.stdout) as {
+      weekNumber: number;
+      completedAt: string | null;
+      ruleForNextWeek: string | null;
+      snapshot: { weekNumber: number; ruleForNextWeek: string } | null;
+    };
+    expect(reviewCliJson.weekNumber).toBe(48);
+    expect(reviewCliJson.completedAt).toBe(reviewHttpRes.data.completedAt);
+    expect(reviewCliJson.ruleForNextWeek).toBe(nextRuleText);
+    expect(reviewCliJson.snapshot).toEqual(reviewHttpRes.data.snapshot);
   });
 });
