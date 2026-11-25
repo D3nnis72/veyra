@@ -2,7 +2,7 @@
 id: human.architecture
 type: view
 scope: human
-sourceVersion: 432c801
+sourceVersion: f62c1c9
 derivedFrom:
   - architecture.monorepo-boundaries
   - architecture.domain-invariants
@@ -24,7 +24,8 @@ Veyra is a five-package pnpm TypeScript monorepo with a strict single API bounda
 ## Key Invariants
 
 - Single active `FocusSession` at any time (`start`/`resume` auto-closes any open session).
-- Orthogonal `Goal`, `Project` (including non-deletable system `Other`), and `Ops` boolean flag.
+- Orthogonal `Goal` (`personal` or `company`, measured actuals only), `Project` (including non-deletable system `Other` and optional `weeklyTimeMinutes` intentions), and `Ops` boolean flag.
+- Deterministic capacity signals (`Room today`, `Fit Line`, suggested order, size drift, and 4-chapter review findings) computed in `@veyra/core` so UI and CLI see identical facts.
 - Timezone-anchored midnight rollover (`Settings.timezone`) with guilt-free recurring blocks that vanish untouched without carryover.
 
 For full canonical rules, see `architecture.monorepo-boundaries`, `architecture.domain-invariants`, `architecture.design-system-tokens`, and `interfaces.http-sse-api`.

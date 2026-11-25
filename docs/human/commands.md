@@ -2,7 +2,7 @@
 id: human.commands
 type: view
 scope: human
-sourceVersion: 432c801
+sourceVersion: f62c1c9
 derivedFrom:
   - interfaces.cli-and-agent-skill
   - operations.testing-and-verification
@@ -35,8 +35,8 @@ docker compose down
 
 Always pass `--json` in scripts and T3 Code sessions (full catalog in `interfaces.cli-and-agent-skill` and `skills/veyra/SKILL.md`):
 
-- Inspect: `veyra today --json`, `veyra plan --json`, `veyra review --json`, `veyra focus status --json`
-- Plan & prune: `veyra add "..." --project "..." --date YYYY-MM-DD --json`, `veyra move <id> --date YYYY-MM-DD --json`, `veyra park <id> --revisit next-week --json`
-- Focus & sessions: `veyra start <id> --json`, `veyra pause --note "..." --json`, `veyra done --energy up --outcome "..." --json`, `veyra session split <sessionId> --at <ISO> --gap 15 --json`
-- Notes & calendar: `veyra note add "..." --json`, `veyra events sync --json`, `veyra review set-rule "..." --json`
-- Event hooks & auto-summary: `veyra hook listen --port 4174 --auto-summary --summarizer-cmd "claude -p"`, `veyra hook summarize <blockId> --cmd "claude -p" --dry-run --json`
+- Inspect: `veyra today --json`, `veyra plan --json`, `veyra goals --json`, `veyra review --week 47 --json`, `veyra focus status --json`
+- Plan, goals & prune: `veyra add "..." --project "..." --size 1h --date YYYY-MM-DD --json`, `veyra project update "..." --weekly-time 4h --json`, `veyra goal create "..." --kind company --done-when "..." --json`, `veyra goal close "..." --status achieved --json`, `veyra park <id> --revisit next-week --json`, `veyra drop <id> --reason no_room --json`
+- Focus & sessions: `veyra start <id> --json`, `veyra pause --note "..." --json`, `veyra done --energy up --sense moved --outcome "..." --json`, `veyra session split <sessionId> --at <ISO> --gap 15 --json`
+- Notes, review & calendar: `veyra note add "..." --json`, `veyra events sync --json`, `veyra review complete --week 47 --rule "..." --kept yes --json`
+- Event hooks & auto-summary: `veyra hook listen --port 4174 --auto-summary --summarizer-cmd "claude -p" --on-review-complete "./sync.sh"`, `veyra hook summarize <blockId> --cmd "claude -p" --dry-run --json`

@@ -2,7 +2,7 @@
 id: human.environment
 type: view
 scope: human
-sourceVersion: 432c801
+sourceVersion: f62c1c9
 derivedFrom:
   - interfaces.http-sse-api
   - interfaces.cli-and-agent-skill

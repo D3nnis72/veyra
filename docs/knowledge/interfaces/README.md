@@ -3,7 +3,7 @@ id: interfaces
 type: overview
 scope: interfaces
 authority: canonical
-sourceVersion: 432c801
+sourceVersion: f62c1c9
 extends: knowledge.index
 includes:
   - interfaces.http-sse-api

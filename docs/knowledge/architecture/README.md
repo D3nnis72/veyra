@@ -3,7 +3,7 @@ id: architecture
 type: overview
 scope: architecture
 authority: canonical
-sourceVersion: 432c801
+sourceVersion: f62c1c9
 extends: knowledge.index
 includes:
   - architecture.monorepo-boundaries
@@ -40,7 +40,7 @@ Runtime settings divide cleanly by scope: workspace behavior lives in the single
 
 ## Reuse And Composition
 
-Shared UI primitives live in `packages/web/src/components/` (`Button`, `Pill`, `PropertyChip`, `ProjectBadge`, `LinkChip`, `DockedDrawer`, `ModalSheet`, `ToggleSwitch`). Compose drawers, modals, and views from these primitives instead of duplicating chip or surface markup.
+Shared UI primitives live in `packages/web/src/components/` (`Button`, `Pill`, `PropertyChip`, `ProjectBadge`, `GoalChip`, `ColorPicker`, `TellSomeonePopover`, `LinkChip`, `DockedDrawer`, `ModalSheet`, `ToggleSwitch`). Compose drawers, modals, and views from these primitives instead of duplicating chip or surface markup.
 
 ## Leaves
 

@@ -2,7 +2,7 @@
 id: human.configuration
 type: view
 scope: human
-sourceVersion: 432c801
+sourceVersion: f62c1c9
 derivedFrom:
   - architecture.monorepo-boundaries
   - features.desktop-shell-capture
@@ -19,7 +19,7 @@ Edited in Full-Page `Settings` (`⌘,`) or via `PATCH /api/settings`:
 
 - `timezone`: IANA timezone string anchoring midnight rollover and weekly boundaries.
 - `calendarSyncMode`: `outlook_cli`, `ics`, or `manual`, paired with `outlookCliCommand`, `icsFeedUrl`, `calendarSyncIntervalMin` (default `15`), and `skipDeclinedAndAllDay` (default `true`).
-- `webhookUrl` and `webhookEvents`: target endpoint and enabled lifecycle hooks (`focus.started`, `focus.ended`, `block.completed`).
+- `webhookUrl` and `webhookEvents`: target endpoint and enabled lifecycle hooks (`focus.started`, `focus.ended`, `block.completed`, `review.completed`).
 - `globalCaptureShortcut` (default `CommandOrControl+Shift+P`) and `runInMenuBar` (default `true`): synced to Electron's local preferences on save.
 - `hotkeys`: map of hotkey id to Electron accelerator (for example `{"quickFocus": "Alt+Shift+F"}`). Only rebound keys are stored, everything missing uses its default. Ids: `quickFocus`, `globalCommandPalette`, `commandPalette`, `newBlock`, `saveDrawer`, `openSettings`, `cycleProject`, `toggleOps`, `pauseFocus`, `completeBlock`, `toggleNotes`. Quick Capture stays in `globalCaptureShortcut`. Set them in `Settings → Server & CLI → Keyboard Shortcuts`.
 

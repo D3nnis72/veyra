@@ -2,7 +2,7 @@
 id: human.troubleshooting
 type: view
 scope: human
-sourceVersion: 432c801
+sourceVersion: f62c1c9
 derivedFrom:
   - features.desktop-shell-capture
   - interfaces.calendar-sync-webhooks

@@ -2,7 +2,7 @@
 id: human.services
 type: view
 scope: human
-sourceVersion: 432c801
+sourceVersion: f62c1c9
 derivedFrom:
   - interfaces.http-sse-api
   - interfaces.calendar-sync-webhooks
@@ -22,7 +22,7 @@ Veyra has no external database server, queue, or cache dependency in MVP. Everyt
 ## In-Process Background Integrations
 
 - **Calendar Sync Runner:** Polls the configured `outlook_cli` or `ics` adapter every `calendarSyncIntervalMin` minutes (default `15`) across `today - 7d` to `today + 28d`, plus on-demand `Sync Now` / `veyra events sync`. See `interfaces.calendar-sync-webhooks`.
-- **Webhook Dispatcher:** Sends fire-and-forget JSON `POST` events (`focus.started`, `focus.ended`, `block.completed`) when `webhookUrl` is configured.
+- **Webhook Dispatcher:** Sends fire-and-forget JSON `POST` events (`focus.started`, `focus.ended`, `block.completed`, `review.completed`) when `webhookUrl` is configured.
 
 ## Optional Local Auto-Summary Listener (macOS `launchd`)
 

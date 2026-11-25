@@ -3,7 +3,7 @@ id: architecture.monorepo-boundaries
 type: architecture
 scope: architecture
 authority: canonical
-sourceVersion: 5adbd95
+sourceVersion: 89ac41a
 extends: architecture
 groundedIn:
   - pnpm-workspace.yaml

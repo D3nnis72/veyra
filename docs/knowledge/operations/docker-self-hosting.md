@@ -3,7 +3,7 @@ id: operations.docker-self-hosting
 type: procedure
 scope: operations
 authority: canonical
-sourceVersion: 6f4ad5c
+sourceVersion: 48164b1
 extends: operations
 dependsOn:
   - interfaces.http-sse-api

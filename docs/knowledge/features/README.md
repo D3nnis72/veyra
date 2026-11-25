@@ -3,7 +3,7 @@ id: features
 type: overview
 scope: features
 authority: canonical
-sourceVersion: 432c801
+sourceVersion: f62c1c9
 extends: knowledge.index
 includes:
   - features.cockpit-views
@@ -20,12 +20,12 @@ User-facing cockpit workflows, native macOS desktop shell capabilities, and the 
 
 ## Cockpit Views And Flows
 
-Six core views (`Today`, `Focus`, `Plan`, `Calendar`, `Projects`, `Review`), `Onboarding`, Full-Page `Settings`, docked drawers, and command palette. See → `features.cockpit-views`
+Seven core views (`Today`, `Focus`, `Plan`, `Calendar`, `Projects`, `Goals`, `Review`), `Onboarding`, 3-tab Full-Page `Settings`, docked drawers, capacity fit line, and command palette. See → `features.cockpit-views`
 
 ## Desktop Shell And Global Capture
 
-Electron macOS shell, embedded vs. remote server switching, menu bar tray persistence, and system-wide `⌘⇧P` floating quick capture. See → `features.desktop-shell-capture`
+Electron macOS shell, embedded vs. remote server switching, menu bar tray persistence, rebindable global shortcuts, and floating quick capture. See → `features.desktop-shell-capture`
 
 ## Review And Rollover
 
-Weekly review KPIs, `Ops` automation radar, carryover and `Later` check-ins, Weekly Rule continuity, and midnight rollover triggers. See → `features.review-and-rollover`
+Four-chapter weekly review, project weekly time variance, learned planning findings, `Ops` automation radar, carryover and `Later` check-ins, `review.completed` auto-sync, and midnight rollover triggers. See → `features.review-and-rollover`

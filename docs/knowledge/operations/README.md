@@ -3,7 +3,7 @@ id: operations
 type: overview
 scope: operations
 authority: canonical
-sourceVersion: 432c801
+sourceVersion: f62c1c9
 extends: knowledge.index
 includes:
   - operations.docker-self-hosting

@@ -26,7 +26,7 @@
       "taskTypes": ["SQLite schema", "domain invariants", "core services"],
       "knowledge": ["architecture.domain-invariants"],
       "codeAreas": ["packages/core/src/**"],
-      "changeSignals": ["entities", "focus session invariant", "bucket transitions", "recurrence", "fractional ordering"],
+      "changeSignals": ["entities", "goal lifecycle", "project weekly time", "capacity room", "fit line", "suggested order", "focus session invariant", "bucket transitions", "recurrence", "fractional ordering"],
       "validation": ["pnpm --filter @veyra/core test", "pnpm build"],
       "owner": "veyra-core"
     },
@@ -36,7 +36,7 @@
       "taskTypes": ["design tokens", "shared UI primitives", "styling"],
       "knowledge": ["architecture.design-system-tokens"],
       "codeAreas": ["packages/web/src/styles/**", "packages/web/src/components/**"],
-      "changeSignals": ["neutral dark palette", "card padding", "pills", "drawers", "modals", "calendar visual styling"],
+      "changeSignals": ["neutral dark palette", "card padding", "pills", "GoalChip", "ColorPicker", "TellSomeonePopover", "drawers", "modals", "calendar visual styling"],
       "validation": ["pnpm --filter @veyra/web typecheck", "pnpm --filter @veyra/web test"],
       "owner": "veyra-ui"
     }

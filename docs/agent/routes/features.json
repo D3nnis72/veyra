@@ -8,7 +8,7 @@
       "taskTypes": ["web cockpit views", "drawers and modals", "keyboard shortcuts", "settings UI"],
       "knowledge": ["features", "features.cockpit-views", "architecture.design-system-tokens"],
       "codeAreas": ["packages/web/src/app/**", "packages/web/src/views/**"],
-      "changeSignals": ["Today view", "Focus stopwatch", "Plan drag-and-drop", "Calendar grid", "Projects portfolio", "Settings tabs", "Onboarding"],
+      "changeSignals": ["Today view", "fit line", "Day look back", "Focus stopwatch", "Plan drag-and-drop", "Week Time Strip", "Calendar grid", "Projects portfolio", "Goals view", "3-tab Settings", "rebindable hotkeys", "Onboarding"],
       "validation": ["pnpm --filter @veyra/web test", "pnpm --filter @veyra/web build"],
       "owner": "veyra-ui"
     },
@@ -30,9 +30,10 @@
       "codeAreas": [
         "packages/core/src/services/rollover.ts",
         "packages/core/src/services/notes-review.ts",
+        "packages/core/src/services/capacity.ts",
         "packages/web/src/views/ReviewView.tsx"
       ],
-      "changeSignals": ["Weekly Rule", "KPI calculation", "Ops radar", "carryover threshold", "revisit check-in", "rollover trigger"],
+      "changeSignals": ["4-chapter review", "Weekly Rule", "KPI calculation", "project weekly time buckets", "planning findings", "Ops radar", "review.completed snapshot", "carryover threshold", "revisit check-in", "rollover trigger"],
       "validation": ["pnpm --filter @veyra/core test", "pnpm test:e2e"],
       "owner": "veyra-core"
     }

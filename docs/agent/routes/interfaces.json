@@ -32,7 +32,7 @@
       "taskTypes": ["calendar sync adapters", "ICS feed", "Outlook CLI", "outgoing webhooks"],
       "knowledge": ["interfaces.calendar-sync-webhooks", "architecture.domain-invariants"],
       "codeAreas": ["packages/server/src/sync/**", "packages/server/src/webhooks.ts"],
-      "changeSignals": ["OutlookCliAdapter", "IcsFeedAdapter", "RRULE expansion", "sync window", "webhook delivery"],
+      "changeSignals": ["OutlookCliAdapter", "IcsFeedAdapter", "RRULE expansion", "sync window", "webhook delivery", "review.completed webhook"],
       "validation": ["pnpm --filter @veyra/server test"],
       "owner": "veyra-server"
     }

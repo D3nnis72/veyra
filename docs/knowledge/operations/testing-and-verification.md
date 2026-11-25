@@ -3,7 +3,7 @@ id: operations.testing-and-verification
 type: procedure
 scope: operations
 authority: canonical
-sourceVersion: 432c801
+sourceVersion: f62c1c9
 extends: operations
 dependsOn:
   - architecture.monorepo-boundaries
@@ -14,10 +14,16 @@ groundedIn:
   - packages/core/tests/blocks-rollover.test.ts
   - packages/core/tests/focus-sessions.test.ts
   - packages/core/tests/review-projects.test.ts
+  - packages/core/tests/capacity.test.ts
   - packages/server/tests/api.test.ts
   - packages/server/tests/sync-webhooks.test.ts
   - packages/cli/tests/cli.test.ts
   - packages/web/tests/app-flows.test.tsx
+  - packages/web/tests/goals-views.test.tsx
+  - packages/web/tests/project-weekly-time.test.tsx
+  - packages/web/tests/today-prioritization-focus.test.tsx
+  - packages/web/tests/review-rework.test.tsx
+  - packages/web/tests/hotkeys.test.tsx
   - packages/desktop/tests/client-config.test.ts
   - tests/e2e/daily-driver.test.ts
 updateWhen:
@@ -47,7 +53,7 @@ pnpm test
 pnpm test:e2e
 ```
 
-`tests/e2e/daily-driver.test.ts` boots a real `@veyra/server` with `enableTestClock: true`, exercises onboarding, planning, focus sessions, multi-day session edits, ICS and Outlook CLI sync adapters, live SSE events, `veyra` CLI subprocess invocations, midnight rollover + guilt-free recurrence, and Weekly Review KPIs end to end.
+`tests/e2e/daily-driver.test.ts` boots a real `@veyra/server` with `enableTestClock: true`, exercises onboarding, personal/company goals + measure history + closing lifecycle, project weekly time + 8-week history, capacity prioritization (`Room today`, suggested order, fit line, sense signals, drop reasons), focus sessions + multi-day edits, ICS and Outlook CLI sync adapters, live SSE events, `veyra` CLI subprocess invocations, midnight rollover + guilt-free recurrence, and the 4-chapter Weekly Review with `review.completed` snapshot and webhook delivery end to end.
 
 ## 3. Verify Desktop Native SQLite And Launch
 

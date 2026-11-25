@@ -2,7 +2,7 @@
 id: human.overview
 type: view
 scope: human
-sourceVersion: 432c801
+sourceVersion: f62c1c9
 derivedFrom:
   - architecture.monorepo-boundaries
   - features.cockpit-views
@@ -10,7 +10,7 @@ derivedFrom:
 ---
 # Veyra Overview
 
-Veyra is a calm visual focus cockpit and self-hostable TypeScript server designed for modern work across parallel projects and AI agents. T3 Code acts as the conversational thinking interface via the `veyra` CLI, while the Veyra desktop and web app keeps today's work focused, measures real focus time with a count-up stopwatch, aligns work to overarching `Goals`, and surfaces recurring `Ops` drag in Weekly `Review`.
+Veyra is a calm visual focus cockpit and self-hostable TypeScript server designed for modern work across parallel projects and AI agents. T3 Code acts as the conversational thinking interface via the `veyra` CLI, while the Veyra desktop and web app keeps `Today` honest about daily capacity, measures real focus time with a count-up stopwatch, aligns work to Personal and Company `Goals`, tracks project weekly time intentions, and guides a four-chapter Weekly `Review` that auto-syncs conclusions back to T3 Code.
 
 ## Entry Points
 
