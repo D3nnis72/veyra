@@ -358,6 +358,7 @@ export function TodayView() {
 
   const drawerSelectedBlockId = activeDrawer?.kind === 'block' ? activeDrawer.blockId : null;
   const drawerSelectedEventId = activeDrawer?.kind === 'meeting' ? activeDrawer.eventId : null;
+  const keyboardSelectedBlockId = !drawerSelectedBlockId ? (upNext[selectedIndex]?.id ?? null) : null;
 
   return (
     <div className="min-h-full flex flex-col">
@@ -630,8 +631,7 @@ export function TodayView() {
                 const suggested = suggestedOrderByBlockId.get(block.id);
                 const isRunning = activeBlockId === block.id;
                 const isSelected =
-                  drawerSelectedBlockId === block.id ||
-                  (!drawerSelectedBlockId && selectedIndex === index);
+                  drawerSelectedBlockId === block.id || keyboardSelectedBlockId === block.id;
 
                 return (
                   <TodayBlockCard
@@ -692,6 +692,7 @@ export function TodayView() {
                 const suggested = suggestedOrderByBlockId.get(block.id);
                 const effectiveSize = suggested?.effectiveSizeMinutes ?? block.sizeMinutes ?? 60;
                 const isDrawerOpen = drawerSelectedBlockId === block.id;
+                const isKeyboardSelected = keyboardSelectedBlockId === block.id;
                 const showTellSomeone = canTellSomeone(block);
                 const isPopoverOpen = openTellSomeoneBlockId === block.id;
 
@@ -713,7 +714,9 @@ export function TodayView() {
                         'rounded-[12px] bg-[#171717] border p-[18px] space-y-3 transition-colors cursor-pointer focus:outline-none focus-visible:border-[#5566F2]',
                         isDrawerOpen
                           ? 'border-[#5566F2]'
-                          : 'border-[#2A2A2A] hover:border-[#3C3C3C]',
+                          : isKeyboardSelected
+                            ? 'border-[#5566F2]/70'
+                            : 'border-[#2A2A2A] hover:border-[#3C3C3C]',
                       ].join(' ')}
                     >
                       <div className="flex items-start justify-between gap-3">
@@ -800,6 +803,7 @@ export function TodayView() {
                             variant={isPopoverOpen ? 'accent-soft' : 'secondary'}
                             size="xs"
                             leftIcon={<MessageSquare size={11} />}
+                            onMouseDown={(e) => e.stopPropagation()}
                             onClick={() =>
                               setOpenTellSomeoneBlockId((current) =>
                                 current === block.id ? null : block.id,

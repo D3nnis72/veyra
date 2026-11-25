@@ -249,46 +249,48 @@ export function ProjectDetailView({ projectId }: { projectId: string }) {
             </div>
 
             <div className="flex-1 min-w-0 flex flex-col justify-end">
-              <div className="relative h-28 flex items-end gap-2 pt-3">
-                {intentPct !== null && project.weeklyTimeMinutes !== null ? (
-                  <div
-                    className="pointer-events-none absolute inset-x-0 border-t border-dashed border-[#525252] z-10"
-                    style={{ bottom: `${intentPct}%` }}
-                  >
-                    <span className="absolute right-0 -top-2.5 px-1 bg-[#1C1C1C] text-[10.5px] font-medium text-[#9A9A9A] tabular-nums">
-                      {formatDuration(project.weeklyTimeMinutes)}
-                    </span>
-                  </div>
-                ) : null}
-
-                {history.map((point, idx) => {
-                  const isCurrentWeek = idx === history.length - 1;
-                  const heightPct =
-                    point.focusMinutes > 0
-                      ? Math.max(5, Math.round((point.focusMinutes / maxMinutes) * 100))
-                      : 0;
-                  const weekLabel = getIsoWeekLabel(point.weekStartDate);
-                  return (
+              <div className="pt-3">
+                <div className="relative h-28 flex items-end gap-2">
+                  {intentPct !== null && project.weeklyTimeMinutes !== null ? (
                     <div
-                      key={point.weekStartDate}
-                      className="flex-1 h-full flex items-end justify-center"
-                      title={`${weekLabel}: ${formatDuration(point.focusMinutes)}`}
+                      className="pointer-events-none absolute inset-x-0 border-t border-dashed border-[#525252] z-10"
+                      style={{ bottom: `${intentPct}%` }}
                     >
-                      <div
-                        className="w-full max-w-[28px] rounded-t-[4px] transition-all"
-                        style={{
-                          height: heightPct > 0 ? `${heightPct}%` : '2px',
-                          backgroundColor:
-                            heightPct === 0
-                              ? '#2A2A2A'
-                              : isCurrentWeek
-                                ? '#6B7CFF'
-                                : '#525252',
-                        }}
-                      />
+                      <span className="absolute right-0 -top-2.5 px-1 bg-[#1C1C1C] text-[10.5px] font-medium text-[#9A9A9A] tabular-nums">
+                        {formatDuration(project.weeklyTimeMinutes)}
+                      </span>
                     </div>
-                  );
-                })}
+                  ) : null}
+
+                  {history.map((point, idx) => {
+                    const isCurrentWeek = idx === history.length - 1;
+                    const heightPct =
+                      point.focusMinutes > 0
+                        ? Math.max(5, Math.round((point.focusMinutes / maxMinutes) * 100))
+                        : 0;
+                    const weekLabel = getIsoWeekLabel(point.weekStartDate);
+                    return (
+                      <div
+                        key={point.weekStartDate}
+                        className="flex-1 h-full flex items-end justify-center"
+                        title={`${weekLabel}: ${formatDuration(point.focusMinutes)}`}
+                      >
+                        <div
+                          className="w-full max-w-[28px] rounded-t-[4px] transition-all"
+                          style={{
+                            height: heightPct > 0 ? `${heightPct}%` : '2px',
+                            backgroundColor:
+                              heightPct === 0
+                                ? '#2A2A2A'
+                                : isCurrentWeek
+                                  ? '#6B7CFF'
+                                  : '#525252',
+                          }}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
 
               <div className="flex items-center gap-2 mt-2 border-t border-[#2A2A2A] pt-1.5">

@@ -76,7 +76,37 @@ function getIsoWeekNumber(dateStr: string): number {
   const dayNum = dt.getUTCDay() || 7;
   dt.setUTCDate(dt.getUTCDate() + 4 - dayNum);
   const yearStart = new Date(Date.UTC(dt.getUTCFullYear(), 0, 1));
-  return Math.ceil(((dt.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7);
+  const daysSinceYearStart = Math.floor((dt.getTime() - yearStart.getTime()) / 86_400_000) + 1;
+  return Math.ceil(daysSinceYearStart / 7);
+}
+
+function getNextIsoWeekNumber(weekStartDate: string): number {
+  return getIsoWeekNumber(addDaysDateString(weekStartDate, 7));
+}
+
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fallback below
+  }
+  try {
+    const el = document.createElement('textarea');
+    el.value = text;
+    el.setAttribute('readonly', 'true');
+    el.style.position = 'fixed';
+    el.style.opacity = '0';
+    document.body.appendChild(el);
+    el.select();
+    const copied = document.execCommand('copy');
+    document.body.removeChild(el);
+    return copied;
+  } catch {
+    return false;
+  }
 }
 
 function formatSignedDuration(minutes: number | null): string {
@@ -142,7 +172,7 @@ function buildSnapshotMarkdown(snapshot: WeeklyReviewSnapshot): string {
     }
   }
   lines.push('');
-  lines.push(`## Week ${snapshot.weekNumber + 1} commitments`);
+  lines.push(`## Week ${getNextIsoWeekNumber(snapshot.weekStartDate)} commitments`);
   lines.push(`- Rule for next week: ${snapshot.ruleForNextWeek || 'None set'}`);
   for (const p of snapshot.projectWeeklyTimes) {
     const planLabel = p.weeklyTimeMinutes !== null ? formatDuration(p.weeklyTimeMinutes) : 'No plan';
@@ -254,6 +284,10 @@ export function ReviewView() {
   const [copiedMarkdown, setCopiedMarkdown] = useState(false);
 
   const ruleInputRef = useRef<HTMLInputElement | null>(null);
+  const lastMeasureWeekRef = useRef<string | null>(null);
+  const dirtyMeasuresRef = useRef<Set<string>>(new Set());
+  const lastProjectTimeWeekRef = useRef<string | null>(null);
+  const dirtyProjectTimesRef = useRef<Set<string>>(new Set());
 
   const reviewQuery = useReviewQuery(weekStart);
   const data = reviewQuery.data;
@@ -262,12 +296,19 @@ export function ReviewView() {
   const effectiveWeekEnd = data?.weekEndDate ?? addDaysDateString(weekStart, 6);
   const effectiveWeekNumber = data?.weekNumber ?? getIsoWeekNumber(effectiveWeekStart);
   const nextMonday = addDaysDateString(effectiveWeekStart, 7);
+  const nextWeekNumber = getIsoWeekNumber(nextMonday);
 
   useEffect(() => {
     setRuleDraft(data?.ruleForNextWeek ?? '');
+  }, [data?.weekStartDate, data?.ruleForNextWeek]);
+
+  useEffect(() => {
     setLocalRuleKept(data?.previousRuleKept ?? null);
+  }, [data?.weekStartDate, data?.previousRuleKept]);
+
+  useEffect(() => {
     setRuleSaved(false);
-  }, [data?.weekStartDate, data?.ruleForNextWeek, data?.previousRuleKept]);
+  }, [data?.weekStartDate]);
 
   useEffect(() => {
     setActiveChapter(1);
@@ -279,22 +320,55 @@ export function ReviewView() {
 
   useEffect(() => {
     if (!data?.goalReviews) return;
-    const next: Record<string, string> = {};
-    for (const g of data.goalReviews) {
-      next[g.goalId] = g.measure ?? '';
+    const weekChanged = lastMeasureWeekRef.current !== data.weekStartDate;
+    if (weekChanged) {
+      lastMeasureWeekRef.current = data.weekStartDate;
+      dirtyMeasuresRef.current.clear();
+      const next: Record<string, string> = {};
+      for (const g of data.goalReviews) {
+        next[g.goalId] = g.measure ?? '';
+      }
+      setMeasureDrafts(next);
+      return;
     }
-    setMeasureDrafts(next);
+    setMeasureDrafts((prev) => {
+      const next: Record<string, string> = {};
+      for (const g of data.goalReviews) {
+        next[g.goalId] =
+          dirtyMeasuresRef.current.has(g.goalId) && prev[g.goalId] !== undefined
+            ? prev[g.goalId]
+            : (g.measure ?? '');
+      }
+      return next;
+    });
   }, [data?.weekStartDate, data?.goalReviews]);
 
   useEffect(() => {
     const sourceProjects = data?.projects ?? shellProjects;
-    const next: Record<string, string> = {};
-    for (const p of sourceProjects) {
-      next[p.id] = formatHoursInputValue(p.weeklyTimeMinutes);
+    const currentWeekKey = data?.weekStartDate ?? weekStart;
+    const weekChanged = lastProjectTimeWeekRef.current !== currentWeekKey;
+    if (weekChanged) {
+      lastProjectTimeWeekRef.current = currentWeekKey;
+      dirtyProjectTimesRef.current.clear();
+      const next: Record<string, string> = {};
+      for (const p of sourceProjects) {
+        next[p.id] = formatHoursInputValue(p.weeklyTimeMinutes);
+      }
+      setProjectTimeDrafts(next);
+      setModifiedProjectTimes({});
+      return;
     }
-    setProjectTimeDrafts(next);
-    setModifiedProjectTimes({});
-  }, [data?.weekStartDate, data?.projects, shellProjects]);
+    setProjectTimeDrafts((prev) => {
+      const next: Record<string, string> = {};
+      for (const p of sourceProjects) {
+        next[p.id] =
+          dirtyProjectTimesRef.current.has(p.id) && prev[p.id] !== undefined
+            ? prev[p.id]
+            : formatHoursInputValue(p.weeklyTimeMinutes);
+      }
+      return next;
+    });
+  }, [data?.weekStartDate, weekStart, data?.projects, shellProjects]);
 
   // IntersectionObserver for sticky Chapter Bar (never locks navigation order)
   useEffect(() => {
@@ -371,11 +445,13 @@ export function ReviewView() {
           ? { previousRuleKept: vars.previousRuleKept }
           : {}),
       }),
-    onSuccess: () => {
-      setRuleSaved(true);
+    onSuccess: (_res, variables) => {
+      if (variables.ruleForNextWeek !== undefined) {
+        setRuleSaved(true);
+        window.setTimeout(() => setRuleSaved(false), 1800);
+      }
       void queryClient.invalidateQueries({ queryKey: ['review'] });
       void queryClient.invalidateQueries({ queryKey: ['today'] });
-      window.setTimeout(() => setRuleSaved(false), 1800);
     },
   });
 
@@ -422,6 +498,7 @@ export function ReviewView() {
     }) => apiClient.updateGoal(vars.goalId, vars.input),
     onSuccess: (_res, vars) => {
       if (vars.input.measure !== undefined) {
+        dirtyMeasuresRef.current.delete(vars.goalId);
         setSavedMeasures((prev) => ({ ...prev, [vars.goalId]: true }));
         window.setTimeout(() => {
           setSavedMeasures((prev) => ({ ...prev, [vars.goalId]: false }));
@@ -441,6 +518,7 @@ export function ReviewView() {
     mutationFn: (vars: { projectId: string; weeklyTimeMinutes: number | null }) =>
       apiClient.updateProject(vars.projectId, { weeklyTimeMinutes: vars.weeklyTimeMinutes }),
     onSuccess: (_res, vars) => {
+      dirtyProjectTimesRef.current.delete(vars.projectId);
       setModifiedProjectTimes((prev) => ({
         ...prev,
         [vars.projectId]: vars.weeklyTimeMinutes,
@@ -492,7 +570,6 @@ export function ReviewView() {
     const nextValue = localRuleKept === choice ? null : choice;
     setLocalRuleKept(nextValue);
     saveRuleMutation.mutate({
-      ruleForNextWeek: ruleDraft,
       previousRuleKept: nextValue,
     });
   };
@@ -513,7 +590,10 @@ export function ReviewView() {
   const handleCommitProjectTime = (project: ProjectWithStats) => {
     const raw = projectTimeDrafts[project.id] ?? '';
     const nextMinutes = parseHoursToMinutes(raw);
-    if (nextMinutes === project.weeklyTimeMinutes) return;
+    if (nextMinutes === project.weeklyTimeMinutes) {
+      dirtyProjectTimesRef.current.delete(project.id);
+      return;
+    }
     setProjectTimeDrafts((prev) => ({
       ...prev,
       [project.id]: formatHoursInputValue(nextMinutes),
@@ -525,12 +605,10 @@ export function ReviewView() {
   };
 
   const handleCopyMarkdown = async (snapshot: WeeklyReviewSnapshot) => {
-    try {
-      await navigator.clipboard.writeText(buildSnapshotMarkdown(snapshot));
+    const ok = await copyText(buildSnapshotMarkdown(snapshot));
+    if (ok) {
       setCopiedMarkdown(true);
       window.setTimeout(() => setCopiedMarkdown(false), 1800);
-    } catch {
-      // Clipboard unavailable in headless environments
     }
   };
 
@@ -923,7 +1001,7 @@ export function ReviewView() {
                       <div className="col-span-2 sm:col-span-1 text-[12.5px] font-medium text-[#EDEDED]">
                         {day.weekday}
                       </div>
-                      <div className="col-span-6 sm:col-span-7 relative h-5 rounded-[5px] bg-[#171717] overflow-hidden">
+                      <div className="col-span-6 sm:col-span-7 relative h-5 rounded-[6px] bg-[#171717] overflow-hidden">
                         {/* Shaded planned bar */}
                         {day.plannedMinutes > 0 ? (
                           <div
@@ -1130,12 +1208,13 @@ export function ReviewView() {
                             aria-label={`Where are you now for ${goal.name}`}
                             type="text"
                             value={draftMeasure}
-                            onChange={(e) =>
+                            onChange={(e) => {
+                              dirtyMeasuresRef.current.add(goal.goalId);
                               setMeasureDrafts((prev) => ({
                                 ...prev,
                                 [goal.goalId]: e.target.value,
-                              }))
-                            }
+                              }));
+                            }}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter' && measureChanged) {
                                 e.preventDefault();
@@ -1734,7 +1813,7 @@ export function ReviewView() {
               >
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#6E6E6E]">
-                    Weekly time for Week {effectiveWeekNumber + 1}
+                    Weekly time for Week {nextWeekNumber}
                   </h3>
                   <span className="text-[11.5px] text-[#9A9A9A] tabular-nums">
                     {formatDuration(totalNextWeekPlannedMinutes)} planned /{' '}
@@ -1774,12 +1853,13 @@ export function ReviewView() {
                               max="80"
                               aria-label={`Weekly time hours for ${project.name}`}
                               value={draftVal}
-                              onChange={(e) =>
+                              onChange={(e) => {
+                                dirtyProjectTimesRef.current.add(project.id);
                                 setProjectTimeDrafts((prev) => ({
                                   ...prev,
                                   [project.id]: e.target.value,
-                                }))
-                              }
+                                }));
+                              }}
                               onBlur={() => handleCommitProjectTime(project)}
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') {
@@ -2446,7 +2526,7 @@ function CompletedReviewView({
         <div className="space-y-2.5">
           <h3 className="inline-flex items-center gap-2 text-[13.5px] font-semibold text-[#EDEDED]">
             <CalendarCheck2 size={14} className="text-[#AEB8FF] shrink-0" />
-            <span>Week {snapshot.weekNumber + 1} commitments</span>
+            <span>Week {getNextIsoWeekNumber(snapshot.weekStartDate)} commitments</span>
           </h3>
 
           <div className="text-[13px] text-[#EDEDED]">

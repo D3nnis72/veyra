@@ -611,6 +611,59 @@ describe('TodayView prioritization, capacity, exits, Tell someone, Drop reason &
     const t3Prompt = writeText.mock.calls[1][0] as string;
     expect(t3Prompt).toContain('Send Q4 rollout plan to Alex');
     expect(t3Prompt).toContain("Quick heads-up: I'll send the Q4 rollout plan tomorrow at 9.");
+
+    // Second click on "Tell someone" toggles the popover closed cleanly
+    await user.click(within(blockCRow).getByRole('button', { name: 'Tell someone' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: /Tell someone/i })).not.toBeInTheDocument();
+    });
+  });
+
+  it('keyboard ArrowDown selection highlights overflow rows in Probably not today', async () => {
+    const user = userEvent.setup();
+    const qc = createTestQueryClient();
+    const payload = createTodayPayload();
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('/api/today')) return jsonResponse(payload);
+        if (url.includes('/api/calendar')) {
+          return jsonResponse({
+            startDate: '2026-11-25',
+            endDate: '2026-11-25',
+            timezone: 'Europe/Berlin',
+            sessions: [],
+            plannedBlocks: [],
+            events: [],
+            projects: TEST_PROJECTS,
+            goals: [TEST_GOAL],
+          });
+        }
+        return jsonResponse({});
+      }),
+    );
+
+    render(
+      <QueryClientProvider client={qc}>
+        <AppShellContext.Provider value={createMockShell()}>
+          <TodayView />
+        </AppShellContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    const overflowRegion = await screen.findByRole('region', { name: /Probably not today/i });
+    const blockCRow = within(overflowRegion)
+      .getByText('Send Q4 rollout plan to Alex')
+      .closest('[data-overflow-row]') as HTMLElement;
+    expect(blockCRow.className).not.toContain('border-[#5566F2]/70');
+
+    // Move selection past the 2 fitting blocks onto the first overflow row (index 2 -> BLOCK_C)
+    await user.keyboard('{ArrowDown}{ArrowDown}');
+    await waitFor(() => {
+      expect(blockCRow.className).toContain('border-[#5566F2]/70');
+    });
   });
 
   it('TodayView renders Day look back card when dayLookBack is returned', async () => {

@@ -299,7 +299,7 @@ export function PlanView() {
               return (
                 <div
                   key={item.projectId}
-                  className="inline-flex items-center gap-2 h-7 px-2.5 rounded-[7px] bg-[#1C1C1C] border border-[#2A2A2A] shrink-0"
+                  className="inline-flex items-center gap-2 h-7 px-2.5 rounded-[8px] bg-[#1C1C1C] border border-[#2A2A2A] shrink-0"
                 >
                   <ProjectBadge
                     name={project.name}
@@ -669,7 +669,7 @@ function PlanCardContent({
           {effectiveSizeMinutes !== null ? (
             <span
               title={block.sizeMinutes !== null ? 'Block size' : 'Learned block size'}
-              className="inline-flex items-center h-5 px-1.5 rounded-[5px] bg-[#242424] border border-[#2E2E2E] text-[11px] font-medium text-[#9A9A9A] tabular-nums"
+              className="inline-flex items-center h-5 px-1.5 rounded-[6px] bg-[#242424] border border-[#2E2E2E] text-[11px] font-medium text-[#9A9A9A] tabular-nums"
             >
               {formatDuration(effectiveSizeMinutes)}
             </span>

@@ -1543,7 +1543,42 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
     }
 
     const summary = getWeeklyReview(db, weekStart, now);
-    const projects = listProjects(db, now, { includeArchived: false });
+
+    const referencedProjectIds = new Set<string>();
+    for (const bucketItems of [
+      summary.projectBuckets.moreThanPlanned,
+      summary.projectBuckets.lessThanPlanned,
+      summary.projectBuckets.wantedUntouched,
+      summary.projectBuckets.timeWithoutPlan,
+      summary.projectBuckets.onTrack,
+    ]) {
+      for (const item of bucketItems) {
+        referencedProjectIds.add(item.projectId);
+      }
+    }
+    for (const item of summary.progressFeed) {
+      if (item.projectId) referencedProjectIds.add(item.projectId);
+    }
+    for (const blk of summary.worthSecondLook) {
+      referencedProjectIds.add(blk.projectId);
+    }
+    for (const item of summary.opsRadar.items) {
+      referencedProjectIds.add(item.projectId);
+    }
+    for (const note of summary.dailyNotes) {
+      if (note.projectId) referencedProjectIds.add(note.projectId);
+    }
+    for (const blk of summary.chronicCarryovers) {
+      referencedProjectIds.add(blk.projectId);
+    }
+    for (const blk of summary.pastRevisitLater) {
+      referencedProjectIds.add(blk.projectId);
+    }
+
+    const allProjects = listProjects(db, now, { includeArchived: true });
+    const projects = allProjects.filter(
+      (p) => p.status !== 'archived' || referencedProjectIds.has(p.id),
+    );
 
     const referencedGoalIds = new Set<string>();
     for (const item of summary.progressFeed) {

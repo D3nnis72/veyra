@@ -1013,6 +1013,188 @@ describe('4-chapter ReviewView & Settings review.completed toggle', () => {
     expect(await screen.findByText(/1 · What happened\?/i)).toBeInTheDocument();
   });
 
+  it('Kept it? toggle (Yes / Partly / No) omits ruleForNextWeek and does not show "Saved for next week"', async () => {
+    const user = userEvent.setup();
+    const qc = createTestQueryClient();
+    const rulePayloads: Array<Record<string, unknown>> = [];
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        const method = (init?.method ?? 'GET').toUpperCase();
+        if (url.includes('/api/review/rule') && method === 'PUT') {
+          const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+          rulePayloads.push(body);
+          return jsonResponse({
+            review: {
+              id: 'rev-1',
+              weekStartDate: '2026-11-23',
+              ruleForNextWeek: 'Existing saved rule for next week',
+              previousRuleKept: body.previousRuleKept ?? null,
+              notes: '',
+              completedAt: null,
+              snapshotJson: null,
+              updatedAt: '2026-11-27T17:00:00.000Z',
+              deletedAt: null,
+            },
+          });
+        }
+        if (url.includes('/api/review')) {
+          return jsonResponse(
+            createReviewPayload({
+              ruleForNextWeek: 'Existing saved rule for next week',
+            }),
+          );
+        }
+        return jsonResponse({});
+      }),
+    );
+
+    render(
+      <QueryClientProvider client={qc}>
+        <AppShellContext.Provider value={createMockShell()}>
+          <ReviewView />
+        </AppShellContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('Protect 09:00–11:30 for one deep block')).toBeInTheDocument();
+
+    for (const [label, expected] of [
+      ['Yes', 'yes'],
+      ['Partly', 'partly'],
+      ['No', 'no'],
+    ] as const) {
+      const prevCount = rulePayloads.length;
+      await user.click(screen.getByRole('button', { name: new RegExp(`^${label}$`, 'i') }));
+      await waitFor(() => {
+        expect(rulePayloads.length).toBe(prevCount + 1);
+      });
+      const payload = rulePayloads[rulePayloads.length - 1];
+      expect(payload).toEqual({
+        weekStartDate: '2026-11-23',
+        previousRuleKept: expected,
+      });
+      expect('ruleForNextWeek' in payload).toBe(false);
+      expect(screen.queryByText(/Saved for next week/i)).not.toBeInTheDocument();
+    }
+  });
+
+  it('wraps ISO week number to Week 1 at year end (2026-12-28 / Week 53) in Chapter 4, Snapshot card, and Copy Markdown', async () => {
+    const user = userEvent.setup();
+    const qc = createTestQueryClient();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+
+    const yearEndSnapshot: WeeklyReviewSnapshot = {
+      weekStartDate: '2026-12-28',
+      weekEndDate: '2027-01-03',
+      weekNumber: 53,
+      completedAt: '2027-01-01T17:00:00.000Z',
+      totalFocusMinutes: 300,
+      roomMinutesTotal: 480,
+      plannedMinutesTotal: 360,
+      goalAlignmentPct: 80,
+      companyGoalPct: 50,
+      personalGoalPct: 30,
+      buildMinutes: 240,
+      opsMinutes: 60,
+      senseCounts: { moved: 2, partly: 1, motion: 0 },
+      energyCounts: { up: 3, neutral: 1, down: 0 },
+      previousRuleText: 'Protect morning focus',
+      previousRuleKept: 'yes',
+      ruleForNextWeek: 'Start January with one deep block daily',
+      goalsMoved: [],
+      projectWeeklyTimes: [
+        {
+          projectId: PROJ_OVER_ID,
+          name: 'LioCare',
+          weeklyTimeMinutes: 240,
+          realMinutes: 240,
+        },
+      ],
+    };
+
+    let isCompleted = false;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        const method = (init?.method ?? 'GET').toUpperCase();
+        if (url.includes('/api/review/complete') && method === 'POST') {
+          isCompleted = true;
+          return jsonResponse({
+            review: {
+              id: 'rev-53',
+              weekStartDate: '2026-12-28',
+              ruleForNextWeek: yearEndSnapshot.ruleForNextWeek,
+              previousRuleKept: 'yes',
+              notes: '',
+              completedAt: yearEndSnapshot.completedAt,
+              snapshotJson: JSON.stringify(yearEndSnapshot),
+              updatedAt: yearEndSnapshot.completedAt,
+              deletedAt: null,
+            },
+            summary: createReviewPayload({
+              weekStartDate: '2026-12-28',
+              weekEndDate: '2027-01-03',
+              weekNumber: 53,
+              completedAt: yearEndSnapshot.completedAt,
+              ruleForNextWeek: yearEndSnapshot.ruleForNextWeek,
+              snapshot: yearEndSnapshot,
+            }),
+            snapshot: yearEndSnapshot,
+          });
+        }
+        if (url.includes('/api/review')) {
+          return jsonResponse(
+            createReviewPayload({
+              weekStartDate: '2026-12-28',
+              weekEndDate: '2027-01-03',
+              weekNumber: 53,
+              completedAt: isCompleted ? yearEndSnapshot.completedAt : null,
+              ruleForNextWeek: yearEndSnapshot.ruleForNextWeek,
+              snapshot: isCompleted ? yearEndSnapshot : null,
+            }),
+          );
+        }
+        return jsonResponse({});
+      }),
+    );
+
+    render(
+      <QueryClientProvider client={qc}>
+        <AppShellContext.Provider value={createMockShell()}>
+          <ReviewView />
+        </AppShellContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    // Chapter 4 shows Week 1 (not Week 54)
+    const nextWeekTable = await screen.findByRole('region', { name: /Weekly time for next week/i });
+    expect(within(nextWeekTable).getByText('Weekly time for Week 1')).toBeInTheDocument();
+    expect(within(nextWeekTable).queryByText(/Week 54/i)).not.toBeInTheDocument();
+
+    // Complete Review -> Snapshot card shows Week 1 commitments (not Week 54)
+    await user.click(screen.getByRole('button', { name: /Complete Review/i }));
+    expect(await screen.findByText('Week 1 commitments')).toBeInTheDocument();
+    expect(screen.queryByText(/Week 54/i)).not.toBeInTheDocument();
+
+    // Copy Markdown outputs "## Week 1 commitments"
+    await user.click(screen.getByRole('button', { name: /Copy Markdown/i }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledTimes(1);
+    });
+    const copiedMarkdown = writeText.mock.calls[0][0] as string;
+    expect(copiedMarkdown).toContain('# Week 53 Review (2026-12-28 – 2027-01-03)');
+    expect(copiedMarkdown).toContain('## Week 1 commitments');
+    expect(copiedMarkdown).not.toContain('Week 54');
+  });
+
   it('SettingsView Integrations lists review.completed webhook event toggle', async () => {
     const user = userEvent.setup();
     const qc = createTestQueryClient();

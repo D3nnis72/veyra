@@ -60,9 +60,9 @@ async function copyText(text: string): Promise<boolean> {
     el.style.opacity = '0';
     document.body.appendChild(el);
     el.select();
-    document.execCommand('copy');
+    const copied = document.execCommand('copy');
     document.body.removeChild(el);
-    return true;
+    return copied;
   } catch {
     return false;
   }
@@ -115,8 +115,10 @@ export function TellSomeonePopover({
   const contextLine = buildContextLine(block, project);
 
   const handleCopy = async () => {
-    await copyText(draft.trim());
-    setFeedback('copied');
+    const ok = await copyText(draft.trim());
+    if (ok) {
+      setFeedback('copied');
+    }
   };
 
   const handleSendToT3 = async () => {
@@ -133,8 +135,10 @@ export function TellSomeonePopover({
       'Confirm recipient and channel with me before sending anything.',
     ].join('\n');
 
-    await copyText(prompt);
-    setFeedback('t3');
+    const ok = await copyText(prompt);
+    if (ok) {
+      setFeedback('t3');
+    }
   };
 
   return (

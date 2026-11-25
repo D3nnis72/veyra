@@ -1114,4 +1114,97 @@ describe('@veyra/server REST API', () => {
       senseSignal: 'moved',
     });
   });
+
+  it('GET /api/review retains archived projects referenced in the week while excluding unreferenced archived projects', async () => {
+    const { baseUrl } = await startTestVeyraServer();
+    const startHeader = { 'X-Veyra-Now': '2026-11-25T09:00:00.000Z' };
+    const endHeader = { 'X-Veyra-Now': '2026-11-25T10:30:00.000Z' };
+    const jsonStart = { 'Content-Type': 'application/json', ...startHeader };
+    const jsonEnd = { 'Content-Type': 'application/json', ...endHeader };
+
+    const activeProjRes = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: jsonStart,
+      body: JSON.stringify({ name: 'Active Project' }),
+    });
+    const { project: activeProj } = (await activeProjRes.json()) as {
+      project: { id: string; name: string };
+    };
+
+    const archivedWithTimeRes = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: jsonStart,
+      body: JSON.stringify({ name: 'Sunset Migration' }),
+    });
+    const { project: archivedWithTime } = (await archivedWithTimeRes.json()) as {
+      project: { id: string; name: string };
+    };
+
+    const archivedUnusedRes = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: jsonStart,
+      body: JSON.stringify({ name: 'Old Unused Project' }),
+    });
+    const { project: archivedUnused } = (await archivedUnusedRes.json()) as {
+      project: { id: string; name: string };
+    };
+
+    // Log 90m focus time on a block in Sunset Migration during Week 48
+    const blkRes = await fetch(`${baseUrl}/api/blocks`, {
+      method: 'POST',
+      headers: jsonStart,
+      body: JSON.stringify({
+        title: 'Final migration cutover',
+        projectId: archivedWithTime.id,
+        bucket: 'scheduled',
+        scheduledDate: '2026-11-25',
+      }),
+    });
+    const { block: blk } = (await blkRes.json()) as { block: { id: string } };
+
+    await fetch(`${baseUrl}/api/focus/start`, {
+      method: 'POST',
+      headers: jsonStart,
+      body: JSON.stringify({ blockId: blk.id }),
+    });
+    await fetch(`${baseUrl}/api/focus/complete`, {
+      method: 'POST',
+      headers: jsonEnd,
+      body: JSON.stringify({ blockId: blk.id, energySignal: 'up', senseSignal: 'moved' }),
+    });
+
+    // Archive both Sunset Migration and Old Unused Project
+    await fetch(`${baseUrl}/api/projects/${archivedWithTime.id}`, {
+      method: 'PATCH',
+      headers: jsonEnd,
+      body: JSON.stringify({ status: 'archived' }),
+    });
+    await fetch(`${baseUrl}/api/projects/${archivedUnused.id}`, {
+      method: 'PATCH',
+      headers: jsonEnd,
+      body: JSON.stringify({ status: 'archived' }),
+    });
+
+    const reviewRes = await fetch(`${baseUrl}/api/review?weekStart=2026-11-23`, {
+      headers: endHeader,
+    });
+    expect(reviewRes.status).toBe(200);
+    const reviewData = (await reviewRes.json()) as {
+      projects: Array<{ id: string; name: string; status: string }>;
+      projectBuckets: {
+        timeWithoutPlan: Array<{ projectId: string; realMinutes: number }>;
+      };
+    };
+
+    const projectIds = reviewData.projects.map((p) => p.id);
+    expect(projectIds).toContain(activeProj.id);
+    expect(projectIds).toContain(archivedWithTime.id);
+    expect(projectIds).not.toContain(archivedUnused.id);
+    expect(
+      reviewData.projects.find((p) => p.id === archivedWithTime.id)?.name,
+    ).toBe('Sunset Migration');
+    expect(reviewData.projectBuckets.timeWithoutPlan).toContainEqual(
+      expect.objectContaining({ projectId: archivedWithTime.id, realMinutes: 90 }),
+    );
+  });
 });
