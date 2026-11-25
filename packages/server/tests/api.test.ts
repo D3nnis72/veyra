@@ -690,4 +690,226 @@ describe('@veyra/server REST API', () => {
     expect(nullByteRes.status).not.toBe(500);
     expect(nullByteBody).not.toContain('console.log("safe")');
   });
+
+  it('GET /api/goals/:id returns goal detail with quarterly outcomes and measure updates', async () => {
+    const { baseUrl } = await startTestVeyraServer();
+    const mon = '2026-11-23';
+    const wed = '2026-11-25';
+
+    const createRes = await fetch(`${baseUrl}/api/goals`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Veyra-Now': `${mon}T08:00:00.000Z`,
+      },
+      body: JSON.stringify({
+        name: 'Generate upsells',
+        kind: 'company',
+        description: 'Grow expansion ARR',
+        doneWhen: '10 signed upsells',
+        checkInDate: '2027-03-31',
+        measure: '3 of 10 upsells',
+        ifItStalls: 'Pair with account leads',
+        color: '#4DA3FF',
+      }),
+    });
+    expect(createRes.status).toBe(201);
+    const { goal } = (await createRes.json()) as { goal: { id: string; kind: string } };
+    expect(goal.kind).toBe('company');
+
+    const blkRes = await fetch(`${baseUrl}/api/blocks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Veyra-Now': `${mon}T09:00:00.000Z` },
+      body: JSON.stringify({
+        title: 'Finalize Acme expansion',
+        goalId: goal.id,
+        bucket: 'scheduled',
+        scheduledDate: mon,
+      }),
+    });
+    const { block } = (await blkRes.json()) as { block: { id: string } };
+
+    await fetch(`${baseUrl}/api/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Veyra-Now': `${mon}T10:00:00.000Z` },
+      body: JSON.stringify({
+        blockId: block.id,
+        startedAt: `${mon}T09:00:00.000Z`,
+        endedAt: `${mon}T10:00:00.000Z`,
+      }),
+    });
+
+    await fetch(`${baseUrl}/api/focus/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Veyra-Now': `${mon}T10:05:00.000Z` },
+      body: JSON.stringify({
+        blockId: block.id,
+        outcomeNote: 'Signed Acme 40k expansion',
+      }),
+    });
+
+    const patchRes = await fetch(`${baseUrl}/api/goals/${goal.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'X-Veyra-Now': `${wed}T10:00:00.000Z` },
+      body: JSON.stringify({ measure: '4 of 10 upsells' }),
+    });
+    expect(patchRes.status).toBe(200);
+
+    const detailRes = await fetch(`${baseUrl}/api/goals/${goal.id}`, {
+      headers: { 'X-Veyra-Now': `${wed}T12:00:00.000Z` },
+    });
+    expect(detailRes.status).toBe(200);
+    const { goal: detail } = (await detailRes.json()) as {
+      goal: {
+        id: string;
+        kind: string;
+        weeklyFocusMinutes: number;
+        weeklyBlockCount: number;
+        rankInKind: number;
+        history: Array<{
+          kind: string;
+          previousValue?: string | null;
+          value?: string;
+          outcomeNote?: string;
+          blockId?: string;
+        }>;
+      };
+    };
+    expect(detail.weeklyFocusMinutes).toBe(60);
+    expect(detail.weeklyBlockCount).toBe(1);
+    expect(detail.rankInKind).toBe(1);
+    expect(detail.history).toHaveLength(2);
+    expect(detail.history[0]).toMatchObject({
+      kind: 'measure',
+      previousValue: '3 of 10 upsells',
+      value: '4 of 10 upsells',
+    });
+    expect(detail.history[1]).toMatchObject({
+      kind: 'outcome',
+      blockId: block.id,
+      outcomeNote: 'Signed Acme 40k expansion',
+    });
+  });
+
+  it('POST /api/goals/:id/close hides achieved and let-go goals from GET /api/goals?activeOnly=true and GET /api/today goals list', async () => {
+    const { baseUrl } = await startTestVeyraServer();
+    const nowHeader = { 'X-Veyra-Now': '2026-11-23T12:00:00.000Z' };
+
+    const gActiveRes = await fetch(`${baseUrl}/api/goals`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...nowHeader },
+      body: JSON.stringify({ name: 'Active Goal', kind: 'personal' }),
+    });
+    const { goal: gActive } = (await gActiveRes.json()) as { goal: { id: string } };
+
+    const gAchievedRes = await fetch(`${baseUrl}/api/goals`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...nowHeader },
+      body: JSON.stringify({ name: 'Achieved Goal', kind: 'personal' }),
+    });
+    const { goal: gAchieved } = (await gAchievedRes.json()) as { goal: { id: string } };
+
+    const gLetGoRes = await fetch(`${baseUrl}/api/goals`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...nowHeader },
+      body: JSON.stringify({ name: 'Let Go Goal', kind: 'company' }),
+    });
+    const { goal: gLetGo } = (await gLetGoRes.json()) as { goal: { id: string } };
+
+    // Link a completed block this week to gAchieved so Review still surfaces it
+    const blkRes = await fetch(`${baseUrl}/api/blocks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...nowHeader },
+      body: JSON.stringify({
+        title: 'Finish achieved milestone',
+        goalId: gAchieved.id,
+        bucket: 'scheduled',
+        scheduledDate: '2026-11-23',
+      }),
+    });
+    const { block } = (await blkRes.json()) as { block: { id: string } };
+    await fetch(`${baseUrl}/api/focus/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...nowHeader },
+      body: JSON.stringify({ blockId: block.id, outcomeNote: 'Done' }),
+    });
+
+    const close1 = await fetch(`${baseUrl}/api/goals/${gAchieved.id}/close`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...nowHeader },
+      body: JSON.stringify({ status: 'achieved', closingNote: 'Shipped cleanly' }),
+    });
+    expect(close1.status).toBe(200);
+    const closed1Body = (await close1.json()) as {
+      goal: { status: string; closingNote: string; closedAt: string };
+    };
+    expect(closed1Body.goal).toMatchObject({
+      status: 'achieved',
+      closingNote: 'Shipped cleanly',
+    });
+    expect(closed1Body.goal.closedAt).toBeTruthy();
+
+    const close2 = await fetch(`${baseUrl}/api/goals/${gLetGo.id}/close`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...nowHeader },
+      body: JSON.stringify({ status: 'archived', closingNote: 'Shifted focus' }),
+    });
+    expect(close2.status).toBe(200);
+
+    const activeGoalsRes = await fetch(`${baseUrl}/api/goals?activeOnly=true`, { headers: nowHeader });
+    expect(activeGoalsRes.status).toBe(200);
+    const activeGoals = (await activeGoalsRes.json()) as { goals: Array<{ id: string }> };
+    expect(activeGoals.goals.map((g) => g.id)).toEqual([gActive.id]);
+
+    const todayRes = await fetch(`${baseUrl}/api/today`, { headers: nowHeader });
+    const todayData = (await todayRes.json()) as { goals: Array<{ id: string }> };
+    expect(todayData.goals.map((g) => g.id)).toEqual([gActive.id]);
+
+    const planRes = await fetch(`${baseUrl}/api/plan`, { headers: nowHeader });
+    const planData = (await planRes.json()) as { goals: Array<{ id: string }> };
+    expect(planData.goals.map((g) => g.id)).toEqual([gActive.id]);
+
+    const reviewRes = await fetch(`${baseUrl}/api/review?weekStart=2026-11-23`, {
+      headers: nowHeader,
+    });
+    const reviewData = (await reviewRes.json()) as { goals: Array<{ id: string }> };
+    expect(reviewData.goals.map((g) => g.id).sort()).toEqual([gActive.id, gAchieved.id].sort());
+  });
+
+  it('POST /api/goals/:id/reorder moves a company goal up within company goals', async () => {
+    const { baseUrl } = await startTestVeyraServer();
+    const json = { 'Content-Type': 'application/json', 'X-Veyra-Now': '2026-11-23T12:00:00.000Z' };
+
+    const mk = async (name: string, kind: 'personal' | 'company') => {
+      const r = await fetch(`${baseUrl}/api/goals`, {
+        method: 'POST',
+        headers: json,
+        body: JSON.stringify({ name, kind }),
+      });
+      return ((await r.json()) as { goal: { id: string } }).goal;
+    };
+
+    const p1 = await mk('Personal 1', 'personal');
+    const p2 = await mk('Personal 2', 'personal');
+    const c1 = await mk('Company 1', 'company');
+    const c2 = await mk('Company 2', 'company');
+
+    const reorderRes = await fetch(`${baseUrl}/api/goals/${c2.id}/reorder`, {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({ direction: 'up' }),
+    });
+    expect(reorderRes.status).toBe(200);
+
+    const companyRes = await fetch(`${baseUrl}/api/goals?kind=company&activeOnly=true`);
+    const companyData = (await companyRes.json()) as {
+      goals: Array<{ id: string; rankInKind: number }>;
+    };
+    expect(companyData.goals.map((g) => g.id)).toEqual([c2.id, c1.id]);
+    expect(companyData.goals.map((g) => g.rankInKind)).toEqual([1, 2]);
+
+    const personalRes = await fetch(`${baseUrl}/api/goals?kind=personal&activeOnly=true`);
+    const personalData = (await personalRes.json()) as { goals: Array<{ id: string }> };
+    expect(personalData.goals.map((g) => g.id)).toEqual([p1.id, p2.id]);
+  });
 });

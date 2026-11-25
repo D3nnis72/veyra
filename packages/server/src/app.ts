@@ -14,6 +14,8 @@ import {
   type FocusSession,
   type FocusStatus,
   type Goal,
+  type GoalDetail,
+  type GoalWithStats,
   type MacOsFocusRunResult,
   type MacOsFocusShortcutsResponse,
   type NormalizedCalendarEvent,
@@ -32,6 +34,7 @@ import {
   blockBucketSchema,
   blockStatusSchema,
   calendarEventSourceSchema,
+  closeGoal,
   completeBlock,
   createBlock,
   createGoal,
@@ -49,11 +52,13 @@ import {
   getBlockDetail,
   cancelFocus,
   getFocusStatus,
+  getGoalDetail,
   getLocalDayBoundsIso,
   getProject,
   getSettings,
   getWeekRange,
   getWeeklyReview,
+  goalKindSchema,
   goalStatusSchema,
   listActivity,
   listBlocks,
@@ -72,6 +77,7 @@ import {
   projectStatusSchema,
   reopenBlock,
   reorderBlock,
+  reorderGoal,
   resumeFocus,
   runDailyRolloverAndRecurrence,
   setWeeklyRule,
@@ -152,7 +158,7 @@ export interface TodayResponse {
   todayEvents: CalendarEvent[];
   dailyNotesCount: number;
   projects: ProjectWithStats[];
-  goals: Goal[];
+  goals: GoalWithStats[];
 }
 
 export interface PlanDayBucket {
@@ -170,7 +176,7 @@ export interface PlanResponse {
   inbox: Block[];
   later: Block[];
   projects: ProjectWithStats[];
-  goals: Goal[];
+  goals: GoalWithStats[];
 }
 
 export interface CalendarSessionItem extends FocusSession {
@@ -189,7 +195,7 @@ export interface CalendarResponse {
   plannedBlocks: Block[];
   events: CalendarEvent[];
   projects: ProjectWithStats[];
-  goals: Goal[];
+  goals: GoalWithStats[];
 }
 
 export interface ProjectDetailResponse {
@@ -200,7 +206,7 @@ export interface ProjectDetailResponse {
 
 export interface ReviewResponse extends WeeklyReviewSummary {
   projects: ProjectWithStats[];
-  goals: Goal[];
+  goals: GoalWithStats[];
 }
 
 export interface SettingsResponse {
@@ -685,7 +691,7 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
 
     const notesToday = listDailyNotes(db, { date });
     const projects = listProjects(db, now, { includeArchived: false });
-    const goals = listGoals(db, { includeArchived: false });
+    const goals = listGoals(db, { activeOnly: true }, now);
 
     const payload: TodayResponse = {
       date,
@@ -739,7 +745,7 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
     const inbox = listBlocks(db, { bucket: 'inbox', status: 'todo' });
     const later = listBlocks(db, { bucket: 'later', status: 'todo' });
     const projects = listProjects(db, now, { includeArchived: false });
-    const goals = listGoals(db, { includeArchived: false });
+    const goals = listGoals(db, { activeOnly: true }, now);
 
     const payload: PlanResponse = {
       weekStartDate,
@@ -815,7 +821,7 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
 
     const events = listCalendarEvents(db, rangeStartIso, rangeEndIso);
     const projects = listProjects(db, now, { includeArchived: false });
-    const goals = listGoals(db, { includeArchived: false });
+    const goals = listGoals(db, { activeOnly: true }, now);
 
     const payload: CalendarResponse = {
       startDate,
@@ -836,6 +842,7 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
   // -------------------------------------------------------------------------
 
   app.get('/api/goals', (c) => {
+    const now = getNow(c);
     const rawStatus = c.req.query('status');
     const status = rawStatus
       ? (() => {
@@ -846,8 +853,19 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
           return parsed.data;
         })()
       : undefined;
+    const rawKind = c.req.query('kind');
+    const kind = rawKind
+      ? (() => {
+          const parsed = goalKindSchema.safeParse(rawKind);
+          if (!parsed.success) {
+            throw new ValidationError(`Invalid goal kind: '${rawKind}'`);
+          }
+          return parsed.data;
+        })()
+      : undefined;
     const includeArchived = parseOptionalBool(c.req.query('includeArchived'));
-    const goals = listGoals(db, { status, includeArchived });
+    const activeOnly = parseOptionalBool(c.req.query('activeOnly'));
+    const goals = listGoals(db, { status, kind, includeArchived, activeOnly }, now);
     return c.json({ goals });
   });
 
@@ -860,6 +878,12 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
     return c.json({ goal }, 201);
   });
 
+  app.get('/api/goals/:id', (c) => {
+    const now = getNow(c);
+    const goal: GoalDetail = getGoalDetail(db, c.req.param('id'), now);
+    return c.json({ goal });
+  });
+
   app.patch('/api/goals/:id', async (c) => {
     const now = getNow(c);
     const actor = getActor(c);
@@ -869,6 +893,30 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
       actor,
     });
     emitSse('goal.updated', 'goal', goal.id, now);
+    return c.json({ goal });
+  });
+
+  app.post('/api/goals/:id/close', async (c) => {
+    const now = getNow(c);
+    const actor = getActor(c);
+    const body = await readJsonBody(c);
+    const goal = closeGoal(db, c.req.param('id'), body as Parameters<typeof closeGoal>[2], {
+      now,
+      actor,
+    });
+    emitSse('goal.closed', 'goal', goal.id, now);
+    return c.json({ goal });
+  });
+
+  app.post('/api/goals/:id/reorder', async (c) => {
+    const now = getNow(c);
+    const actor = getActor(c);
+    const body = await readJsonBody(c);
+    const goal = reorderGoal(db, c.req.param('id'), body as Parameters<typeof reorderGoal>[2], {
+      now,
+      actor,
+    });
+    emitSse('goal.reordered', 'goal', goal.id, now);
     return c.json({ goal });
   });
 
@@ -1408,7 +1456,38 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
     const weekStart = c.req.query('weekStart');
     const summary = getWeeklyReview(db, weekStart, now);
     const projects = listProjects(db, now, { includeArchived: false });
-    const goals = listGoals(db, { includeArchived: false });
+
+    const referencedGoalIds = new Set<string>();
+    for (const item of summary.progressFeed) {
+      if (item.goalId) referencedGoalIds.add(item.goalId);
+    }
+    for (const note of summary.dailyNotes) {
+      if (note.goalId) referencedGoalIds.add(note.goalId);
+    }
+    for (const item of summary.opsRadar.items) {
+      if (item.goalId) referencedGoalIds.add(item.goalId);
+    }
+    for (const blk of summary.chronicCarryovers) {
+      if (blk.goalId) referencedGoalIds.add(blk.goalId);
+    }
+    for (const blk of summary.pastRevisitLater) {
+      if (blk.goalId) referencedGoalIds.add(blk.goalId);
+    }
+
+    const weekStartIso = getLocalDayBoundsIso(summary.weekStartDate, summary.timezone).startIso;
+    const weekEndIso = getLocalDayBoundsIso(summary.weekEndDate, summary.timezone).endIso;
+    const weekSessions = listSessions(db, { startIso: weekStartIso, endIso: weekEndIso });
+    if (weekSessions.length > 0) {
+      const weekSessionBlockIds = new Set(weekSessions.map((s) => s.blockId));
+      for (const blk of listBlocks(db)) {
+        if (blk.goalId && weekSessionBlockIds.has(blk.id)) {
+          referencedGoalIds.add(blk.goalId);
+        }
+      }
+    }
+
+    const allGoals = listGoals(db, { includeArchived: true }, now);
+    const goals = allGoals.filter((g) => g.status === 'active' || referencedGoalIds.has(g.id));
 
     const payload: ReviewResponse = {
       ...summary,

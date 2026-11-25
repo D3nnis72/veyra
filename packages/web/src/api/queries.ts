@@ -22,6 +22,8 @@ export function invalidateBlockRelated(queryClient: QueryClient, blockId?: strin
     ['blocks'],
     ['projects'],
     ['project'],
+    ['goals'],
+    ['goal'],
     ['focus'],
   ];
   if (blockId) {
@@ -72,6 +74,14 @@ export function useGoalsQuery(filter?: ListGoalsFilter) {
   return useQuery({
     queryKey: queryKeys.goals(filter),
     queryFn: () => apiClient.listGoals(filter),
+  });
+}
+
+export function useGoalDetailQuery(goalId: string | null) {
+  return useQuery({
+    queryKey: goalId ? queryKeys.goal(goalId) : ['goal', 'none'],
+    queryFn: () => apiClient.getGoal(goalId!),
+    enabled: Boolean(goalId),
   });
 }
 

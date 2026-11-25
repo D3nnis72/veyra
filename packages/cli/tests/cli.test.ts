@@ -630,4 +630,114 @@ describe('@veyra/cli integration', () => {
     const parsedErr = JSON.parse(usageErr.stderr) as { error: { code: string; message: string } };
     expect(parsedErr.error.code).toBe('USAGE_ERROR');
   });
+
+  it('veyra goal create --kind company --done-when ... --check-in ... --measure ... --json persists and veyra goal close --status let-go --note ... closes the goal', async () => {
+    const createRes = await execCli(
+      [
+        'goal',
+        'create',
+        'Generate upsells',
+        '--kind',
+        'company',
+        '--description',
+        'Grow expansion ARR',
+        '--done-when',
+        '10 signed upsells',
+        '--check-in',
+        '2027-03-31',
+        '--measure',
+        '3 of 10 upsells',
+        '--if-it-stalls',
+        'Weekly account review',
+        '--color',
+        '#4DA3FF',
+        '--json',
+      ],
+      baseEnv(),
+    );
+    expect(createRes.exitCode).toBe(0);
+    const created = JSON.parse(createRes.stdout) as {
+      id: string;
+      name: string;
+      kind: string;
+      doneWhen: string;
+      checkInDate: string;
+      measure: string;
+      ifItStalls: string;
+      color: string;
+    };
+    expect(created).toMatchObject({
+      name: 'Generate upsells',
+      kind: 'company',
+      doneWhen: '10 signed upsells',
+      checkInDate: '2027-03-31',
+      measure: '3 of 10 upsells',
+      ifItStalls: 'Weekly account review',
+      color: '#4DA3FF',
+    });
+
+    const updateRes = await execCli(
+      ['goal', 'update', 'generate upsells', '--measure', '4 of 10 upsells', '--json'],
+      baseEnv({ VEYRA_NOW: '2026-11-24T10:00:00.000Z' }),
+    );
+    expect(updateRes.exitCode).toBe(0);
+    expect((JSON.parse(updateRes.stdout) as { measure: string }).measure).toBe('4 of 10 upsells');
+
+    const showRes = await execCli(['goal', 'show', 'generate upsells', '--json'], baseEnv());
+    expect(showRes.exitCode).toBe(0);
+    const detail = JSON.parse(showRes.stdout) as {
+      id: string;
+      weeklyFocusMinutes: number;
+      history: Array<{ kind: string; previousValue?: string | null; value?: string }>;
+    };
+    expect(detail.id).toBe(created.id);
+    expect(detail.weeklyFocusMinutes).toBe(0);
+    expect(detail.history).toHaveLength(1);
+    expect(detail.history[0]).toMatchObject({
+      kind: 'measure',
+      previousValue: '3 of 10 upsells',
+      value: '4 of 10 upsells',
+    });
+
+    const listCompany = await execCli(['goals', '--kind', 'company', '--json'], baseEnv());
+    expect(listCompany.exitCode).toBe(0);
+    const companyGoals = JSON.parse(listCompany.stdout) as {
+      goals: Array<{ id: string; rankInKind: number }>;
+    };
+    expect(companyGoals.goals).toHaveLength(1);
+    expect(companyGoals.goals[0]).toMatchObject({ id: created.id, rankInKind: 1 });
+
+    const closeRes = await execCli(
+      [
+        'goal',
+        'close',
+        'generate upsells',
+        '--status',
+        'let-go',
+        '--note',
+        'Shifted to Q2 priorities',
+        '--json',
+      ],
+      baseEnv({ VEYRA_NOW: '2026-11-25T15:00:00.000Z' }),
+    );
+    expect(closeRes.exitCode).toBe(0);
+    const closed = JSON.parse(closeRes.stdout) as {
+      status: string;
+      closingNote: string;
+      closedAt: string | null;
+    };
+    expect(closed).toMatchObject({
+      status: 'archived',
+      closingNote: 'Shifted to Q2 priorities',
+      closedAt: '2026-11-25T15:00:00.000Z',
+    });
+
+    const activeAfterClose = await execCli(['goals', '--json'], baseEnv());
+    expect(activeAfterClose.exitCode).toBe(0);
+    expect((JSON.parse(activeAfterClose.stdout) as { goals: unknown[] }).goals).toHaveLength(0);
+
+    const allAfterClose = await execCli(['goals', '--all', '--json'], baseEnv());
+    expect(allAfterClose.exitCode).toBe(0);
+    expect((JSON.parse(allAfterClose.stdout) as { goals: Array<{ id: string }> }).goals).toHaveLength(1);
+  });
 });

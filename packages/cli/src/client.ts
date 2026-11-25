@@ -8,6 +8,7 @@ import {
   type CalendarEvent,
   type CalendarEventSource,
   type CalendarSyncStatus,
+  type CloseGoalInput,
   type CompleteBlockInput,
   type CreateBlockInput,
   type CreateDailyNoteInput,
@@ -17,7 +18,9 @@ import {
   type FocusSession,
   type FocusStatus,
   type Goal,
-  type GoalStatus,
+  type GoalDetail,
+  type GoalWithStats,
+  type ListGoalsFilter,
   type LogSessionInput,
   type MoveBlockInput,
   type NormalizedCalendarEvent,
@@ -27,6 +30,7 @@ import {
   type ProjectWithStats,
   type PublicSettings,
   type ReorderBlockInput,
+  type ReorderGoalInput,
   type SplitSessionInput,
   type SplitSessionResult,
   type TrimSessionInput,
@@ -54,7 +58,7 @@ export interface TodayResponse {
   todayEvents: CalendarEvent[];
   dailyNotesCount: number;
   projects: ProjectWithStats[];
-  goals: Goal[];
+  goals: GoalWithStats[];
 }
 
 export interface PlanDayBucket {
@@ -72,7 +76,7 @@ export interface PlanResponse {
   inbox: Block[];
   later: Block[];
   projects: ProjectWithStats[];
-  goals: Goal[];
+  goals: GoalWithStats[];
 }
 
 export interface CalendarSessionItem extends FocusSession {
@@ -91,12 +95,12 @@ export interface CalendarResponse {
   plannedBlocks: Block[];
   events: CalendarEvent[];
   projects: ProjectWithStats[];
-  goals: Goal[];
+  goals: GoalWithStats[];
 }
 
 export interface ReviewResponse extends WeeklyReviewSummary {
   projects: ProjectWithStats[];
-  goals: Goal[];
+  goals: GoalWithStats[];
 }
 
 export interface SettingsResponse {
@@ -295,16 +299,19 @@ export class VeyraClient {
     });
   }
 
-  listGoals(params?: {
-    status?: GoalStatus;
-    includeArchived?: boolean;
-  }): Promise<{ goals: Goal[] }> {
-    return this.request<{ goals: Goal[] }>('GET', '/api/goals', {
+  listGoals(params?: ListGoalsFilter): Promise<{ goals: GoalWithStats[] }> {
+    return this.request<{ goals: GoalWithStats[] }>('GET', '/api/goals', {
       query: {
         status: params?.status,
+        kind: params?.kind,
         includeArchived: params?.includeArchived,
+        activeOnly: params?.activeOnly,
       },
     });
+  }
+
+  getGoal(id: string): Promise<{ goal: GoalDetail }> {
+    return this.request<{ goal: GoalDetail }>('GET', `/api/goals/${encodeURIComponent(id)}`);
   }
 
   createGoal(input: CreateGoalInput): Promise<{ goal: Goal }> {
@@ -313,6 +320,18 @@ export class VeyraClient {
 
   updateGoal(id: string, input: UpdateGoalInput): Promise<{ goal: Goal }> {
     return this.request<{ goal: Goal }>('PATCH', `/api/goals/${encodeURIComponent(id)}`, {
+      body: input,
+    });
+  }
+
+  closeGoal(id: string, input: CloseGoalInput): Promise<{ goal: Goal }> {
+    return this.request<{ goal: Goal }>('POST', `/api/goals/${encodeURIComponent(id)}/close`, {
+      body: input,
+    });
+  }
+
+  reorderGoal(id: string, input: ReorderGoalInput): Promise<{ goal: Goal }> {
+    return this.request<{ goal: Goal }>('POST', `/api/goals/${encodeURIComponent(id)}/reorder`, {
       body: input,
     });
   }

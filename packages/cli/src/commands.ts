@@ -10,6 +10,9 @@ import {
   type FocusSession,
   type FocusStatus,
   type Goal,
+  type GoalDetail,
+  type GoalKind,
+  type GoalWithStats,
   type MoveBlockInput,
   type NormalizedCalendarEvent,
   type Project,
@@ -26,6 +29,7 @@ import {
   calendarEventSourceSchema,
   dateOnlySchema,
   energySignalSchema,
+  goalKindSchema,
   goalStatusSchema,
   normalizedCalendarEventSchema,
   projectStatusSchema,
@@ -464,10 +468,19 @@ export function createProgram(ctx: ProgramContext): Command {
 
   program
     .command('goals')
-    .description('List goals')
+    .description('List goals with weekly focus stats')
+    .option('--kind <kind>', 'Filter by kind (personal|company)')
     .option('--status <status>', 'Filter by status (active|achieved|archived)')
-    .option('--all', 'Include archived goals')
-    .action(async (opts: { status?: string; all?: boolean }) => {
+    .option('--all', 'Include closed (achieved and let-go) goals')
+    .action(async (opts: { kind?: string; status?: string; all?: boolean }) => {
+      let kind: GoalKind | undefined;
+      if (opts.kind) {
+        const parsed = goalKindSchema.safeParse(opts.kind);
+        if (!parsed.success) {
+          throw new CliUsageError(`Invalid --kind '${opts.kind}'. Expected personal or company.`);
+        }
+        kind = parsed.data;
+      }
       let status: Goal['status'] | undefined;
       if (opts.status) {
         const parsed = goalStatusSchema.safeParse(opts.status);
@@ -477,12 +490,19 @@ export function createProgram(ctx: ProgramContext): Command {
         status = parsed.data;
       }
       const data = await ctx.getClient().listGoals({
+        kind,
         status,
         includeArchived: opts.all ? true : undefined,
+        activeOnly: !opts.all && !status ? true : undefined,
       });
-      emit<{ goals: Goal[] }>(data, (d) => {
+      emit<{ goals: GoalWithStats[] }>(data, (d) => {
         if (d.goals.length === 0) return 'No goals found.';
-        return d.goals.map((g) => `- ${g.id}  ${g.name} [${g.status}]`).join('\n');
+        return d.goals
+          .map(
+            (g) =>
+              `- ${g.id}  ${g.name} [${g.kind}, ${g.status}] (${formatDuration(g.weeklyFocusMinutes)}, ${g.weeklyBlockCount} blocks this week)`,
+          )
+          .join('\n');
       });
     });
 
@@ -987,50 +1007,115 @@ export function createProgram(ctx: ProgramContext): Command {
       },
     );
 
-  // Goal create / update
-  const goalCmd = program.command('goal').description('Create or update goals');
+  // Goal create / update / close / show
+  const goalCmd = program.command('goal').description('Create, update, inspect, or close goals');
 
   goalCmd
     .command('create <name>')
     .description('Create a new goal')
-    .option('--description <text>', 'Goal description')
+    .option('--kind <kind>', 'Goal kind (personal|company)')
+    .option('--description <text>', 'Why it matters / goal description')
+    .option('--done-when <text>', 'Definition of done')
+    .option('--check-in <YYYY-MM-DD>', 'Check-in date (YYYY-MM-DD)')
+    .option('--measure <text>', 'Current measure value')
+    .option('--if-it-stalls <text>', 'Fallback plan if progress stalls')
     .option('--color <hex>', 'Goal accent hex color')
     .option('--status <status>', 'Goal status (active|achieved|archived)')
-    .action(async (name: string, opts: { description?: string; color?: string; status?: string }) => {
-      let status: Goal['status'] | undefined;
-      if (opts.status) {
-        const parsed = goalStatusSchema.safeParse(opts.status);
-        if (!parsed.success) {
-          throw new CliUsageError(`Invalid --status '${opts.status}'. Expected active, achieved, or archived.`);
+    .action(
+      async (
+        name: string,
+        opts: {
+          kind?: string;
+          description?: string;
+          doneWhen?: string;
+          checkIn?: string;
+          measure?: string;
+          ifItStalls?: string;
+          color?: string;
+          status?: string;
+        },
+      ) => {
+        let kind: GoalKind | undefined;
+        if (opts.kind) {
+          const parsed = goalKindSchema.safeParse(opts.kind);
+          if (!parsed.success) {
+            throw new CliUsageError(`Invalid --kind '${opts.kind}'. Expected personal or company.`);
+          }
+          kind = parsed.data;
         }
-        status = parsed.data;
-      }
-      const { goal } = await ctx.getClient().createGoal({
-        name,
-        ...(opts.description !== undefined ? { description: opts.description } : {}),
-        ...(opts.color !== undefined ? { color: opts.color } : {}),
-        ...(status !== undefined ? { status } : {}),
-      });
-      emit<Goal>(goal, (g) => `Created goal ${g.id}  ${g.name}`);
-    });
+        let status: Goal['status'] | undefined;
+        if (opts.status) {
+          const parsed = goalStatusSchema.safeParse(opts.status);
+          if (!parsed.success) {
+            throw new CliUsageError(`Invalid --status '${opts.status}'. Expected active, achieved, or archived.`);
+          }
+          status = parsed.data;
+        }
+        const checkInDate = opts.checkIn ? validateDateOnly(opts.checkIn, '--check-in') : undefined;
+        const { goal } = await ctx.getClient().createGoal({
+          name,
+          ...(kind !== undefined ? { kind } : {}),
+          ...(opts.description !== undefined ? { description: opts.description } : {}),
+          ...(opts.doneWhen !== undefined ? { doneWhen: opts.doneWhen } : {}),
+          ...(checkInDate !== undefined ? { checkInDate } : {}),
+          ...(opts.measure !== undefined ? { measure: opts.measure } : {}),
+          ...(opts.ifItStalls !== undefined ? { ifItStalls: opts.ifItStalls } : {}),
+          ...(opts.color !== undefined ? { color: opts.color } : {}),
+          ...(status !== undefined ? { status } : {}),
+        });
+        emit<Goal>(goal, (g) => `Created goal ${g.id}  ${g.name} [${g.kind}]`);
+      },
+    );
 
   goalCmd
     .command('update <idOrName>')
     .description('Update an existing goal')
     .option('--name <name>', 'New goal name')
-    .option('--description <text>', 'Goal description')
+    .option('--kind <kind>', 'Goal kind (personal|company)')
+    .option('--description <text>', 'Why it matters / goal description')
+    .option('--done-when <text>', 'Definition of done')
+    .option('--check-in <YYYY-MM-DD>', 'Check-in date (YYYY-MM-DD or "none" to clear)')
+    .option('--measure <text>', 'Current measure value (or "none" to clear)')
+    .option('--if-it-stalls <text>', 'Fallback plan if progress stalls')
     .option('--color <hex>', 'Goal accent hex color')
     .option('--status <status>', 'Goal status (active|achieved|archived)')
     .action(
       async (
         idOrName: string,
-        opts: { name?: string; description?: string; color?: string; status?: string },
+        opts: {
+          name?: string;
+          kind?: string;
+          description?: string;
+          doneWhen?: string;
+          checkIn?: string;
+          measure?: string;
+          ifItStalls?: string;
+          color?: string;
+          status?: string;
+        },
       ) => {
         const client = ctx.getClient();
         const goalId = await client.resolveGoalId(idOrName);
         const payload: UpdateGoalInput = {};
         if (opts.name !== undefined) payload.name = opts.name;
+        if (opts.kind !== undefined) {
+          const parsed = goalKindSchema.safeParse(opts.kind);
+          if (!parsed.success) {
+            throw new CliUsageError(`Invalid --kind '${opts.kind}'. Expected personal or company.`);
+          }
+          payload.kind = parsed.data;
+        }
         if (opts.description !== undefined) payload.description = opts.description;
+        if (opts.doneWhen !== undefined) payload.doneWhen = opts.doneWhen;
+        if (opts.checkIn !== undefined) {
+          payload.checkInDate = isClearToken(opts.checkIn)
+            ? null
+            : validateDateOnly(opts.checkIn, '--check-in');
+        }
+        if (opts.measure !== undefined) {
+          payload.measure = isClearToken(opts.measure) ? null : opts.measure;
+        }
+        if (opts.ifItStalls !== undefined) payload.ifItStalls = opts.ifItStalls;
         if (opts.color !== undefined) payload.color = opts.color;
         if (opts.status !== undefined) {
           const parsed = goalStatusSchema.safeParse(opts.status);
@@ -1043,6 +1128,72 @@ export function createProgram(ctx: ProgramContext): Command {
         emit<Goal>(goal, (g) => `Updated goal ${g.id}  ${g.name} [${g.status}]`);
       },
     );
+
+  goalCmd
+    .command('close <idOrName>')
+    .description('Close a goal as achieved or let-go (archived)')
+    .requiredOption('--status <status>', 'Closing status (achieved|let-go)')
+    .option('--note <text>', 'Closing reflection note')
+    .action(async (idOrName: string, opts: { status: string; note?: string }) => {
+      const normalized = opts.status.trim().toLowerCase();
+      let status: 'achieved' | 'archived';
+      if (normalized === 'achieved') {
+        status = 'achieved';
+      } else if (normalized === 'let-go' || normalized === 'archived') {
+        status = 'archived';
+      } else {
+        throw new CliUsageError(
+          `Invalid --status '${opts.status}'. Expected achieved or let-go.`,
+        );
+      }
+      const client = ctx.getClient();
+      const goalId = await client.resolveGoalId(idOrName);
+      const { goal } = await client.closeGoal(goalId, {
+        status,
+        ...(opts.note !== undefined ? { closingNote: opts.note } : {}),
+      });
+      emit<Goal>(
+        goal,
+        (g) =>
+          `Closed goal ${g.id}  ${g.name} [${g.status === 'archived' ? 'let-go' : g.status}]`,
+      );
+    });
+
+  goalCmd
+    .command('show <idOrName>')
+    .description('Show goal details, weekly stats, and quarterly history')
+    .action(async (idOrName: string) => {
+      const client = ctx.getClient();
+      const goalId = await client.resolveGoalId(idOrName);
+      const { goal } = await client.getGoal(goalId);
+      emit<GoalDetail>(goal, (g) => {
+        const lines: string[] = [
+          `${g.name} (${g.id})`,
+          `Kind: ${g.kind} | Status: ${g.status} | Focus this week: ${formatDuration(g.weeklyFocusMinutes)} (${g.weeklyBlockCount} blocks) | Projects: ${g.linkedProjectCount}`,
+        ];
+        if (g.description) lines.push(`Why it matters: ${g.description}`);
+        if (g.doneWhen) lines.push(`Done when: ${g.doneWhen}`);
+        if (g.checkInDate) lines.push(`Check in: ${g.checkInDate}`);
+        if (g.measure) lines.push(`Measure: ${g.measure}`);
+        if (g.ifItStalls) lines.push(`If it stalls: ${g.ifItStalls}`);
+        if (g.closingNote) lines.push(`Closing note: ${g.closingNote}`);
+        if (g.history.length > 0) {
+          lines.push(`History (${g.history.length}):`);
+          for (const item of g.history) {
+            if (item.kind === 'measure') {
+              lines.push(
+                `  - [${item.weekStartDate}] Measure: ${item.previousValue ?? '(none)'} -> ${item.value}`,
+              );
+            } else {
+              lines.push(
+                `  - [${item.timestamp.slice(0, 10)}] ${item.blockTitle}: ${item.outcomeNote} (${formatDuration(item.totalFocusMinutes)})`,
+              );
+            }
+          }
+        }
+        return lines.join('\n');
+      });
+    });
 
   // -------------------------------------------------------------------------
   // Focus & Sessions Commands

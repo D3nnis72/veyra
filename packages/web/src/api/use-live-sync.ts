@@ -16,6 +16,7 @@ function getKeysToInvalidate(payload: SseEventPayload | null): string[][] {
       ['projects'],
       ['project'],
       ['goals'],
+      ['goal'],
       ['blocks'],
       ['block'],
       ['focus'],
@@ -40,34 +41,37 @@ function getKeysToInvalidate(payload: SseEventPayload | null): string[][] {
       ['block'],
       ['projects'],
       ['project'],
+      ['goals'],
+      ['goal'],
       ['review'],
       ['focus'],
     ];
   }
 
   if (entity === 'block' || type.startsWith('block.')) {
-    keys.push(['blocks'], ['block'], ['projects'], ['project'], ['focus']);
+    keys.push(['blocks'], ['block'], ['projects'], ['project'], ['goals'], ['goal'], ['focus']);
     for (const key of CORE_COMPOSITE_KEYS) keys.push([key]);
     if (payload.id) keys.push(['block', payload.id]);
     return keys;
   }
 
   if (entity === 'focus_session' || type.startsWith('focus.') || type.startsWith('session.')) {
-    keys.push(['focus'], ['blocks'], ['block'], ['projects'], ['project']);
+    keys.push(['focus'], ['blocks'], ['block'], ['projects'], ['project'], ['goals'], ['goal']);
     for (const key of CORE_COMPOSITE_KEYS) keys.push([key]);
     return keys;
   }
 
   if (entity === 'project' || type.startsWith('project.')) {
-    keys.push(['projects'], ['project'], ['blocks']);
+    keys.push(['projects'], ['project'], ['goals'], ['goal'], ['blocks']);
     for (const key of CORE_COMPOSITE_KEYS) keys.push([key]);
     if (payload.id) keys.push(['project', payload.id]);
     return keys;
   }
 
   if (entity === 'goal' || type.startsWith('goal.')) {
-    keys.push(['goals'], ['projects'], ['project'], ['blocks']);
+    keys.push(['goals'], ['goal'], ['projects'], ['project'], ['blocks']);
     for (const key of CORE_COMPOSITE_KEYS) keys.push([key]);
+    if (payload.id) keys.push(['goal', payload.id]);
     return keys;
   }
 
@@ -102,6 +106,7 @@ function getKeysToInvalidate(payload: SseEventPayload | null): string[][] {
     ['projects'],
     ['project'],
     ['goals'],
+    ['goal'],
     ['blocks'],
     ['block'],
     ['focus'],

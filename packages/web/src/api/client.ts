@@ -7,6 +7,7 @@ import type {
   CalendarEventSource,
   CalendarSyncStatus,
   CloseFocusResult,
+  CloseGoalInput,
   CompleteBlockResult,
   CreateBlockInput,
   CreateDailyNoteInput,
@@ -17,6 +18,8 @@ import type {
   FocusSession,
   FocusStatus,
   Goal,
+  GoalDetail,
+  GoalWithStats,
   ListActivityFilter,
   ListBlocksFilter,
   ListDailyNotesFilter,
@@ -36,6 +39,7 @@ import type {
   ProjectWithStats,
   PublicSettings,
   ReorderBlockInput,
+  ReorderGoalInput,
   SplitSessionInput,
   SplitSessionResult,
   StartFocusResult,
@@ -147,7 +151,7 @@ export interface TodayResponse {
   todayEvents: CalendarEvent[];
   dailyNotesCount: number;
   projects: ProjectWithStats[];
-  goals: Goal[];
+  goals: GoalWithStats[];
 }
 
 export interface PlanDayBucket {
@@ -165,7 +169,7 @@ export interface PlanResponse {
   inbox: Block[];
   later: Block[];
   projects: ProjectWithStats[];
-  goals: Goal[];
+  goals: GoalWithStats[];
 }
 
 export interface CalendarSessionItem extends FocusSession {
@@ -184,7 +188,7 @@ export interface CalendarResponse {
   plannedBlocks: Block[];
   events: CalendarEvent[];
   projects: ProjectWithStats[];
-  goals: Goal[];
+  goals: GoalWithStats[];
 }
 
 export interface ProjectDetailResponse {
@@ -195,7 +199,7 @@ export interface ProjectDetailResponse {
 
 export interface ReviewResponse extends WeeklyReviewSummary {
   projects: ProjectWithStats[];
-  goals: Goal[];
+  goals: GoalWithStats[];
 }
 
 export interface SettingsResponse {
@@ -423,6 +427,7 @@ export const queryKeys = {
   review: (weekStart?: string) =>
     weekStart ? (['review', weekStart] as const) : (['review'] as const),
   goals: (filter?: ListGoalsFilter) => ['goals', filter ?? {}] as const,
+  goal: (id: string) => ['goal', id] as const,
   projects: (filter?: ListProjectsFilter) => ['projects', filter ?? {}] as const,
   project: (id: string) => ['project', id] as const,
   blocks: (filter?: ListBlocksFilter) => ['blocks', filter ?? {}] as const,
@@ -471,14 +476,20 @@ export const apiClient = {
   },
 
   // Goals
-  listGoals(filter?: ListGoalsFilter): Promise<{ goals: Goal[] }> {
-    return request<{ goals: Goal[] }>(
+  listGoals(filter?: ListGoalsFilter): Promise<{ goals: GoalWithStats[] }> {
+    return request<{ goals: GoalWithStats[] }>(
       'GET',
       `/api/goals${buildQuery({
         status: filter?.status,
+        kind: filter?.kind,
         includeArchived: filter?.includeArchived,
+        activeOnly: filter?.activeOnly,
       })}`,
     );
+  },
+
+  getGoal(id: string): Promise<{ goal: GoalDetail }> {
+    return request<{ goal: GoalDetail }>('GET', `/api/goals/${encodeURIComponent(id)}`);
   },
 
   createGoal(input: CreateGoalInput): Promise<{ goal: Goal }> {
@@ -487,6 +498,14 @@ export const apiClient = {
 
   updateGoal(id: string, input: UpdateGoalInput): Promise<{ goal: Goal }> {
     return request<{ goal: Goal }>('PATCH', `/api/goals/${encodeURIComponent(id)}`, input);
+  },
+
+  closeGoal(id: string, input: CloseGoalInput): Promise<{ goal: Goal }> {
+    return request<{ goal: Goal }>('POST', `/api/goals/${encodeURIComponent(id)}/close`, input);
+  },
+
+  reorderGoal(id: string, input: ReorderGoalInput): Promise<{ goal: Goal }> {
+    return request<{ goal: Goal }>('POST', `/api/goals/${encodeURIComponent(id)}/reorder`, input);
   },
 
   deleteGoal(id: string): Promise<{ goal: Goal }> {
