@@ -13,17 +13,30 @@ export interface GoalTint {
 
 const SURFACE = { r: 0x1c, g: 0x1c, b: 0x1c };
 
-/** Hand-tuned text colors for Veyra's accent palette (PROJECT_ACCENT_COLORS + default goal blue). */
+/** Hand-tuned text colors for Veyra's 12 curated Figma presets + 8 legacy project accents. */
 const KNOWN_TEXT: Record<string, string> = {
-  '#3b4bd8': '#AEB8FF', // Indigo
-  '#4da3ff': '#8FC7FF', // Blue
-  '#2e9e6f': '#7BE0B0', // Emerald
-  '#d9772b': '#F5B27A', // Amber
-  '#c94a6a': '#FF9EB5', // Rose
-  '#2a8fbd': '#7ED3F5', // Cyan
-  '#8b5cf6': '#C9B6FF', // Violet
-  '#c49b2a': '#F0D27A', // Gold
-  '#6e7280': '#C4C7D0', // Slate
+  // 12 Curated Figma ColorPicker presets
+  '#5e6ad2': '#AEB8FF', // Indigo
+  '#4da3ff': '#8FC7FF', // Sky
+  '#22d3ee': '#7EE8FA', // Cyan
+  '#14b8a6': '#6BE5D8', // Teal
+  '#34d399': '#7EE8BE', // Mint
+  '#84cc16': '#BCE876', // Lime
+  '#f59e0b': '#FBD07A', // Amber
+  '#f97316': '#FCA872', // Orange
+  '#fb7185': '#FDA4B2', // Coral
+  '#f43f5e': '#FF9EB0', // Rose
+  '#ec4899': '#F9A0CB', // Pink
+  '#9d7ff7': '#C9B6FF', // Violet
+  // Legacy 8 accent colors
+  '#3b4bd8': '#AEB8FF', // Legacy Indigo
+  '#2e9e6f': '#7BE0B0', // Legacy Emerald
+  '#d9772b': '#F5B27A', // Legacy Amber
+  '#c94a6a': '#FF9EB5', // Legacy Rose
+  '#2a8fbd': '#7ED3F5', // Legacy Cyan
+  '#8b5cf6': '#C9B6FF', // Legacy Violet
+  '#c49b2a': '#F0D27A', // Legacy Gold
+  '#6e7280': '#C4C7D0', // Legacy Slate
 };
 
 function parseHex(hex: string): { r: number; g: number; b: number } | null {
