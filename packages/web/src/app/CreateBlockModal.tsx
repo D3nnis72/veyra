@@ -32,6 +32,7 @@ import { ToggleSwitch } from '../components/ToggleSwitch';
 import { goalChipStyle } from '../components/goalTint';
 import { addDaysDateString, formatDuration, getTodayDateString } from '../components/icons';
 import { type CreateBlockDefaults, useAppShell } from './AppShellContext';
+import { formatHotkeyLabel, matchesAnyAccelerator, useHotkeys } from './hotkeys';
 
 export interface CreateBlockModalProps {
   open: boolean;
@@ -44,6 +45,7 @@ type ScheduleChoice = 'today' | 'tomorrow' | 'inbox' | 'later' | 'custom';
 export function CreateBlockModal({ open, defaults, onClose }: CreateBlockModalProps) {
   const queryClient = useQueryClient();
   const { projects, goals, startFocusAndNavigate } = useAppShell();
+  const hotkeys = useHotkeys();
   const titleRef = useRef<HTMLInputElement>(null);
   const wasOpenRef = useRef(false);
 
@@ -57,6 +59,7 @@ export function CreateBlockModal({ open, defaults, onClose }: CreateBlockModalPr
 
   const [title, setTitle] = useState('');
   const [projectId, setProjectId] = useState<string>(SYSTEM_OTHER_PROJECT_ID);
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [goalId, setGoalId] = useState<string>('');
   const selectedGoal = goalId ? goals.find((g) => g.id === goalId) : undefined;
   const [scheduleChoice, setScheduleChoice] = useState<ScheduleChoice>('today');
@@ -119,6 +122,7 @@ export function CreateBlockModal({ open, defaults, onClose }: CreateBlockModalPr
     setNotes('');
     setLinks([]);
     setLinkInputOpen(false);
+    setProjectPickerOpen(false);
     setError(null);
 
     window.setTimeout(() => titleRef.current?.focus(), 30);
@@ -215,11 +219,22 @@ export function CreateBlockModal({ open, defaults, onClose }: CreateBlockModalPr
     submit(false);
   };
 
-  // Global ⌘↵ (Create) and ⌘⇧↵ (Create & Focus) shortcuts inside modal
+  // Global ⌘↵ (Create), ⌘⇧↵ (Create & Focus), and ⌃P (searchable Project picker) shortcuts inside modal
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      if (matchesAnyAccelerator(e, hotkeys.cycleProject)) {
+        e.preventDefault();
+        e.stopPropagation();
+        setProjectPickerOpen((prev) => {
+          if (prev) {
+            window.setTimeout(() => titleRef.current?.focus(), 10);
+          }
+          return !prev;
+        });
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !projectPickerOpen) {
         e.preventDefault();
         submit(e.shiftKey);
       }
@@ -228,12 +243,13 @@ export function CreateBlockModal({ open, defaults, onClose }: CreateBlockModalPr
     return () => window.removeEventListener('keydown', onKeyDown);
   });
 
-  const selectedProject = activeProjects.find((p) => p.id === projectId);
+  const projectHotkeyLabel = formatHotkeyLabel(hotkeys.cycleProject);
 
   return (
     <ModalSheet
       open={open}
       onClose={onClose}
+      dismissOnEscape={!projectPickerOpen}
       width={640}
       ariaLabel="Create Block"
       title="New Block"
@@ -289,8 +305,14 @@ export function CreateBlockModal({ open, defaults, onClose }: CreateBlockModalPr
           {/* Project */}
           <SelectPopover
             ariaLabel="Project"
-            menuTitle="Project"
+            menuTitle={projectHotkeyLabel ? `Project · ${projectHotkeyLabel}` : 'Project'}
+            triggerTitle={projectHotkeyLabel ? `Select project (${projectHotkeyLabel})` : 'Select project'}
             value={projectId}
+            open={projectPickerOpen}
+            onOpenChange={setProjectPickerOpen}
+            searchable
+            searchPlaceholder="Filter projects…"
+            onCloseFocus={() => window.setTimeout(() => titleRef.current?.focus(), 10)}
             onChange={(val) => handleProjectChange(val)}
             options={activeProjects.map((p) => ({
               value: p.id,

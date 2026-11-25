@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { ExternalLink } from '@veyra/core/types';
-import { Check, ChevronDown, CornerDownLeft, Flame, FolderKanban, Inbox, NotebookPen, Play, X } from 'lucide-react';
+import { Check, ChevronDown, CornerDownLeft, Flame, FolderKanban, Inbox, NotebookPen, Play, Search, X } from 'lucide-react';
 import { type FormEvent, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../api/client';
 import {
@@ -13,7 +13,7 @@ import { inferLinkSource, inferLinkTitle } from '../components/LinkChip';
 import { ProjectBadge } from '../components/ProjectBadge';
 import { getTodayDateString } from '../components/icons';
 import { AppShellContext } from './AppShellContext';
-import { matchesAnyAccelerator, useHotkeys } from './hotkeys';
+import { formatHotkeyLabel, matchesAnyAccelerator, useHotkeys } from './hotkeys';
 
 export type QuickCaptureTab = 'daily-note' | 'inbox' | 'focus';
 
@@ -74,10 +74,13 @@ export function QuickCaptureOverlay({
   const [blockNoteOrUrl, setBlockNoteOrUrl] = useState('');
   const [projectId, setProjectId] = useState<string>('');
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+  const [projectQuery, setProjectQuery] = useState('');
+  const [projectActiveIndex, setProjectActiveIndex] = useState(0);
   const [isOps, setIsOps] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const primaryInputRef = useRef<HTMLInputElement>(null);
+  const projectSearchRef = useRef<HTMLInputElement>(null);
 
   // Dedupe: keep non-system projects first, then system "Other" once at the end
   const orderedProjects = useMemo(() => {
@@ -86,19 +89,73 @@ export function QuickCaptureOverlay({
     return [...regular, ...system];
   }, [projects]);
 
+  const projectPickerOptions = useMemo(() => {
+    const base = [
+      {
+        id: '',
+        name: tab === 'daily-note' ? 'No project' : 'Other',
+        project: null as (typeof orderedProjects)[number] | null,
+      },
+      ...orderedProjects
+        .filter((p) => !p.isSystem)
+        .map((p) => ({ id: p.id, name: p.name, project: p })),
+    ];
+    const needle = projectQuery.trim().toLowerCase();
+    if (!needle) return base;
+    const prefix: typeof base = [];
+    const substring: typeof base = [];
+    for (const item of base) {
+      const lower = item.name.toLowerCase();
+      if (lower.startsWith(needle)) {
+        prefix.push(item);
+      } else if (lower.includes(needle)) {
+        substring.push(item);
+      }
+    }
+    return [...prefix, ...substring];
+  }, [orderedProjects, tab, projectQuery]);
+
   const selectedProject = useMemo(
     () => orderedProjects.find((p) => p.id === projectId) ?? null,
     [orderedProjects, projectId],
   );
 
+  const closeProjectPicker = () => {
+    setProjectPickerOpen(false);
+    setProjectQuery('');
+    window.setTimeout(() => primaryInputRef.current?.focus(), 10);
+  };
+
+  const openProjectPicker = () => {
+    setProjectQuery('');
+    setProjectPickerOpen(true);
+    const currentIdx = [
+      '',
+      ...orderedProjects.filter((p) => !p.isSystem).map((p) => p.id),
+    ].indexOf(projectId);
+    setProjectActiveIndex(currentIdx >= 0 ? currentIdx : 0);
+    window.setTimeout(() => projectSearchRef.current?.focus(), 10);
+  };
+
   const dismiss = () => {
     setError(null);
     setProjectPickerOpen(false);
+    setProjectQuery('');
     if (standalone) {
       void window.veyraDesktop?.closeCaptureWindow();
     }
     onClose?.();
   };
+
+  useEffect(() => {
+    if (!projectPickerOpen) return;
+    if (projectQuery.trim()) {
+      setProjectActiveIndex(0);
+    } else {
+      const idx = projectPickerOptions.findIndex((o) => o.id === projectId);
+      setProjectActiveIndex(idx >= 0 ? idx : 0);
+    }
+  }, [projectQuery, projectPickerOpen]);
 
   useEffect(() => {
     if (open) {
@@ -212,21 +269,52 @@ export function QuickCaptureOverlay({
 
   // Full keyboard navigation inside Quick Capture:
   // - Tab / Shift+Tab: cycle tabs (Daily Note -> Park into Inbox -> Focus Now)
-  // - Ctrl+P: cycle project (rebindable)
+  // - Ctrl+P: open searchable project picker (rebindable); when open, arrows/Ctrl+P navigate and Enter picks
   // - Alt+O: toggle Ops (rebindable)
   // - Cmd+Enter: create & start focus immediately (on Inbox or Focus tab)
-  // - Esc: close
+  // - Esc: close project picker first, then overlay
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
         if (projectPickerOpen) {
-          setProjectPickerOpen(false);
-          window.setTimeout(() => primaryInputRef.current?.focus(), 10);
+          closeProjectPicker();
           return;
         }
         dismiss();
+        return;
+      }
+
+      if (projectPickerOpen) {
+        if (matchesAnyAccelerator(e, hotkeys.cycleProject) || e.key === 'ArrowDown') {
+          e.preventDefault();
+          setProjectActiveIndex((idx) =>
+            projectPickerOptions.length > 0 ? (idx + 1) % projectPickerOptions.length : 0,
+          );
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          setProjectActiveIndex((idx) =>
+            projectPickerOptions.length > 0
+              ? (idx - 1 + projectPickerOptions.length) % projectPickerOptions.length
+              : 0,
+          );
+          return;
+        }
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          e.stopPropagation();
+          const chosen = projectPickerOptions[projectActiveIndex];
+          if (chosen) {
+            setProjectId(chosen.id);
+            closeProjectPicker();
+          }
+          return;
+        }
         return;
       }
 
@@ -245,11 +333,7 @@ export function QuickCaptureOverlay({
 
       if (matchesAnyAccelerator(e, hotkeys.cycleProject)) {
         e.preventDefault();
-        const ids = ['', ...orderedProjects.filter((p) => !p.isSystem).map((p) => p.id)];
-        setProjectId((cur) => {
-          const idx = ids.indexOf(cur);
-          return ids[(idx + 1) % ids.length] ?? '';
-        });
+        openProjectPicker();
         return;
       }
 
@@ -265,9 +349,25 @@ export function QuickCaptureOverlay({
       }
     };
 
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open, tab, orderedProjects, projectPickerOpen, noteContent, blockTitle, blockNoteOrUrl, projectId, isOps, isPending, hotkeys]);
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [
+    open,
+    tab,
+    orderedProjects,
+    projectPickerOpen,
+    projectPickerOptions,
+    projectActiveIndex,
+    noteContent,
+    blockTitle,
+    blockNoteOrUrl,
+    projectId,
+    isOps,
+    isPending,
+    hotkeys,
+  ]);
+
+  const projectHotkeyLabel = formatHotkeyLabel(hotkeys.cycleProject) || '⌃P';
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -330,7 +430,9 @@ export function QuickCaptureOverlay({
           </button>
         </div>
 
-        <span className="text-[11px] text-[#6E6E6E] shrink-0">Tab switch · ⌃P project · Esc</span>
+        <span className="text-[11px] text-[#6E6E6E] shrink-0">
+          Tab switch · {projectHotkeyLabel} project · Esc
+        </span>
       </div>
 
       {/* Borderless Spotlight-style Inputs */}
@@ -376,7 +478,8 @@ export function QuickCaptureOverlay({
           <button
             type="button"
             tabIndex={-1}
-            onClick={() => setProjectPickerOpen((v) => !v)}
+            title={`Select project (${projectHotkeyLabel})`}
+            onClick={() => (projectPickerOpen ? closeProjectPicker() : openProjectPicker())}
             className="inline-flex items-center gap-2 h-8 pl-2 pr-2.5 rounded-[7px] bg-[#262626] border border-[#3C3C3C] hover:border-[#525252] text-[12.5px] font-medium text-[#EDEDED] cursor-pointer transition-colors"
           >
             {selectedProject ? (
@@ -445,74 +548,90 @@ export function QuickCaptureOverlay({
         </div>
       </div>
 
-      {/* Sleek inline dark Project Picker overlay (never clipped inside 580×204 floating window!) */}
+      {/* Sleek inline searchable dark Project Picker overlay (never clipped inside 580×204 floating window!) */}
       {projectPickerOpen ? (
-        <div className="absolute inset-0 z-20 bg-[#1C1C1C]/98 backdrop-blur-md px-5 py-4 flex flex-col gap-2.5 animate-veyra-fade">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-[#9A9A9A]">
-              Choose Project
-            </span>
+        <div className="absolute inset-0 z-20 bg-[#1C1C1C]/98 backdrop-blur-md px-5 py-3.5 flex flex-col gap-2.5 animate-veyra-fade">
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1 flex items-center">
+              <Search
+                size={13}
+                className="pointer-events-none absolute left-2.5 text-[#6E6E6E]"
+              />
+              <input
+                ref={projectSearchRef}
+                type="text"
+                aria-label="Filter projects"
+                value={projectQuery}
+                onChange={(e) => setProjectQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                  }
+                }}
+                placeholder="Filter projects… (↑↓ / ↵)"
+                className="w-full h-8 pl-8 pr-3 rounded-[8px] bg-[#242424] border border-[#3C3C3C] focus:border-[#5566F2] text-[12.5px] text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none"
+              />
+            </div>
             <button
               type="button"
-              onClick={() => {
-                setProjectPickerOpen(false);
-                window.setTimeout(() => primaryInputRef.current?.focus(), 10);
-              }}
+              onClick={closeProjectPicker}
               aria-label="Close project picker"
-              className="h-6 w-6 rounded-[6px] bg-[#262626] border border-[#3C3C3C] inline-flex items-center justify-center text-[#9A9A9A] hover:text-[#EDEDED]"
+              className="h-8 w-8 rounded-[8px] bg-[#262626] border border-[#3C3C3C] inline-flex items-center justify-center text-[#9A9A9A] hover:text-[#EDEDED] shrink-0"
             >
               <X size={13} />
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto grid grid-cols-3 gap-1.5 content-start">
-            <button
-              type="button"
-              onClick={() => {
-                setProjectId('');
-                setProjectPickerOpen(false);
-                window.setTimeout(() => primaryInputRef.current?.focus(), 10);
-              }}
-              className={[
-                'h-9 px-2.5 rounded-[8px] border text-left text-[12.5px] font-medium flex items-center justify-between gap-2 transition-colors',
-                projectId === ''
-                  ? 'bg-[#1F2759] border-[#5566F2]/60 text-[#D6DCFF]'
-                  : 'bg-[#242424] border-[#323232] text-[#C4C4C4] hover:border-[#4A4A4A] hover:text-[#EDEDED]',
-              ].join(' ')}
-            >
-              <span className="flex items-center gap-2 min-w-0">
-                <FolderKanban size={13} className="text-[#9A9A9A] shrink-0" />
-                <span className="truncate">{tab === 'daily-note' ? 'No project' : 'Other'}</span>
-              </span>
-              {projectId === '' ? <Check size={12} className="text-[#AEB8FF] shrink-0" /> : null}
-            </button>
-            {orderedProjects
-              .filter((p) => !p.isSystem)
-              .map((p) => {
-                const active = projectId === p.id;
+          <div
+            role="listbox"
+            aria-label="Projects"
+            className="flex-1 overflow-y-auto grid grid-cols-3 gap-1.5 content-start"
+          >
+            {projectPickerOptions.length === 0 ? (
+              <div className="col-span-3 py-4 text-center text-[12.5px] text-[#6E6E6E]">
+                No matching projects
+              </div>
+            ) : (
+              projectPickerOptions.map((item, idx) => {
+                const active = projectId === item.id;
+                const highlighted = idx === projectActiveIndex;
                 return (
                   <button
-                    key={p.id}
+                    key={item.id || '__default'}
                     type="button"
+                    role="option"
+                    aria-selected={active}
+                    onMouseEnter={() => setProjectActiveIndex(idx)}
                     onClick={() => {
-                      setProjectId(p.id);
-                      setProjectPickerOpen(false);
-                      window.setTimeout(() => primaryInputRef.current?.focus(), 10);
+                      setProjectId(item.id);
+                      closeProjectPicker();
                     }}
                     className={[
                       'h-9 px-2.5 rounded-[8px] border text-left text-[12.5px] font-medium flex items-center justify-between gap-2 transition-colors',
                       active
                         ? 'bg-[#1F2759] border-[#5566F2]/60 text-[#D6DCFF]'
-                        : 'bg-[#242424] border-[#323232] text-[#EDEDED] hover:border-[#4A4A4A]',
+                        : highlighted
+                          ? 'bg-[#2A2A2A] border-[#5566F2]/60 text-[#EDEDED]'
+                          : 'bg-[#242424] border-[#323232] text-[#EDEDED] hover:border-[#4A4A4A]',
                     ].join(' ')}
                   >
                     <span className="flex items-center gap-2 min-w-0">
-                      <ProjectBadge name={p.name} color={p.color} icon={p.icon} size="xs" />
-                      <span className="truncate">{p.name}</span>
+                      {item.project ? (
+                        <ProjectBadge
+                          name={item.project.name}
+                          color={item.project.color}
+                          icon={item.project.icon}
+                          size="xs"
+                        />
+                      ) : (
+                        <FolderKanban size={13} className="text-[#9A9A9A] shrink-0" />
+                      )}
+                      <span className="truncate">{item.name}</span>
                     </span>
                     {active ? <Check size={12} className="text-[#AEB8FF] shrink-0" /> : null}
                   </button>
                 );
-              })}
+              })
+            )}
           </div>
         </div>
       ) : null}

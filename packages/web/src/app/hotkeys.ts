@@ -65,8 +65,8 @@ export const HOTKEY_META: Record<HotkeyId, HotkeyMeta> = {
   cycleProject: {
     id: 'cycleProject',
     scope: 'capture',
-    label: 'Cycle Project',
-    description: 'Switch the active project directly from the keyboard',
+    label: 'Select Project',
+    description: 'Open the searchable project picker in Quick Capture and New Block composer',
   },
   toggleOps: {
     id: 'toggleOps',
