@@ -785,12 +785,71 @@ export interface GoalDetail extends GoalWithStats {
   history: GoalHistoryItem[];
 }
 
+export interface ProjectWeekPoint {
+  weekStartDate: DateOnly;
+  focusMinutes: number;
+}
+
 export interface ProjectWithStats extends Project {
   isQuiet: boolean;
   weeklyFocusMinutes: number;
+  weeklyVarianceStatus: ProjectVarianceStatus;
+  weeklyHistory8w: ProjectWeekPoint[];
+  averageWeeklyMinutes8w: number;
+  learnedBlockSizeMinutes: BlockSizeMinutes | null;
+  sizeDriftPct: number | null;
   openBlockCount: number;
   nextBlockTitle: string | null;
   lastTouchedAt: string;
+}
+
+export interface RoomTodaySummary {
+  roomMinutes: number;
+  baselineFocusMinutes: number;
+  meetingMinutes: number;
+  hasLearnedBaseline: boolean;
+  weekdayLabel: string;
+}
+
+export interface SuggestedOrderItem {
+  blockId: string;
+  effectiveSizeMinutes: BlockSizeMinutes;
+  reason: string;
+  isChronicCarryover: boolean;
+  isMotionHotSpot: boolean;
+  isBehindWeeklyTime: boolean;
+}
+
+export interface FitLineSummary {
+  fitLineIndex: number;
+  fittingMinutes: number;
+  remainingMinutes: number;
+  overflowBlockCount: number;
+  overflowMinutes: number;
+}
+
+export interface DayLookBackSummary {
+  date: DateOnly;
+  isYesterday: boolean;
+  focusedMinutes: number;
+  roomMinutes: number;
+  goalSharePct: number;
+  movedGoalCount: number;
+  completedCount: number;
+  notFitBlocks: Array<{ id: string; title: string; destination: string }>;
+}
+
+export interface PlanProjectTimeItem {
+  projectId: string;
+  plannedMinutes: number;
+  loggedMinutes: number;
+  weeklyTimeMinutes: number | null;
+}
+
+export interface PlanDayCapacity {
+  date: DateOnly;
+  plannedMinutes: number;
+  roomMinutes: number;
 }
 
 export interface BlockDetail extends Block {

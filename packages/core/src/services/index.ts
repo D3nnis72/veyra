@@ -78,3 +78,14 @@ export {
   toPublicSettings,
   updateSettings,
 } from './settings.js';
+export {
+  type ComputeTodayCapacityOptions,
+  type PlanCapacityResult,
+  type ProjectSizeStats,
+  type TodayCapacityResult,
+  applySuggestedOrder,
+  computePlanCapacity,
+  computeProjectSizeStatsMap,
+  computeTodayCapacity,
+  computeWeekdayRoom,
+} from './capacity.js';

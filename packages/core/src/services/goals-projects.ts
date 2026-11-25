@@ -12,7 +12,7 @@ import {
   goals,
   projects,
 } from '../schema.js';
-import { formatLocalDate, getLocalDayBoundsIso, getWeekRange } from '../time.js';
+import { addDaysToDateString, formatLocalDate, getLocalDayBoundsIso, getWeekRange } from '../time.js';
 import {
   type CloseGoalInput,
   type CreateGoalInput,
@@ -24,6 +24,8 @@ import {
   type ListGoalsFilter,
   type ListProjectsFilter,
   type Project,
+  type ProjectVarianceStatus,
+  type ProjectWeekPoint,
   type ProjectWithStats,
   type ReorderGoalInput,
   SYSTEM_OTHER_PROJECT_ID,
@@ -36,6 +38,7 @@ import {
   updateGoalInputSchema,
   updateProjectInputSchema,
 } from '../types.js';
+import { computeProjectSizeStatsMap } from './capacity.js';
 import {
   type ServiceMutationOptions,
   computeOverlapMs,
@@ -875,6 +878,19 @@ function compareOpenBlocksForNext(
   return a.orderKey < b.orderKey ? -1 : 1;
 }
 
+function computeWeeklyVarianceStatus(
+  weeklyFocusMinutes: number,
+  weeklyTimeMinutes: number | null,
+): ProjectVarianceStatus {
+  if (weeklyTimeMinutes !== null) {
+    if (weeklyFocusMinutes === 0) return 'untouched';
+    if (weeklyFocusMinutes > weeklyTimeMinutes * 1.2) return 'over';
+    if (weeklyFocusMinutes < weeklyTimeMinutes * 0.8) return 'under';
+    return 'on_track';
+  }
+  return weeklyFocusMinutes > 60 ? 'time_without_plan' : 'unplanned';
+}
+
 function computeProjectsWithStats(
   veyraDb: VeyraDb,
   projectRows: Project[],
@@ -885,9 +901,21 @@ function computeProjectsWithStats(
   const nowMs = nowDate.getTime();
   const timezone = getActiveTimezone(veyraDb);
   const today = formatLocalDate(nowDate, timezone);
-  const { weekStartDate, weekEndDate } = getWeekRange(today);
-  const weekStartMs = Date.parse(getLocalDayBoundsIso(weekStartDate, timezone).startIso);
-  const weekEndMs = Date.parse(getLocalDayBoundsIso(weekEndDate, timezone).endIso);
+  const { weekStartDate } = getWeekRange(today);
+
+  // Build 8 chronological week buckets: 7 prior weeks + current week (index 7)
+  const weekBuckets: Array<{ weekStartDate: string; startMs: number; endMs: number }> = [];
+  for (let i = 7; i >= 0; i--) {
+    const wStart = addDaysToDateString(weekStartDate, -i * 7);
+    const wEnd = addDaysToDateString(wStart, 6);
+    weekBuckets.push({
+      weekStartDate: wStart,
+      startMs: Date.parse(getLocalDayBoundsIso(wStart, timezone).startIso),
+      endMs: Date.parse(getLocalDayBoundsIso(wEnd, timezone).endIso),
+    });
+  }
+  const eightWeekStartMs = weekBuckets[0].startMs;
+  const eightWeekEndMs = weekBuckets[7].endMs;
 
   const allBlocks = veyraDb.db
     .select()
@@ -921,7 +949,7 @@ function computeProjectsWithStats(
     .where(isNull(focusSessions.deletedAt))
     .all();
 
-  const weeklyMsByProject = new Map<string, number>();
+  const weeklyMsBucketsByProject = new Map<string, number[]>();
   const lastSessionEndByProject = new Map<string, { ms: number; iso: string }>();
 
   for (const session of allSessions) {
@@ -943,9 +971,18 @@ function computeProjectsWithStats(
     const endIso = session.endedAt ?? nowIso;
     const endMs = session.endedAt ? Date.parse(session.endedAt) : nowMs;
 
-    const overlapMs = computeOverlapMs(startMs, endMs, weekStartMs, weekEndMs);
-    if (overlapMs > 0) {
-      weeklyMsByProject.set(projectId, (weeklyMsByProject.get(projectId) ?? 0) + overlapMs);
+    if (computeOverlapMs(startMs, endMs, eightWeekStartMs, eightWeekEndMs) > 0) {
+      let buckets = weeklyMsBucketsByProject.get(projectId);
+      if (!buckets) {
+        buckets = [0, 0, 0, 0, 0, 0, 0, 0];
+        weeklyMsBucketsByProject.set(projectId, buckets);
+      }
+      for (let i = 0; i < 8; i++) {
+        const overlap = computeOverlapMs(startMs, endMs, weekBuckets[i].startMs, weekBuckets[i].endMs);
+        if (overlap > 0) {
+          buckets[i] += overlap;
+        }
+      }
     }
 
     const prevEnd = lastSessionEndByProject.get(projectId);
@@ -953,6 +990,8 @@ function computeProjectsWithStats(
       lastSessionEndByProject.set(projectId, { ms: endMs, iso: endIso });
     }
   }
+
+  const sizeStatsMap = computeProjectSizeStatsMap(veyraDb, nowDate);
 
   return projectRows.map((project) => {
     const openBlocks = (openBlocksByProject.get(project.id) ?? []).slice();
@@ -976,10 +1015,29 @@ function computeProjectsWithStats(
 
     const isQuiet = project.status === 'active' && nowMs - lastTouchedMs > SEVEN_DAYS_MS;
 
+    const msBuckets = weeklyMsBucketsByProject.get(project.id) ?? [0, 0, 0, 0, 0, 0, 0, 0];
+    const weeklyHistory8w: ProjectWeekPoint[] = weekBuckets.map((wb, i) => ({
+      weekStartDate: wb.weekStartDate,
+      focusMinutes: msToRoundedMinutes(msBuckets[i]),
+    }));
+    const weeklyFocusMinutes = weeklyHistory8w[7].focusMinutes;
+    const weeklyVarianceStatus = computeWeeklyVarianceStatus(
+      weeklyFocusMinutes,
+      project.weeklyTimeMinutes,
+    );
+    const total8wMinutes = weeklyHistory8w.reduce((sum, pt) => sum + pt.focusMinutes, 0);
+    const averageWeeklyMinutes8w = Math.round(total8wMinutes / 8);
+    const sizeStats = sizeStatsMap.get(project.id);
+
     return {
       ...project,
       isQuiet,
-      weeklyFocusMinutes: msToRoundedMinutes(weeklyMsByProject.get(project.id) ?? 0),
+      weeklyFocusMinutes,
+      weeklyVarianceStatus,
+      weeklyHistory8w,
+      averageWeeklyMinutes8w,
+      learnedBlockSizeMinutes: sizeStats?.learnedSizeMinutes ?? null,
+      sizeDriftPct: sizeStats?.sizeDriftPct ?? null,
       openBlockCount: openBlocks.length,
       nextBlockTitle: openBlocks.length > 0 ? openBlocks[0].title : null,
       lastTouchedAt,
