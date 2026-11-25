@@ -19,7 +19,12 @@ import { GoalKindIconBadge } from '../components/GoalChip';
 import { ProjectBadge } from '../components/ProjectBadge';
 import { ToggleSwitch } from '../components/ToggleSwitch';
 import { goalTint } from '../components/goalTint';
-import { ProjectIcon, getProjectMonogram, isProjectIconKey } from '../components/icons';
+import {
+  ProjectIcon,
+  formatDuration,
+  getProjectMonogram,
+  isProjectIconKey,
+} from '../components/icons';
 
 export interface ProjectModalProps {
   open: boolean;
@@ -34,6 +39,47 @@ const STATUS_OPTIONS: Array<{ value: ProjectStatus; label: string }> = [
   { value: 'paused', label: 'Paused' },
   { value: 'archived', label: 'Archived' },
 ];
+
+const WEEKLY_TIME_PRESETS: Array<{ label: string; minutes: number | null }> = [
+  { label: 'None', minutes: null },
+  { label: '2h', minutes: 120 },
+  { label: '4h', minutes: 240 },
+  { label: '6h', minutes: 360 },
+  { label: '8h', minutes: 480 },
+];
+
+function formatWeeklyTimeInput(minutes: number | null): string {
+  if (minutes === null) return '';
+  return formatDuration(minutes);
+}
+
+function parseWeeklyTimeInput(raw: string): number | null | 'invalid' {
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed || trimmed === 'none') return null;
+
+  let minutes: number | null = null;
+  const hoursAndMins = /^(\d+(?:\.\d+)?)\s*h(?:\s*(\d+)\s*m)?$/i.exec(trimmed);
+  if (hoursAndMins) {
+    const hours = Number.parseFloat(hoursAndMins[1]);
+    const extraMins = hoursAndMins[2] ? Number.parseInt(hoursAndMins[2], 10) : 0;
+    minutes = Math.round(hours * 60 + extraMins);
+  } else {
+    const onlyMins = /^(\d+)\s*m$/i.exec(trimmed);
+    if (onlyMins) {
+      minutes = Number.parseInt(onlyMins[1], 10);
+    } else {
+      const bareHours = /^(\d+(?:\.\d+)?)$/.exec(trimmed);
+      if (bareHours) {
+        minutes = Math.round(Number.parseFloat(bareHours[1]) * 60);
+      }
+    }
+  }
+
+  if (minutes === null || Number.isNaN(minutes) || minutes < 15 || minutes > 4800) {
+    return 'invalid';
+  }
+  return minutes;
+}
 
 export function ProjectModal({
   open,
@@ -55,6 +101,7 @@ export function ProjectModal({
   const [selectedIcon, setSelectedIcon] = useState<ProjectIconKey>('Rocket');
   const [color, setColor] = useState<string>(COLOR_PICKER_PRESETS[0].hex);
   const [defaultGoalId, setDefaultGoalId] = useState<string | null>(null);
+  const [weeklyTimeText, setWeeklyTimeText] = useState('');
   const [notionUrl, setNotionUrl] = useState('');
   const [keywordsText, setKeywordsText] = useState('');
   const [isPinned, setIsPinned] = useState(false);
@@ -82,6 +129,7 @@ export function ProjectModal({
       }
       setColor(project.color || COLOR_PICKER_PRESETS[0].hex);
       setDefaultGoalId(project.defaultGoalId);
+      setWeeklyTimeText(formatWeeklyTimeInput(project.weeklyTimeMinutes));
       setNotionUrl(project.notionUrl ?? '');
       setKeywordsText((project.matchKeywords ?? []).join(', '));
       setIsPinned(project.isPinned);
@@ -93,6 +141,7 @@ export function ProjectModal({
       setSelectedIcon('Rocket');
       setColor(COLOR_PICKER_PRESETS[0].hex);
       setDefaultGoalId(null);
+      setWeeklyTimeText('');
       setNotionUrl('');
       setKeywordsText('');
       setIsPinned(true);
@@ -150,6 +199,11 @@ export function ProjectModal({
         }
       }
 
+      const parsedWeeklyTime = parseWeeklyTimeInput(weeklyTimeText);
+      if (parsedWeeklyTime === 'invalid') {
+        throw new Error('Weekly time must be between 15m and 80h (e.g. 3h, 2.5h, 90m).');
+      }
+
       const iconValue = badgeMode === 'icon' ? selectedIcon : null;
       const matchKeywords = keywordsText
         .split(',')
@@ -167,6 +221,7 @@ export function ProjectModal({
           status: isSystem ? 'active' : status,
           notionUrl: normalizedNotion,
           matchKeywords,
+          weeklyTimeMinutes: parsedWeeklyTime,
         });
         return res.project;
       }
@@ -181,6 +236,7 @@ export function ProjectModal({
         status,
         notionUrl: normalizedNotion,
         matchKeywords,
+        weeklyTimeMinutes: parsedWeeklyTime,
       });
       return res.project;
     },
@@ -564,6 +620,56 @@ export function ProjectModal({
               ) : null}
             </div>
           ) : null}
+        </section>
+
+        {/* Weekly Time (Optional) */}
+        <section
+          aria-label="Weekly time"
+          className="border-t border-[#2A2A2A] pt-5 space-y-3"
+        >
+          <span className={`${sectionLabel} block`}>Weekly Time (Optional)</span>
+
+          <div className="flex items-center flex-wrap gap-2">
+            {WEEKLY_TIME_PRESETS.map((preset) => {
+              const currentParsed = parseWeeklyTimeInput(weeklyTimeText);
+              const active = currentParsed === preset.minutes;
+              return (
+                <button
+                  key={preset.label}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() =>
+                    setWeeklyTimeText(
+                      preset.minutes === null ? '' : formatWeeklyTimeInput(preset.minutes),
+                    )
+                  }
+                  className={[
+                    'h-9 px-3.5 rounded-[8px] border text-[13px] font-medium tabular-nums transition-colors',
+                    active
+                      ? preset.minutes === null
+                        ? 'bg-[#2A2A2A] border-[#6E6E6E] text-[#EDEDED]'
+                        : 'bg-[#1F2759] border-[#5566F2] text-[#D6DCFF]'
+                      : 'bg-[#171717] border-[#3C3C3C] text-[#9A9A9A] hover:text-[#EDEDED] hover:border-[#4E4E4E]',
+                  ].join(' ')}
+                >
+                  {preset.label}
+                </button>
+              );
+            })}
+            <input
+              id="project-weekly-time-input"
+              aria-label="Weekly time"
+              type="text"
+              value={weeklyTimeText}
+              onChange={(e) => setWeeklyTimeText(e.target.value)}
+              placeholder="e.g. 3h, 2.5h, 90m"
+              className="w-36 h-9 px-3 rounded-[8px] bg-[#262626] border border-[#3C3C3C] focus:border-[#5566F2] text-[13px] text-[#EDEDED] placeholder:text-[#6E6E6E] tabular-nums focus:outline-none transition-colors"
+            />
+          </div>
+
+          <p className="text-[12px] text-[#6E6E6E]">
+            An intention, not a quota. Used in Projects, Plan, and Review.
+          </p>
         </section>
 
         {/* Links & calendar matching */}

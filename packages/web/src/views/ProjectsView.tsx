@@ -12,7 +12,15 @@ import { ProjectBadge } from '../components/ProjectBadge';
 import { formatDuration } from '../components/icons';
 import { ProjectModal } from './ProjectModal';
 
-type ProjectFilter = 'all' | 'active' | 'quiet' | 'paused' | 'archived';
+type ProjectFilter =
+  | 'all'
+  | 'active'
+  | 'quiet'
+  | 'paused'
+  | 'archived'
+  | 'over'
+  | 'under'
+  | 'untouched';
 
 function formatRelativeLastTouched(iso: string): string {
   const ms = Date.parse(iso);
@@ -53,6 +61,9 @@ export function ProjectsView() {
       quiet: allProjects.filter((p) => p.status === 'active' && p.isQuiet).length,
       paused: allProjects.filter((p) => p.status === 'paused').length,
       archived: allProjects.filter((p) => p.status === 'archived').length,
+      over: nonArchived.filter((p) => p.weeklyVarianceStatus === 'over').length,
+      under: nonArchived.filter((p) => p.weeklyVarianceStatus === 'under').length,
+      untouched: nonArchived.filter((p) => p.weeklyVarianceStatus === 'untouched').length,
     };
   }, [allProjects]);
 
@@ -64,6 +75,24 @@ export function ProjectsView() {
       if (filter === 'quiet' && !(p.status === 'active' && p.isQuiet)) return false;
       if (filter === 'paused' && p.status !== 'paused') return false;
       if (filter === 'archived' && p.status !== 'archived') return false;
+      if (
+        filter === 'over' &&
+        !(p.status !== 'archived' && p.weeklyVarianceStatus === 'over')
+      ) {
+        return false;
+      }
+      if (
+        filter === 'under' &&
+        !(p.status !== 'archived' && p.weeklyVarianceStatus === 'under')
+      ) {
+        return false;
+      }
+      if (
+        filter === 'untouched' &&
+        !(p.status !== 'archived' && p.weeklyVarianceStatus === 'untouched')
+      ) {
+        return false;
+      }
 
       if (!q) return true;
       const goalName = p.defaultGoalId ? (goalsById.get(p.defaultGoalId)?.name ?? '') : '';
@@ -76,12 +105,18 @@ export function ProjectsView() {
     });
   }, [allProjects, filter, search, goalsById]);
 
-  const filterTabs: Array<{ id: ProjectFilter; label: string; count: number }> = [
+  const statusFilterTabs: Array<{ id: ProjectFilter; label: string; count: number }> = [
     { id: 'all', label: 'All', count: counts.all },
     { id: 'active', label: 'Active', count: counts.active },
     { id: 'quiet', label: 'Quiet', count: counts.quiet },
     { id: 'paused', label: 'Paused', count: counts.paused },
     { id: 'archived', label: 'Archived', count: counts.archived },
+  ];
+
+  const varianceFilterTabs: Array<{ id: ProjectFilter; label: string; count: number }> = [
+    { id: 'over', label: 'Over', count: counts.over },
+    { id: 'under', label: 'Under', count: counts.under },
+    { id: 'untouched', label: 'Untouched', count: counts.untouched },
   ];
 
   return (
@@ -110,7 +145,31 @@ export function ProjectsView() {
       {/* Filter Pills + Search */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-1.5 flex-wrap" role="tablist" aria-label="Project filters">
-          {filterTabs.map((tab) => {
+          {statusFilterTabs.map((tab) => {
+            const active = filter === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setFilter(tab.id)}
+                className={[
+                  'h-8 px-3 rounded-[8px] border text-[12.5px] font-medium inline-flex items-center gap-1.5 transition-colors',
+                  active
+                    ? 'bg-[#1F2759] border-[#5566F2]/55 text-[#D6DCFF]'
+                    : 'bg-[#1C1C1C] border-[#2A2A2A] text-[#9A9A9A] hover:text-[#EDEDED] hover:border-[#3C3C3C]',
+                ].join(' ')}
+              >
+                <span>{tab.label}</span>
+                <span className="text-[11px] opacity-75 tabular-nums">{tab.count}</span>
+              </button>
+            );
+          })}
+
+          <span aria-hidden="true" className="h-4 w-px bg-[#2A2A2A] mx-0.5" />
+
+          {varianceFilterTabs.map((tab) => {
             const active = filter === tab.id;
             return (
               <button
@@ -241,14 +300,49 @@ export function ProjectsView() {
                     </button>
                   ) : null}
 
-                  <div className="text-right tabular-nums w-16">
-                    <div className="text-[13px] font-medium text-[#EDEDED]">
-                      {project.weeklyFocusMinutes > 0
-                        ? formatDuration(project.weeklyFocusMinutes)
-                        : '0m'}
+                  {project.weeklyTimeMinutes !== null ? (
+                    <div className="text-right tabular-nums w-28 space-y-1.5">
+                      <div className="text-[12.5px] font-medium text-[#EDEDED]">
+                        {project.weeklyFocusMinutes > 0
+                          ? formatDuration(project.weeklyFocusMinutes)
+                          : '0m'}{' '}
+                        / {formatDuration(project.weeklyTimeMinutes)}
+                      </div>
+                      <div
+                        role="progressbar"
+                        aria-label={`${project.name} weekly time`}
+                        aria-valuenow={project.weeklyFocusMinutes}
+                        aria-valuemin={0}
+                        aria-valuemax={project.weeklyTimeMinutes}
+                        className="h-1 w-full rounded-full bg-[#2A2A2A] overflow-hidden"
+                      >
+                        <div
+                          className="h-full rounded-full transition-all"
+                          style={{
+                            width: `${Math.min(
+                              100,
+                              Math.round(
+                                (project.weeklyFocusMinutes / project.weeklyTimeMinutes) * 100,
+                              ),
+                            )}%`,
+                            backgroundColor:
+                              project.weeklyFocusMinutes >= project.weeklyTimeMinutes
+                                ? '#6B7CFF'
+                                : '#C4C4C4',
+                          }}
+                        />
+                      </div>
                     </div>
-                    <div className="text-[10.5px] text-[#6E6E6E]">this wk</div>
-                  </div>
+                  ) : (
+                    <div className="text-right tabular-nums w-28">
+                      <div className="text-[13px] font-medium text-[#EDEDED]">
+                        {project.weeklyFocusMinutes > 0
+                          ? formatDuration(project.weeklyFocusMinutes)
+                          : '0m'}
+                      </div>
+                      <div className="text-[10.5px] text-[#6E6E6E]">this wk</div>
+                    </div>
+                  )}
 
                   <div className="text-right tabular-nums w-14">
                     <div className="text-[13px] font-medium text-[#C4C4C4]">

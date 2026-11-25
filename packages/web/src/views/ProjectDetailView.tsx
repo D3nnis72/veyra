@@ -4,7 +4,6 @@ import {
   ArrowLeft,
   ArrowUp,
   Check,
-  Clock,
   Flame,
   Minus,
   Pencil,
@@ -23,6 +22,24 @@ import { ProjectBadge } from '../components/ProjectBadge';
 import { activeCardStyle } from '../components/goalTint';
 import { formatDuration, formatShortDate } from '../components/icons';
 import { ProjectModal } from './ProjectModal';
+
+function getIsoWeekLabel(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  if (!y || !m || !d) return dateStr;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const dayNum = dt.getUTCDay() || 7;
+  dt.setUTCDate(dt.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(dt.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil(((dt.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7);
+  return `W${String(weekNo).padStart(2, '0')}`;
+}
+
+function formatSizeDriftSentence(sizeDriftPct: number | null): string | null {
+  if (sizeDriftPct === null) return null;
+  if (sizeDriftPct > 0) return `Blocks take ${sizeDriftPct}% longer than planned`;
+  if (sizeDriftPct < 0) return `Blocks take ${Math.abs(sizeDriftPct)}% less time than planned`;
+  return 'Blocks match planned size';
+}
 
 function EnergyPill({ signal }: { signal: EnergySignal | null }) {
   if (!signal) return null;
@@ -141,47 +158,158 @@ export function ProjectDetailView({ projectId }: { projectId: string }) {
 
       {/* Project Header */}
       <header className="space-y-3 pb-4 border-b border-[#2A2A2A]">
-        <div className="flex items-start gap-3.5">
-          <ProjectBadge
-            name={project.name}
-            color={project.color}
-            icon={project.icon}
-            size="lg"
-          />
-          <div className="min-w-0 flex-1 space-y-1">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="font-display text-[24px] font-semibold leading-tight text-[#EDEDED]">
-                {project.name}
-              </h1>
-              {project.status !== 'active' ? (
-                <Pill tone="neutral">{project.status}</Pill>
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3.5 min-w-0 flex-1">
+            <ProjectBadge
+              name={project.name}
+              color={project.color}
+              icon={project.icon}
+              size="lg"
+            />
+            <div className="min-w-0 flex-1 space-y-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="font-display text-[24px] font-semibold leading-tight text-[#EDEDED]">
+                  {project.name}
+                </h1>
+                {project.status !== 'active' ? (
+                  <Pill tone="neutral">{project.status}</Pill>
+                ) : null}
+                {project.isQuiet ? <Pill tone="due">Quiet</Pill> : null}
+              </div>
+              {project.description ? (
+                <p className="text-[13.5px] text-[#9A9A9A]">{project.description}</p>
               ) : null}
-              {project.isQuiet ? <Pill tone="due">Quiet</Pill> : null}
             </div>
-            {project.description ? (
-              <p className="text-[13.5px] text-[#9A9A9A]">{project.description}</p>
-            ) : null}
+          </div>
+
+          <div className="text-right tabular-nums shrink-0">
+            <div className="font-display text-[22px] font-semibold leading-tight text-[#EDEDED]">
+              {formatDuration(project.weeklyFocusMinutes)}
+            </div>
+            <div className="text-[12px] text-[#9A9A9A]">
+              {project.weeklyTimeMinutes !== null
+                ? `of ${formatDuration(project.weeklyTimeMinutes)} this week`
+                : 'focused this week'}
+            </div>
           </div>
         </div>
 
-        <div className="flex items-center flex-wrap gap-2">
-          <Pill tone="neutral" icon={<Clock size={11} />} className="tabular-nums">
-            {formatDuration(project.weeklyFocusMinutes)} focused this week
-          </Pill>
-          {defaultGoal ? (
-            <GoalChip name={defaultGoal.name} kind={defaultGoal.kind} color={defaultGoal.color} />
-          ) : null}
-          {project.notionUrl ? (
-            <LinkChip
-              link={{
-                url: project.notionUrl,
-                title: 'Notion Hub',
-                source: 'notion',
-              }}
-            />
-          ) : null}
-        </div>
+        {defaultGoal || project.notionUrl ? (
+          <div className="flex items-center flex-wrap gap-2">
+            {defaultGoal ? (
+              <GoalChip name={defaultGoal.name} kind={defaultGoal.kind} color={defaultGoal.color} />
+            ) : null}
+            {project.notionUrl ? (
+              <LinkChip
+                link={{
+                  url: project.notionUrl,
+                  title: 'Notion Hub',
+                  source: 'notion',
+                }}
+              />
+            ) : null}
+          </div>
+        ) : null}
       </header>
+
+      {/* Weekly Time 8-Week Chart Card (directly on #131313 canvas, zero card-in-card) */}
+      {(project.weeklyHistory8w.length > 0 || project.weeklyTimeMinutes !== null) ? (() => {
+        const history = project.weeklyHistory8w;
+        const maxMinutes = Math.max(
+          project.weeklyTimeMinutes ?? 0,
+          ...history.map((point) => point.focusMinutes),
+          60,
+        );
+        const intentPct =
+          project.weeklyTimeMinutes !== null
+            ? Math.min(100, (project.weeklyTimeMinutes / maxMinutes) * 100)
+            : null;
+        const driftSentence = formatSizeDriftSentence(project.sizeDriftPct);
+
+        return (
+          <section
+            aria-label="Weekly time"
+            className="veyra-card flex flex-col sm:flex-row sm:items-stretch justify-between gap-6"
+          >
+            <div className="sm:w-[240px] shrink-0 flex flex-col justify-between gap-3">
+              <div className="space-y-1.5">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#6E6E6E]">
+                  WEEKLY TIME · 8 WEEKS
+                </div>
+                <div className="text-[15px] font-medium text-[#EDEDED] tabular-nums">
+                  {project.weeklyTimeMinutes !== null
+                    ? `Average ${formatDuration(project.averageWeeklyMinutes8w)} of ${formatDuration(project.weeklyTimeMinutes)}`
+                    : `Average ${formatDuration(project.averageWeeklyMinutes8w)} / wk`}
+                </div>
+                {driftSentence ? (
+                  <p className="text-[12.5px] text-[#9A9A9A]">{driftSentence}</p>
+                ) : null}
+              </div>
+              <div className="text-[11.5px] text-[#6E6E6E]">Intention, not a quota</div>
+            </div>
+
+            <div className="flex-1 min-w-0 flex flex-col justify-end">
+              <div className="relative h-28 flex items-end gap-2 pt-3">
+                {intentPct !== null && project.weeklyTimeMinutes !== null ? (
+                  <div
+                    className="pointer-events-none absolute inset-x-0 border-t border-dashed border-[#525252] z-10"
+                    style={{ bottom: `${intentPct}%` }}
+                  >
+                    <span className="absolute right-0 -top-2.5 px-1 bg-[#1C1C1C] text-[10.5px] font-medium text-[#9A9A9A] tabular-nums">
+                      {formatDuration(project.weeklyTimeMinutes)}
+                    </span>
+                  </div>
+                ) : null}
+
+                {history.map((point, idx) => {
+                  const isCurrentWeek = idx === history.length - 1;
+                  const heightPct =
+                    point.focusMinutes > 0
+                      ? Math.max(5, Math.round((point.focusMinutes / maxMinutes) * 100))
+                      : 0;
+                  const weekLabel = getIsoWeekLabel(point.weekStartDate);
+                  return (
+                    <div
+                      key={point.weekStartDate}
+                      className="flex-1 h-full flex items-end justify-center"
+                      title={`${weekLabel}: ${formatDuration(point.focusMinutes)}`}
+                    >
+                      <div
+                        className="w-full max-w-[28px] rounded-t-[4px] transition-all"
+                        style={{
+                          height: heightPct > 0 ? `${heightPct}%` : '2px',
+                          backgroundColor:
+                            heightPct === 0
+                              ? '#2A2A2A'
+                              : isCurrentWeek
+                                ? '#6B7CFF'
+                                : '#525252',
+                        }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="flex items-center gap-2 mt-2 border-t border-[#2A2A2A] pt-1.5">
+                {history.map((point, idx) => {
+                  const isCurrentWeek = idx === history.length - 1;
+                  return (
+                    <span
+                      key={point.weekStartDate}
+                      className={`flex-1 text-center text-[10.5px] tabular-nums ${
+                        isCurrentWeek ? 'text-[#C4C4C4] font-medium' : 'text-[#6E6E6E]'
+                      }`}
+                    >
+                      {getIsoWeekLabel(point.weekStartDate)}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+        );
+      })() : null}
 
       {/* Open Blocks */}
       <section className="space-y-3" aria-label="Open blocks">
