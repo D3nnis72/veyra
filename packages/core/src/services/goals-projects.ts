@@ -665,6 +665,7 @@ export function createProject(
     status: parsed.status,
     notionUrl: parsed.notionUrl ?? null,
     matchKeywords: parsed.matchKeywords,
+    weeklyTimeMinutes: parsed.weeklyTimeMinutes ?? null,
     createdAt: nowIso,
     updatedAt: nowIso,
     deletedAt: null,
@@ -715,6 +716,10 @@ export function updateProject(
     status: parsed.status ?? existing.status,
     notionUrl: parsed.notionUrl !== undefined ? parsed.notionUrl : existing.notionUrl,
     matchKeywords: parsed.matchKeywords ?? existing.matchKeywords,
+    weeklyTimeMinutes:
+      parsed.weeklyTimeMinutes !== undefined
+        ? parsed.weeklyTimeMinutes
+        : existing.weeklyTimeMinutes,
     updatedAt: nowIso,
   };
 
@@ -731,6 +736,7 @@ export function updateProject(
         status: updated.status,
         notionUrl: updated.notionUrl,
         matchKeywords: updated.matchKeywords,
+        weeklyTimeMinutes: updated.weeklyTimeMinutes,
         updatedAt: updated.updatedAt,
       })
       .where(eq(projects.id, id))

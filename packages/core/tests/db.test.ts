@@ -14,7 +14,7 @@ import {
   recurrenceRuleSchema,
   resolveRevisitDate,
 } from '../src/index.js';
-import { goals, projects, settings } from '../src/schema.js';
+import { blocks, goals, projects, settings } from '../src/schema.js';
 
 describe('@veyra/core database bootstrap, order-key, time, and contracts', () => {
   it('creates all 10 tables on openVeyraDb(":memory:") with foreign keys enabled', () => {
@@ -248,6 +248,109 @@ describe('@veyra/core database bootstrap, order-key, time, and contracts', () =>
           .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'goal_measure_updates'")
           .all() as Array<{ name: string }>;
         expect(tables).toHaveLength(1);
+      } finally {
+        upgraded.close();
+      }
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('migrates existing projects and blocks tables additively with nullable weekly_time_minutes, size_minutes, sense_signal, drop_reason', async () => {
+    const { default: Database } = await import('better-sqlite3');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'veyra-core-legacy-capacity-'));
+    const dbPath = path.join(tmpDir, 'legacy-capacity.db');
+    const legacyProjectId = '22222222-2222-4222-8222-222222222222';
+    const legacyBlockId = '33333333-3333-4333-8333-333333333333';
+    try {
+      const legacy = new Database(dbPath);
+      legacy.exec(`
+        CREATE TABLE projects (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          color TEXT NOT NULL DEFAULT '#3B4BD8',
+          icon TEXT,
+          default_goal_id TEXT,
+          is_pinned INTEGER NOT NULL DEFAULT 0,
+          is_system INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'active',
+          notion_url TEXT,
+          match_keywords TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          deleted_at TEXT
+        );
+        CREATE TABLE blocks (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          goal_id TEXT,
+          title TEXT NOT NULL,
+          is_ops INTEGER NOT NULL DEFAULT 0,
+          bucket TEXT NOT NULL DEFAULT 'inbox',
+          scheduled_date TEXT,
+          planned_start_at TEXT,
+          planned_end_at TEXT,
+          due_date TEXT,
+          revisit_at TEXT,
+          order_key TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'todo',
+          carryover_count INTEGER NOT NULL DEFAULT 0,
+          energy_signal TEXT,
+          outcome_note TEXT,
+          resume_note TEXT,
+          auto_summary TEXT,
+          recurrence_rule TEXT,
+          series_id TEXT,
+          notes TEXT NOT NULL DEFAULT '',
+          external_links TEXT NOT NULL DEFAULT '[]',
+          updated_at TEXT NOT NULL,
+          deleted_at TEXT
+        );
+        INSERT INTO projects (id, name, created_at, updated_at)
+        VALUES ('${legacyProjectId}', 'Legacy Proj', '2026-11-20T00:00:00.000Z', '2026-11-20T00:00:00.000Z');
+        INSERT INTO blocks (id, project_id, title, order_key, updated_at)
+        VALUES ('${legacyBlockId}', '${legacyProjectId}', 'Legacy Block', 'V', '2026-11-20T00:00:00.000Z');
+      `);
+      legacy.close();
+
+      const upgraded = openVeyraDb(dbPath);
+      try {
+        const projectCols = upgraded.sqlite
+          .prepare('PRAGMA table_info(projects)')
+          .all() as Array<{ name: string }>;
+        expect(projectCols.some((c) => c.name === 'weekly_time_minutes')).toBe(true);
+
+        const blockCols = upgraded.sqlite
+          .prepare('PRAGMA table_info(blocks)')
+          .all() as Array<{ name: string }>;
+        expect(blockCols.some((c) => c.name === 'size_minutes')).toBe(true);
+        expect(blockCols.some((c) => c.name === 'sense_signal')).toBe(true);
+        expect(blockCols.some((c) => c.name === 'drop_reason')).toBe(true);
+
+        const projRow = upgraded.db
+          .select()
+          .from(projects)
+          .all()
+          .find((p) => p.id === legacyProjectId);
+        expect(projRow).toMatchObject({
+          id: legacyProjectId,
+          name: 'Legacy Proj',
+          weeklyTimeMinutes: null,
+        });
+
+        const blkRow = upgraded.db
+          .select()
+          .from(blocks)
+          .all()
+          .find((b) => b.id === legacyBlockId);
+        expect(blkRow).toMatchObject({
+          id: legacyBlockId,
+          title: 'Legacy Block',
+          sizeMinutes: null,
+          senseSignal: null,
+          dropReason: null,
+        });
       } finally {
         upgraded.close();
       }

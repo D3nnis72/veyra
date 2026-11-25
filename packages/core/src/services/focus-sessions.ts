@@ -400,6 +400,8 @@ export function completeBlock(
     status: 'done',
     energySignal:
       parsed.energySignal !== undefined ? parsed.energySignal : existingBlock.energySignal,
+    senseSignal:
+      parsed.senseSignal !== undefined ? parsed.senseSignal : existingBlock.senseSignal,
     outcomeNote:
       parsed.outcomeNote !== undefined ? parsed.outcomeNote : existingBlock.outcomeNote,
     updatedAt: nowIso,
@@ -419,6 +421,7 @@ export function completeBlock(
       .set({
         status: 'done',
         energySignal: completedBlock.energySignal,
+        senseSignal: completedBlock.senseSignal,
         outcomeNote: completedBlock.outcomeNote,
         updatedAt: nowIso,
       })

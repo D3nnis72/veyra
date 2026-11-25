@@ -415,4 +415,53 @@ describe('Task 3: Goals, Projects, Blocks, Rollover, Recurrence & Later Revisit'
     expect(stillActive.deletedAt).toBeNull();
     expect(stillActive.bucket).toBe('later');
   });
+
+  it('createProject and updateProject persist and clear weeklyTimeMinutes', () => {
+    const created = createProject(veyraDb, {
+      name: 'Veyra Platform',
+      weeklyTimeMinutes: 240,
+    });
+    expect(created.weeklyTimeMinutes).toBe(240);
+
+    const updated = updateProject(veyraDb, created.id, { weeklyTimeMinutes: 360 });
+    expect(updated.weeklyTimeMinutes).toBe(360);
+
+    const cleared = updateProject(veyraDb, created.id, { weeklyTimeMinutes: null });
+    expect(cleared.weeklyTimeMinutes).toBeNull();
+
+    // Validation bounds: < 15 or > 4800 rejected
+    expect(() =>
+      createProject(veyraDb, { name: 'Too Small', weeklyTimeMinutes: 10 }),
+    ).toThrow(ValidationError);
+    expect(() =>
+      createProject(veyraDb, { name: 'Too Large', weeklyTimeMinutes: 5000 }),
+    ).toThrow(ValidationError);
+  });
+
+  it('dropBlock stores optional dropReason and reopenBlock clears dropReason, and blocks persist sizeMinutes', () => {
+    const block = createBlock(veyraDb, {
+      title: 'Sized task',
+      sizeMinutes: 60,
+    });
+    expect(block.sizeMinutes).toBe(60);
+    expect(block.senseSignal).toBeNull();
+    expect(block.dropReason).toBeNull();
+
+    const resized = updateBlock(veyraDb, block.id, { sizeMinutes: 120 });
+    expect(resized.sizeMinutes).toBe(120);
+
+    const dropped = dropBlock(veyraDb, block.id, { dropReason: 'no_room' });
+    expect(dropped.status).toBe('dropped');
+    expect(dropped.dropReason).toBe('no_room');
+    expect(getBlockDetail(veyraDb, block.id).dropReason).toBe('no_room');
+
+    const reopened = reopenBlock(veyraDb, block.id);
+    expect(reopened.status).toBe('todo');
+    expect(reopened.dropReason).toBeNull();
+    expect(getBlockDetail(veyraDb, block.id).dropReason).toBeNull();
+
+    expect(() =>
+      createBlock(veyraDb, { title: 'Invalid size', sizeMinutes: 45 as unknown as 60 }),
+    ).toThrow(ValidationError);
+  });
 });

@@ -10,6 +10,7 @@ import {
   type BlockBucket,
   type BlockDetail,
   type CreateBlockInput,
+  type DropReason,
   type ListBlocksFilter,
   type MoveBlockInput,
   type ParkBlockInput,
@@ -19,6 +20,7 @@ import {
   type UpdateBlockInput,
   createBlockInputSchema,
   dateOnlySchema,
+  dropReasonSchema,
   moveBlockInputSchema,
   parkBlockInputSchema,
   reorderBlockInputSchema,
@@ -274,7 +276,10 @@ export function createBlock(
     orderKey,
     status: 'todo',
     carryoverCount: 0,
+    sizeMinutes: parsed.sizeMinutes ?? null,
     energySignal: null,
+    senseSignal: parsed.senseSignal ?? null,
+    dropReason: parsed.dropReason ?? null,
     outcomeNote: null,
     resumeNote: null,
     autoSummary: null,
@@ -411,8 +416,11 @@ export function updateBlock(
     revisitAt: placement.revisitAt,
     orderKey: nextOrderKey,
     status: parsed.status ?? existing.status,
+    sizeMinutes: parsed.sizeMinutes !== undefined ? parsed.sizeMinutes : existing.sizeMinutes,
     energySignal:
       parsed.energySignal !== undefined ? parsed.energySignal : existing.energySignal,
+    senseSignal: parsed.senseSignal !== undefined ? parsed.senseSignal : existing.senseSignal,
+    dropReason: parsed.dropReason !== undefined ? parsed.dropReason : existing.dropReason,
     outcomeNote: parsed.outcomeNote !== undefined ? parsed.outcomeNote : existing.outcomeNote,
     resumeNote: parsed.resumeNote !== undefined ? parsed.resumeNote : existing.resumeNote,
     autoSummary: parsed.autoSummary !== undefined ? parsed.autoSummary : existing.autoSummary,
@@ -439,7 +447,10 @@ export function updateBlock(
         revisitAt: updated.revisitAt,
         orderKey: updated.orderKey,
         status: updated.status,
+        sizeMinutes: updated.sizeMinutes,
         energySignal: updated.energySignal,
+        senseSignal: updated.senseSignal,
+        dropReason: updated.dropReason,
         outcomeNote: updated.outcomeNote,
         resumeNote: updated.resumeNote,
         autoSummary: updated.autoSummary,
@@ -610,16 +621,21 @@ export function parkBlock(
 export function dropBlock(
   veyraDb: VeyraDb,
   id: string,
-  options?: { stopSeries?: boolean } & ServiceMutationOptions,
+  options?: { stopSeries?: boolean; dropReason?: DropReason | null } & ServiceMutationOptions,
 ): Block {
   const existing = getActiveBlockOrThrow(veyraDb, id);
   const nowIso = resolveNow(options?.now).toISOString();
   const actor = resolveActor(options?.actor);
   const stopSeries = options?.stopSeries === true;
+  const nextDropReason =
+    options?.dropReason !== undefined
+      ? parseWithZod(dropReasonSchema.nullable(), options.dropReason)
+      : existing.dropReason;
 
   const updated: Block = {
     ...existing,
     status: 'dropped',
+    dropReason: nextDropReason,
     recurrenceRule: stopSeries && existing.seriesId ? null : existing.recurrenceRule,
     updatedAt: nowIso,
   };
@@ -642,6 +658,7 @@ export function dropBlock(
       .update(blocks)
       .set({
         status: 'dropped',
+        dropReason: updated.dropReason,
         recurrenceRule: updated.recurrenceRule,
         updatedAt: nowIso,
       })
@@ -683,13 +700,14 @@ export function reopenBlock(
   const updated: Block = {
     ...existing,
     status: 'todo',
+    dropReason: null,
     updatedAt: nowIso,
   };
 
   veyraDb.sqlite.transaction(() => {
     veyraDb.db
       .update(blocks)
-      .set({ status: 'todo', updatedAt: nowIso })
+      .set({ status: 'todo', dropReason: null, updatedAt: nowIso })
       .where(eq(blocks.id, id))
       .run();
     recordActivity(veyraDb, actor, 'block.reopened', `Reopened block "${existing.title}"`, nowIso);

@@ -255,4 +255,23 @@ describe('Task 4: Focus Sessions (single focus, multi-day totals, pause/stop/com
     deleteSession(veyraDb, s2.id);
     expect(listSessions(veyraDb, { blockId: block.id })).toHaveLength(1);
   });
+
+  it('completeBlock persists optional senseSignal alongside energySignal and outcomeNote', () => {
+    const t0 = new Date('2026-11-23T09:00:00.000Z');
+    const t1 = new Date('2026-11-23T09:45:00.000Z');
+    const block = createBlock(veyraDb, { title: 'Ship core spec' }, { now: t0 });
+    startFocus(veyraDb, block.id, t0);
+
+    const result = completeBlock(
+      veyraDb,
+      block.id,
+      { energySignal: 'up', senseSignal: 'moved', outcomeNote: 'Published spec' },
+      t1,
+    );
+
+    expect(result.block.energySignal).toBe('up');
+    expect(result.block.senseSignal).toBe('moved');
+    expect(result.block.outcomeNote).toBe('Published spec');
+    expect(getBlockDetail(veyraDb, block.id, t1).senseSignal).toBe('moved');
+  });
 });

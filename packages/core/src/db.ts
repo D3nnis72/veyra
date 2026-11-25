@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS projects (
   status TEXT NOT NULL DEFAULT 'active',
   notion_url TEXT,
   match_keywords TEXT NOT NULL DEFAULT '[]',
+  weekly_time_minutes INTEGER,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   deleted_at TEXT
@@ -78,7 +79,10 @@ CREATE TABLE IF NOT EXISTS blocks (
   order_key TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'todo',
   carryover_count INTEGER NOT NULL DEFAULT 0,
+  size_minutes INTEGER,
   energy_signal TEXT,
+  sense_signal TEXT,
+  drop_reason TEXT,
   outcome_note TEXT,
   resume_note TEXT,
   auto_summary TEXT,
@@ -249,6 +253,26 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{ table: string; column: string; ddl: stri
     table: 'projects',
     column: 'match_keywords',
     ddl: "ALTER TABLE projects ADD COLUMN match_keywords TEXT NOT NULL DEFAULT '[]'",
+  },
+  {
+    table: 'projects',
+    column: 'weekly_time_minutes',
+    ddl: 'ALTER TABLE projects ADD COLUMN weekly_time_minutes INTEGER',
+  },
+  {
+    table: 'blocks',
+    column: 'size_minutes',
+    ddl: 'ALTER TABLE blocks ADD COLUMN size_minutes INTEGER',
+  },
+  {
+    table: 'blocks',
+    column: 'sense_signal',
+    ddl: 'ALTER TABLE blocks ADD COLUMN sense_signal TEXT',
+  },
+  {
+    table: 'blocks',
+    column: 'drop_reason',
+    ddl: 'ALTER TABLE blocks ADD COLUMN drop_reason TEXT',
   },
   {
     table: 'settings',

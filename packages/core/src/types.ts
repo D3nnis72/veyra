@@ -132,6 +132,26 @@ export type BlockStatus = z.infer<typeof blockStatusSchema>;
 export const energySignalSchema = z.enum(['up', 'neutral', 'down']);
 export type EnergySignal = z.infer<typeof energySignalSchema>;
 
+export const BLOCK_SIZE_OPTIONS = [30, 60, 120] as const;
+export const blockSizeMinutesSchema = z.union([z.literal(30), z.literal(60), z.literal(120)]);
+export type BlockSizeMinutes = z.infer<typeof blockSizeMinutesSchema>;
+
+export const senseSignalSchema = z.enum(['moved', 'partly', 'motion']);
+export type SenseSignal = z.infer<typeof senseSignalSchema>;
+
+export const dropReasonSchema = z.enum(['not_important', 'someone_else', 'no_room']);
+export type DropReason = z.infer<typeof dropReasonSchema>;
+
+export const projectVarianceStatusSchema = z.enum([
+  'over',
+  'under',
+  'untouched',
+  'on_track',
+  'time_without_plan',
+  'unplanned',
+]);
+export type ProjectVarianceStatus = z.infer<typeof projectVarianceStatusSchema>;
+
 export const calendarEventSourceSchema = z.enum(['outlook_cli', 'ics', 'manual']);
 export type CalendarEventSource = z.infer<typeof calendarEventSourceSchema>;
 
@@ -203,6 +223,7 @@ export const projectSchema = z.object({
   status: projectStatusSchema,
   notionUrl: z.string().url().nullable(),
   matchKeywords: z.array(z.string()),
+  weeklyTimeMinutes: z.number().int().min(15).max(4800).nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
   deletedAt: z.string().nullable(),
@@ -224,7 +245,10 @@ export const blockSchema = z.object({
   orderKey: z.string().min(1),
   status: blockStatusSchema,
   carryoverCount: z.number().int().min(0),
+  sizeMinutes: blockSizeMinutesSchema.nullable(),
   energySignal: energySignalSchema.nullable(),
+  senseSignal: senseSignalSchema.nullable(),
+  dropReason: dropReasonSchema.nullable(),
   outcomeNote: z.string().nullable(),
   resumeNote: z.string().nullable(),
   autoSummary: z.string().nullable(),
@@ -460,6 +484,7 @@ export const createProjectInputSchema = z.object({
   status: projectStatusSchema.optional().default('active'),
   notionUrl: z.string().url().nullable().optional().default(null),
   matchKeywords: matchKeywordsInputSchema.optional().default([]),
+  weeklyTimeMinutes: z.number().int().min(15).max(4800).nullable().optional().default(null),
 });
 export type CreateProjectInput = z.input<typeof createProjectInputSchema>;
 
@@ -473,6 +498,7 @@ export const updateProjectInputSchema = z.object({
   status: projectStatusSchema.optional(),
   notionUrl: z.string().url().nullable().optional(),
   matchKeywords: matchKeywordsInputSchema.optional(),
+  weeklyTimeMinutes: z.number().int().min(15).max(4800).nullable().optional(),
 });
 export type UpdateProjectInput = z.infer<typeof updateProjectInputSchema>;
 
@@ -488,6 +514,9 @@ export const createBlockInputSchema = z.object({
   dueDate: dateOnlySchema.nullable().optional(),
   revisitAt: revisitHorizonSchema.nullable().optional(),
   orderKey: z.string().min(1).optional(),
+  sizeMinutes: blockSizeMinutesSchema.nullable().optional(),
+  senseSignal: senseSignalSchema.nullable().optional(),
+  dropReason: dropReasonSchema.nullable().optional(),
   recurrenceRule: recurrenceRuleSchema.nullable().optional(),
   notes: z.string().optional().default(''),
   externalLinks: z.array(externalLinkSchema).optional().default([]),
@@ -507,7 +536,10 @@ export const updateBlockInputSchema = z.object({
   revisitAt: revisitHorizonSchema.nullable().optional(),
   orderKey: z.string().min(1).optional(),
   status: blockStatusSchema.optional(),
+  sizeMinutes: blockSizeMinutesSchema.nullable().optional(),
   energySignal: energySignalSchema.nullable().optional(),
+  senseSignal: senseSignalSchema.nullable().optional(),
+  dropReason: dropReasonSchema.nullable().optional(),
   outcomeNote: z.string().nullable().optional(),
   resumeNote: z.string().nullable().optional(),
   autoSummary: z.string().nullable().optional(),
@@ -542,6 +574,7 @@ export type ReorderBlockInput = z.infer<typeof reorderBlockInputSchema>;
 
 export const completeBlockInputSchema = z.object({
   energySignal: energySignalSchema.nullable().optional(),
+  senseSignal: senseSignalSchema.nullable().optional(),
   outcomeNote: z.string().nullable().optional(),
 });
 export type CompleteBlockInput = z.infer<typeof completeBlockInputSchema>;
