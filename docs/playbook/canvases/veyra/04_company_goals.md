@@ -62,7 +62,7 @@ Proposal. The first four fields are always visible on the goal card, the rest st
 | Why it matters | Expansion is how the team hits its revenue plan without new logos | Shown quietly in the Focus view header and in the review row, keeps the goal tied to something you care about | yes, as `description` |
 | Done when | 10 upsells signed by end of Q1 | Makes the goal specific; the review asks against this sentence | no |
 | Check in date | 2027-03-31 | From this date the review asks: achieved, continue with a new date, or let go | no |
-| Weekly focus intent | about 4 h | The lead measure: review compares it with real focus time, without red or debt | no |
+| Weekly focus intent | about 4 h | The lead measure: review compares it with real focus time, without red or debt. Defaults to the sum of the weekly time of its projects ([06](06_weekly_review.md)), set by hand only when the goal spans other work | no |
 | Measure (optional) | 4 of 10 upsells | The lag measure, updated by hand once a week in the review; mainly for company goals | no |
 | If it stalls (optional) | If no upsell call is booked by Wednesday, I block 30 min to write two offers | Shown in the review when the goal got little time or mostly "just motion" | no |
 | Color, order, status | blue, 2nd, active | As today; order is the priority between goals | yes |

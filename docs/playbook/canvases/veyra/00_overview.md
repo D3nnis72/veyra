@@ -26,3 +26,4 @@ visual:
 | 03 | [Ecosystem loop: T3 Code, auto-summary, and iOS](03_ecosystem_loop.md) | Open |
 | 04 | [Richer goals, personal and company](04_company_goals.md) | Brainstorming |
 | 05 | [Prioritize by capacity, learn what to let go](05_prioritization.md) | Brainstorming |
+| 06 | [Weekly Review rework and weekly time per project](06_weekly_review.md) | Brainstorming |
