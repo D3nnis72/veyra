@@ -6,7 +6,7 @@ import type {
   BlockDetail,
   CalendarEvent,
   ExternalLink,
-  Goal,
+  GoalWithStats,
   NotionSearchResult,
   ProjectWithStats,
   PublicSettings,
@@ -25,16 +25,27 @@ const PROJ_1_ID = '33333333-3333-4333-8333-333333333333';
 const BLOCK_1_ID = '44444444-4444-4444-8444-444444444444';
 const EVENT_1_ID = '55555555-5555-4555-8555-555555555555';
 
-const BASE_GOALS: Goal[] = [
+const BASE_GOALS: GoalWithStats[] = [
   {
     id: GOAL_1_ID,
     name: 'Ship Veyra v1',
+    kind: 'company',
     description: '',
+    doneWhen: '',
+    checkInDate: null,
+    measure: null,
+    ifItStalls: '',
+    closingNote: null,
+    closedAt: null,
     color: '#3B4BD8',
     status: 'active',
     orderKey: 'a0',
     updatedAt: '2026-11-24T08:00:00.000Z',
     deletedAt: null,
+    weeklyFocusMinutes: 120,
+    weeklyBlockCount: 2,
+    linkedProjectCount: 1,
+    rankInKind: 1,
   },
 ];
 
@@ -155,6 +166,10 @@ function createMockAppShell(): AppShellContextValue {
     openProject: vi.fn(),
     setSettingsSection: vi.fn(),
     openBlockDrawer: vi.fn(),
+    openGoalDrawer: vi.fn(),
+    openCreateGoal: vi.fn(),
+    openEditGoal: vi.fn(),
+    openCloseGoal: vi.fn(),
     openDailyNotesDrawer: vi.fn(),
     openMeetingDrawer: vi.fn(),
     openSessionDrawer: vi.fn(),

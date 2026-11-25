@@ -1,7 +1,8 @@
 import type {
   BlockBucket,
   FocusStatus,
-  Goal,
+  GoalKind,
+  GoalWithStats,
   ProjectWithStats,
   PublicSettings,
 } from '@veyra/core/types';
@@ -15,13 +16,15 @@ export type AppRoute =
   | 'calendar'
   | 'projects'
   | 'project-detail'
+  | 'goals'
   | 'review'
   | 'settings';
 
-export type SettingsSection = 'goals' | 'integrations' | 'shortcuts' | 'server' | 'appearance';
+export type SettingsSection = 'integrations' | 'server' | 'appearance';
 
 export type ActiveDrawer =
   | { kind: 'block'; blockId: string }
+  | { kind: 'goal'; goalId: string }
   | { kind: 'daily-notes'; date?: string }
   | { kind: 'meeting'; eventId: string }
   | { kind: 'session'; sessionId: string }
@@ -48,12 +51,16 @@ export interface AppShellContextValue {
   focusStatus: FocusStatus | null;
   liveElapsedSeconds: number;
   projects: ProjectWithStats[];
-  goals: Goal[];
+  goals: GoalWithStats[];
   settings: PublicSettings | null;
   navigate: (route: AppRoute, opts?: { projectId?: string; settingsSection?: SettingsSection }) => void;
   openProject: (projectId: string) => void;
   setSettingsSection: (section: SettingsSection) => void;
   openBlockDrawer: (blockId: string) => void;
+  openGoalDrawer: (goalId: string) => void;
+  openCreateGoal: (defaultKind?: GoalKind) => void;
+  openEditGoal: (goalId: string) => void;
+  openCloseGoal: (goalId: string, initialStatus?: 'achieved' | 'archived') => void;
   openDailyNotesDrawer: (date?: string) => void;
   openMeetingDrawer: (eventId: string) => void;
   openSessionDrawer: (sessionId: string) => void;

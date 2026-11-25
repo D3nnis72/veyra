@@ -1,80 +1,98 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-
-const GOAL = {
-  id: '11111111-1111-4111-8111-111111111111',
-  name: 'Product & Engineering',
-  description: 'askLio core',
-  color: '#3B4BD8',
-  status: 'active',
-  orderKey: 'a0',
-  updatedAt: '2026-11-24T10:00:00.000Z',
-  deletedAt: null,
-};
-
-const updateGoal = vi.fn(async (_id: string, _input: unknown) => ({ goal: GOAL }));
+import { AppShellContext, type AppShellContextValue, type SettingsSection } from '../src/app/AppShellContext';
+import { Sidebar } from '../src/app/Sidebar';
+import { SettingsView } from '../src/views/SettingsView';
 
 vi.mock('../src/api/queries', () => ({
-  useGoalsQuery: () => ({ data: { goals: [GOAL] } }),
+  useGoalsQuery: () => ({ data: { goals: [] } }),
   useActivityQuery: () => ({ data: { activity: [] } }),
   useProjectsQuery: () => ({ data: { projects: [] } }),
   useSettingsQuery: () => ({ data: undefined }),
   invalidateAllVeyraData: vi.fn(),
 }));
 
-vi.mock('../src/api/client', async (orig) => {
-  const actual = await orig<typeof import('../src/api/client')>();
-  return {
-    ...actual,
-    apiClient: { ...actual.apiClient, updateGoal: (id: string, input: unknown) => updateGoal(id, input) },
-  };
-});
+vi.mock('../src/components/entityMenus', () => ({
+  useProjectContextMenu: () => ({ open: vi.fn(), menu: null }),
+  useGoalContextMenu: () => ({ open: vi.fn(), menu: null }),
+}));
 
-import { SettingsView } from '../src/views/SettingsView';
-
-function renderGoals() {
+function renderSettingsShell(section: SettingsSection) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const shell: AppShellContextValue = {
+    route: 'settings',
+    previousRoute: 'today',
+    activeProjectId: null,
+    settingsSection: section,
+    activeDrawer: null,
+    liveSyncStatus: 'connected',
+    focusStatus: null,
+    liveElapsedSeconds: 0,
+    projects: [],
+    goals: [],
+    settings: null,
+    navigate: vi.fn(),
+    openProject: vi.fn(),
+    setSettingsSection: vi.fn(),
+    openBlockDrawer: vi.fn(),
+    openGoalDrawer: vi.fn(),
+    openCreateGoal: vi.fn(),
+    openEditGoal: vi.fn(),
+    openCloseGoal: vi.fn(),
+    openDailyNotesDrawer: vi.fn(),
+    openMeetingDrawer: vi.fn(),
+    openSessionDrawer: vi.fn(),
+    closeDrawer: vi.fn(),
+    openCommandPalette: vi.fn(),
+    openQuickCapture: vi.fn(),
+    openCreateBlock: vi.fn(),
+    openEditProject: vi.fn(),
+    startFocusAndNavigate: vi.fn().mockResolvedValue(undefined),
+  };
+
   return render(
     <QueryClientProvider client={qc}>
-      <SettingsView section="goals" />
+      <AppShellContext.Provider value={shell}>
+        <div className="flex">
+          <Sidebar />
+          <SettingsView section={section} />
+        </div>
+      </AppShellContext.Provider>
     </QueryClientProvider>,
   );
 }
 
 afterEach(() => {
   cleanup();
-  updateGoal.mockClear();
 });
 
-describe('Goals settings', () => {
-  it('offers an Archived status that is sent to the API', async () => {
-    renderGoals();
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Archived' }));
-    await waitFor(() => expect(updateGoal).toHaveBeenCalledWith(GOAL.id, { status: 'archived' }));
-  });
+describe('Simplified 3-tab Settings', () => {
+  it('SettingsView renders Integrations, Server & CLI (with Shortcuts section), and Appearance without a Goals or separate Shortcuts tab', () => {
+    const { unmount } = renderSettingsShell('integrations');
+    const nav = screen.getByRole('complementary', { name: 'Settings navigation' });
 
-  it('edits name, description and a custom color via the Edit button', async () => {
-    const user = userEvent.setup();
-    renderGoals();
+    expect(within(nav).getByRole('button', { name: 'Integrations' })).toBeInTheDocument();
+    expect(within(nav).getByRole('button', { name: 'Server & CLI' })).toBeInTheDocument();
+    expect(within(nav).getByRole('button', { name: 'Appearance' })).toBeInTheDocument();
+    expect(within(nav).queryByRole('button', { name: 'Goals' })).not.toBeInTheDocument();
+    expect(within(nav).queryByRole('button', { name: 'Shortcuts' })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /Edit goal Product & Engineering details/ }));
-    const name = screen.getByRole('textbox', { name: /Edit goal Product & Engineering$/ });
-    await user.clear(name);
-    await user.type(name, 'Platform');
-    fireEvent.change(screen.getByLabelText(/Custom product & engineering color/i), {
-      target: { value: '#12ab34' },
-    });
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(
+      screen.getByRole('heading', { name: 'Integrations & Outlook Sync' }),
+    ).toBeInTheDocument();
+    unmount();
 
-    await waitFor(() =>
-      expect(updateGoal).toHaveBeenCalledWith(GOAL.id, {
-        name: 'Platform',
-        description: 'askLio core',
-        color: '#12AB34',
-      }),
-    );
+    const serverRender = renderSettingsShell('server');
+    expect(
+      screen.getByRole('heading', { name: 'Server, CLI & Shortcuts' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Global macOS Hotkeys')).toBeInTheDocument();
+    expect(screen.getByText('Navigation & Overlays')).toBeInTheDocument();
+    serverRender.unmount();
+
+    renderSettingsShell('appearance');
+    expect(screen.getByRole('heading', { name: 'Appearance' })).toBeInTheDocument();
   });
 });

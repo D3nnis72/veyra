@@ -21,15 +21,21 @@ vi.mock('../src/app/AppShellContext', () => ({
     route: 'today',
     previousRoute: 'today',
     activeProjectId: null,
-    settingsSection: 'goals',
+    activeDrawer: null,
+    settingsSection: 'integrations',
     focusStatus: {
       activeSession: { id: 's1' },
       activeBlock: { id: 'b1', title: 'Write spec' },
     },
     liveElapsedSeconds: 125,
     projects: [],
+    goals: [],
     navigate,
     openProject: vi.fn(),
+    openGoalDrawer: vi.fn(),
+    openCreateGoal: vi.fn(),
+    openEditGoal: vi.fn(),
+    openCloseGoal: vi.fn(),
     setSettingsSection: vi.fn(),
     openCommandPalette: vi.fn(),
     openCreateBlock: vi.fn(),
@@ -39,6 +45,7 @@ vi.mock('../src/app/AppShellContext', () => ({
 
 vi.mock('../src/components/entityMenus', () => ({
   useProjectContextMenu: () => ({ open: vi.fn(), menu: null, element: null }),
+  useGoalContextMenu: () => ({ open: vi.fn(), menu: null, element: null }),
 }));
 
 import { Sidebar } from '../src/app/Sidebar';

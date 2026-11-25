@@ -5,7 +5,6 @@ import {
   CalendarRange,
   CheckCircle2,
   FolderKanban,
-  Keyboard,
   NotebookPen,
   Palette,
   Plug,
@@ -20,8 +19,9 @@ import {
 import { useEffect, useState } from 'react';
 import { apiClient, isElectronDesktop } from '../api/client';
 import { invalidateBlockRelated } from '../api/queries';
+import { GoalKindIconBadge } from '../components/GoalChip';
 import { ProjectBadge } from '../components/ProjectBadge';
-import { useProjectContextMenu } from '../components/entityMenus';
+import { useGoalContextMenu, useProjectContextMenu } from '../components/entityMenus';
 import { formatElapsedTimer } from '../components/icons';
 import { type AppRoute, type SettingsSection, useAppShell } from './AppShellContext';
 
@@ -36,19 +36,18 @@ const PRIMARY_NAV: PrimaryNavItem[] = [
   { id: 'plan', label: 'Plan', icon: CalendarRange },
   { id: 'calendar', label: 'Calendar', icon: Calendar },
   { id: 'projects', label: 'Projects', icon: FolderKanban },
+  { id: 'goals', label: 'Goals', icon: Target },
   { id: 'review', label: 'Review', icon: CheckCircle2 },
 ];
 
 interface SettingsNavItem {
   id: SettingsSection;
   label: string;
-  icon: typeof Target;
+  icon: typeof Plug;
 }
 
 const SETTINGS_NAV: SettingsNavItem[] = [
-  { id: 'goals', label: 'Goals', icon: Target },
   { id: 'integrations', label: 'Integrations', icon: Plug },
-  { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
   { id: 'server', label: 'Server & CLI', icon: Server },
   { id: 'appearance', label: 'Appearance', icon: Palette },
 ];
@@ -143,12 +142,16 @@ export function Sidebar() {
     route,
     previousRoute,
     activeProjectId,
+    activeDrawer,
     settingsSection,
     focusStatus,
     liveElapsedSeconds,
     projects,
+    goals,
     navigate,
     openProject,
+    openGoalDrawer,
+    openCreateGoal,
     setSettingsSection,
     openCommandPalette,
     openCreateBlock,
@@ -156,11 +159,16 @@ export function Sidebar() {
   } = useAppShell();
 
   const projectMenu = useProjectContextMenu();
+  const goalMenu = useGoalContextMenu();
 
   const inElectron = isElectronDesktop();
   const pinnedProjects = projects.filter(
     (p) => p.isPinned && !p.deletedAt && p.status !== 'archived',
   );
+  const activeGoals = (goals ?? []).filter((g) => g.status === 'active' && !g.deletedAt);
+  const personalGoals = activeGoals.filter((g) => g.kind === 'personal');
+  const companyGoals = activeGoals.filter((g) => g.kind === 'company');
+
   const hasRunningFocus = Boolean(focusStatus?.activeSession && focusStatus?.activeBlock);
   const showLiveFocusPill = hasRunningFocus && route !== 'focus';
 
@@ -297,65 +305,149 @@ export function Sidebar() {
         })}
       </nav>
 
-      {/* Hairline divider */}
-      <div className="mx-4 my-4 border-t border-white/[0.06] shrink-0" />
+      {/* Scrollable PINNED Projects + GOALS sections */}
+      <div className="flex-1 min-h-0 overflow-y-auto mt-3 pt-3 border-t border-white/[0.06] space-y-4">
+        {/* Unlimited PINNED Projects */}
+        <div>
+          <div className="px-4 pb-2 flex items-center justify-between">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#6E6E6E]">
+              Pinned
+            </span>
+            <button
+              type="button"
+              onClick={() => openCreateBlock()}
+              title="New Block (⌘N)"
+              className="veyra-no-drag h-6 w-6 rounded-[6px] inline-flex items-center justify-center text-[#6E6E6E] hover:text-[#EDEDED] hover:bg-white/[0.07] transition-colors"
+            >
+              <Plus size={13} />
+            </button>
+          </div>
 
-      {/* Unlimited PINNED Projects */}
-      <div className="flex-1 min-h-0 flex flex-col">
-        <div className="px-4 pb-2 flex items-center justify-between">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#6E6E6E]">
-            Pinned
-          </span>
-          <button
-            type="button"
-            onClick={() => openCreateBlock()}
-            title="New Block (⌘N)"
-            className="veyra-no-drag h-6 w-6 rounded-[6px] inline-flex items-center justify-center text-[#6E6E6E] hover:text-[#EDEDED] hover:bg-white/[0.07] transition-colors"
-          >
-            <Plus size={13} />
-          </button>
+          <div className="px-3.5 space-y-1">
+            {pinnedProjects.length === 0 ? (
+              <div className="px-3 py-1.5 text-[12.5px] text-[#6E6E6E]">
+                Pin any project to keep it here
+              </div>
+            ) : (
+              pinnedProjects.map((project) => {
+                const active = route === 'project-detail' && activeProjectId === project.id;
+                return (
+                  <button
+                    key={project.id}
+                    type="button"
+                    onClick={() => openProject(project.id)}
+                    onContextMenu={(e) => projectMenu.open(e, project)}
+                    title="Right-click for project actions"
+                    className={[
+                      'veyra-no-drag w-full h-9 px-2.5 rounded-[8px] flex items-center justify-between gap-2 text-[13.5px] font-medium transition-colors border',
+                      active
+                        ? 'bg-[var(--veyra-nav-active-bg)] border-[var(--veyra-nav-active-border)] text-[var(--veyra-nav-active-text)]'
+                        : 'border-transparent text-[#C4C4C4] hover:text-[#EDEDED] hover:bg-white/[0.05]',
+                    ].join(' ')}
+                  >
+                    <span className="flex items-center gap-2.5 min-w-0">
+                      <ProjectBadge
+                        name={project.name}
+                        color={project.color}
+                        icon={project.icon}
+                        size="sm"
+                      />
+                      <span className="truncate">{project.name}</span>
+                    </span>
+                    {project.openBlockCount > 0 ? (
+                      <span className="text-[11.5px] text-[#6E6E6E] tabular-nums shrink-0">
+                        {project.openBlockCount}
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })
+            )}
+          </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-3.5 pb-3 space-y-1">
-          {pinnedProjects.length === 0 ? (
-            <div className="px-3 py-2 text-[12.5px] text-[#6E6E6E]">
-              Pin any project to keep it here
-            </div>
-          ) : (
-            pinnedProjects.map((project) => {
-              const active = route === 'project-detail' && activeProjectId === project.id;
-              return (
-                <button
-                  key={project.id}
-                  type="button"
-                  onClick={() => openProject(project.id)}
-                  onContextMenu={(e) => projectMenu.open(e, project)}
-                  title="Right-click for project actions"
-                  className={[
-                    'veyra-no-drag w-full h-9 px-2.5 rounded-[8px] flex items-center justify-between gap-2 text-[13.5px] font-medium transition-colors border',
-                    active
-                      ? 'bg-[var(--veyra-nav-active-bg)] border-[var(--veyra-nav-active-border)] text-[var(--veyra-nav-active-text)]'
-                      : 'border-transparent text-[#C4C4C4] hover:text-[#EDEDED] hover:bg-white/[0.05]',
-                  ].join(' ')}
-                >
-                  <span className="flex items-center gap-2.5 min-w-0">
-                    <ProjectBadge
-                      name={project.name}
-                      color={project.color}
-                      icon={project.icon}
-                      size="sm"
-                    />
-                    <span className="truncate">{project.name}</span>
-                  </span>
-                  {project.openBlockCount > 0 ? (
-                    <span className="text-[11.5px] text-[#6E6E6E] tabular-nums shrink-0">
-                      {project.openBlockCount}
-                    </span>
-                  ) : null}
-                </button>
-              );
-            })
-          )}
+        {/* Active GOALS grouped under Personal and Company (zero weekly time bars) */}
+        <div className="pt-3 border-t border-white/[0.06] pb-3" aria-label="Sidebar goals">
+          <div className="px-4 pb-2 flex items-center justify-between">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#6E6E6E]">
+              Goals
+            </span>
+            <button
+              type="button"
+              onClick={() => openCreateGoal('personal')}
+              aria-label="New Goal"
+              title="New Goal"
+              className="veyra-no-drag h-6 w-6 rounded-[6px] inline-flex items-center justify-center text-[#6E6E6E] hover:text-[#EDEDED] hover:bg-white/[0.07] transition-colors"
+            >
+              <Plus size={13} />
+            </button>
+          </div>
+
+          <div className="px-3.5 space-y-2.5">
+            {activeGoals.length === 0 ? (
+              <div className="px-3 py-1 text-[12px] text-[#6E6E6E]">No active goals</div>
+            ) : (
+              <>
+                {personalGoals.length > 0 ? (
+                  <div className="space-y-0.5">
+                    <div className="px-2.5 pb-1 text-[10.5px] font-medium text-[#6E6E6E]">
+                      Personal
+                    </div>
+                    {personalGoals.map((goal) => {
+                      const active = activeDrawer?.kind === 'goal' && activeDrawer.goalId === goal.id;
+                      return (
+                        <button
+                          key={goal.id}
+                          type="button"
+                          onClick={() => openGoalDrawer(goal.id)}
+                          onContextMenu={(e) => goalMenu.open(e, goal)}
+                          title="Right-click for goal actions"
+                          className={[
+                            'veyra-no-drag w-full h-8 px-2.5 rounded-[8px] flex items-center gap-2.5 text-[13px] font-medium transition-colors border text-left',
+                            active
+                              ? 'bg-[var(--veyra-nav-active-bg)] border-[var(--veyra-nav-active-border)] text-[var(--veyra-nav-active-text)]'
+                              : 'border-transparent text-[#C4C4C4] hover:text-[#EDEDED] hover:bg-white/[0.05]',
+                          ].join(' ')}
+                        >
+                          <GoalKindIconBadge kind={goal.kind} color={goal.color} size="xs" />
+                          <span className="truncate">{goal.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+
+                {companyGoals.length > 0 ? (
+                  <div className="space-y-0.5">
+                    <div className="px-2.5 pb-1 text-[10.5px] font-medium text-[#6E6E6E]">
+                      Company
+                    </div>
+                    {companyGoals.map((goal) => {
+                      const active = activeDrawer?.kind === 'goal' && activeDrawer.goalId === goal.id;
+                      return (
+                        <button
+                          key={goal.id}
+                          type="button"
+                          onClick={() => openGoalDrawer(goal.id)}
+                          onContextMenu={(e) => goalMenu.open(e, goal)}
+                          title="Right-click for goal actions"
+                          className={[
+                            'veyra-no-drag w-full h-8 px-2.5 rounded-[8px] flex items-center gap-2.5 text-[13px] font-medium transition-colors border text-left',
+                            active
+                              ? 'bg-[var(--veyra-nav-active-bg)] border-[var(--veyra-nav-active-border)] text-[var(--veyra-nav-active-text)]'
+                              : 'border-transparent text-[#C4C4C4] hover:text-[#EDEDED] hover:bg-white/[0.05]',
+                          ].join(' ')}
+                        >
+                          <GoalKindIconBadge kind={goal.kind} color={goal.color} size="xs" />
+                          <span className="truncate">{goal.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -371,7 +463,7 @@ export function Sidebar() {
         </div>
       ) : null}
 
-      {/* Quiet Footer: Daily Notes + Settings & Goals ⌘, */}
+      {/* Quiet Footer: Daily Notes + Settings ⌘, */}
       <div className="shrink-0 px-3.5 py-3 border-t border-white/[0.06] space-y-1">
         <button
           type="button"
@@ -387,19 +479,20 @@ export function Sidebar() {
 
         <button
           type="button"
-          onClick={() => navigate('settings', { settingsSection: 'goals' })}
+          onClick={() => navigate('settings', { settingsSection: 'integrations' })}
           className="veyra-no-drag w-full h-9 px-2.5 rounded-[8px] flex items-center justify-between gap-2 text-[13px] font-medium text-[#9A9A9A] hover:text-[#EDEDED] hover:bg-white/[0.05] transition-colors"
         >
           <span className="flex items-center gap-2.5">
             <SettingsIcon size={14} className="text-[#6E6E6E]" />
-            <span>Settings &amp; Goals</span>
+            <span>Settings</span>
           </span>
           <span className="text-[11px] text-[#6E6E6E]">⌘,</span>
         </button>
       </div>
 
-      {/* Right-click Context Menu for Pinned Projects */}
+      {/* Right-click Context Menus */}
       {projectMenu.menu}
+      {goalMenu.menu}
     </aside>
   );
 }

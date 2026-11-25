@@ -1,12 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  type CalendarSyncMode,
-  type Goal,
-  type GoalStatus,
-  type MacOsFocusPhase,
-  PROJECT_ACCENT_COLORS,
-  type UpdateSettingsInput,
-  type WebhookEventName,
+import type {
+  CalendarSyncMode,
+  MacOsFocusPhase,
+  UpdateSettingsInput,
+  WebhookEventName,
 } from '@veyra/core/types';
 import {
   Check,
@@ -16,16 +13,13 @@ import {
   Globe,
   Monitor,
   Moon,
-  Pencil,
   PlugZap,
-  Plus,
   RefreshCw,
   Send,
   Server,
   Sun,
   Target,
   Terminal,
-  Trash2,
   Zap,
 } from 'lucide-react';
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from 'react';
@@ -37,7 +31,6 @@ import {
 import {
   invalidateAllVeyraData,
   useActivityQuery,
-  useGoalsQuery,
   useProjectsQuery,
   useSettingsQuery,
 } from '../api/queries';
@@ -70,9 +63,7 @@ const WEBHOOK_EVENTS: Array<{ id: WebhookEventName; label: string; description: 
 export function SettingsView({ section }: SettingsViewProps) {
   return (
     <div className="max-w-[760px] mx-auto px-7 py-7 space-y-6">
-      {section === 'goals' ? <GoalsSettingsSection /> : null}
       {section === 'integrations' ? <IntegrationsSettingsSection /> : null}
-      {section === 'shortcuts' ? <ShortcutsSettingsSection /> : null}
       {section === 'server' ? <ServerCliSettingsSection /> : null}
       {section === 'appearance' ? <AppearanceSettingsSection /> : null}
     </div>
@@ -80,327 +71,7 @@ export function SettingsView({ section }: SettingsViewProps) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Goals Section
-// ---------------------------------------------------------------------------
-
-function GoalsSettingsSection() {
-  const queryClient = useQueryClient();
-  const goalsQuery = useGoalsQuery({ includeArchived: true });
-  const goals = goalsQuery.data?.goals ?? [];
-
-  const [newName, setNewName] = useState('');
-  const [newDescription, setNewDescription] = useState('');
-  const [newColor, setNewColor] = useState<string>(PROJECT_ACCENT_COLORS[0]);
-
-  const invalidateGoals = () => {
-    void queryClient.invalidateQueries({ queryKey: ['goals'] });
-    void queryClient.invalidateQueries({ queryKey: ['today'] });
-    void queryClient.invalidateQueries({ queryKey: ['plan'] });
-    void queryClient.invalidateQueries({ queryKey: ['review'] });
-  };
-
-  const createMutation = useMutation({
-    mutationFn: () =>
-      apiClient.createGoal({
-        name: newName.trim(),
-        description: newDescription.trim(),
-        color: newColor,
-      }),
-    onSuccess: () => {
-      setNewName('');
-      setNewDescription('');
-      invalidateGoals();
-    },
-  });
-
-  const handleCreate = (e: FormEvent) => {
-    e.preventDefault();
-    if (!newName.trim() || createMutation.isPending) return;
-    createMutation.mutate();
-  };
-
-  return (
-    <div className="space-y-6">
-      <header className="space-y-1">
-        <h1 className="font-display text-[24px] font-semibold text-[#EDEDED]">Goals</h1>
-        <p className="text-[13px] text-[#9A9A9A]">
-          Define 1–4 strategic outcomes. Projects inherit a default goal and Review tracks focus
-          alignment automatically.
-        </p>
-      </header>
-
-      {/* Inline Create Goal Card */}
-      <form onSubmit={handleCreate} className="veyra-card space-y-3">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.07em] text-[#6E6E6E]">
-          Add Goal
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-          <input
-            type="text"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            placeholder="Goal name (e.g. Ship Veyra v1)"
-            aria-label="Goal name"
-            className="h-9 px-3 rounded-[8px] bg-[#262626] border border-[#3C3C3C] focus:border-[#5566F2] text-[13px] text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none"
-          />
-          <input
-            type="text"
-            value={newDescription}
-            onChange={(e) => setNewDescription(e.target.value)}
-            placeholder="Short description (optional)"
-            aria-label="Goal description"
-            className="h-9 px-3 rounded-[8px] bg-[#262626] border border-[#3C3C3C] focus:border-[#5566F2] text-[13px] text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none"
-          />
-        </div>
-
-        <div className="flex items-center justify-between gap-3 flex-wrap pt-1">
-          <ColorPicker value={newColor} onChange={setNewColor} label="Goal color" />
-          <Button
-            type="submit"
-            variant="primary"
-            size="sm"
-            leftIcon={<Plus size={13} />}
-            disabled={!newName.trim() || createMutation.isPending}
-          >
-            Add Goal
-          </Button>
-        </div>
-      </form>
-
-      {/* Existing Goals */}
-      <div className="space-y-2.5">
-        {goals.length === 0 ? (
-          <div className="veyra-card text-[13px] text-[#6E6E6E]">No goals created yet.</div>
-        ) : (
-          goals.map((goal) => (
-            <GoalRow key={goal.id} goal={goal} onChanged={invalidateGoals} />
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
-
-const GOAL_STATUS_OPTIONS: Array<{ id: GoalStatus; label: string; active: string }> = [
-  { id: 'active', label: 'Active', active: 'bg-[#1F2759] border-[#5566F2]/55 text-[#D6DCFF]' },
-  { id: 'achieved', label: 'Achieved', active: 'bg-[#14331F] border-[#2FB463]/60 text-[#7BE0A0]' },
-  { id: 'archived', label: 'Archived', active: 'bg-[#3A2410] border-[#D9772B]/60 text-[#F5B27A]' },
-];
-
-const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
-
-/** Preset swatches plus a custom color (native color input) with generous spacing. */
-function ColorPicker({
-  value,
-  onChange,
-  label,
-}: {
-  value: string;
-  onChange: (color: string) => void;
-  label: string;
-}) {
-  const isPreset = PROJECT_ACCENT_COLORS.some((c) => c.toLowerCase() === value.toLowerCase());
-  const customValue = HEX_COLOR_REGEX.test(value) ? value : '#5566F2';
-  const ring = 'ring-2 ring-offset-2 ring-offset-[#1C1C1C] ring-white';
-  return (
-    <div className="flex items-center gap-3 flex-wrap" role="group" aria-label={label}>
-      {PROJECT_ACCENT_COLORS.map((swatch) => (
-        <button
-          key={swatch}
-          type="button"
-          aria-label={`${label} ${swatch}`}
-          aria-pressed={value.toLowerCase() === swatch.toLowerCase()}
-          onClick={() => onChange(swatch)}
-          style={{ backgroundColor: swatch }}
-          className={`w-6 h-6 rounded-full transition-transform ${
-            value.toLowerCase() === swatch.toLowerCase()
-              ? `${ring} scale-105`
-              : 'opacity-75 hover:opacity-100'
-          }`}
-        />
-      ))}
-      <label
-        title="Custom color"
-        className={`relative w-6 h-6 rounded-full cursor-pointer transition-transform ${
-          !isPreset ? `${ring} scale-105` : 'opacity-75 hover:opacity-100'
-        }`}
-        style={{
-          background: isPreset
-            ? 'conic-gradient(from 0deg, #ef4444, #eab308, #22c55e, #06b6d4, #6366f1, #d946ef, #ef4444)'
-            : value,
-        }}
-      >
-        <span className="sr-only">Custom {label.toLowerCase()}</span>
-        <input
-          type="color"
-          value={customValue}
-          onChange={(e) => onChange(e.target.value.toUpperCase())}
-          aria-label={`Custom ${label.toLowerCase()}`}
-          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-        />
-      </label>
-    </div>
-  );
-}
-
-function GoalRow({ goal, onChanged }: { goal: Goal; onChanged: () => void }) {
-  const [editing, setEditing] = useState(false);
-  const [name, setName] = useState(goal.name);
-  const [description, setDescription] = useState(goal.description);
-  const [color, setColor] = useState(goal.color);
-
-  useEffect(() => {
-    if (editing) return;
-    setName(goal.name);
-    setDescription(goal.description);
-    setColor(goal.color);
-  }, [editing, goal.name, goal.description, goal.color]);
-
-  const updateMutation = useMutation({
-    mutationFn: (input: Parameters<typeof apiClient.updateGoal>[1]) =>
-      apiClient.updateGoal(goal.id, input),
-    onSuccess: onChanged,
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: () => apiClient.deleteGoal(goal.id),
-    onSuccess: onChanged,
-  });
-
-  const canSave = name.trim().length > 0 && !updateMutation.isPending;
-
-  const save = () => {
-    if (!canSave) return;
-    updateMutation.mutate(
-      { name: name.trim(), description: description.trim(), color },
-      { onSuccess: () => setEditing(false) },
-    );
-  };
-
-  const cancel = () => {
-    setName(goal.name);
-    setDescription(goal.description);
-    setColor(goal.color);
-    setEditing(false);
-  };
-
-  const inputClass =
-    'h-9 px-3 rounded-[8px] bg-[#262626] border border-[#3C3C3C] focus:border-[#5566F2] text-[13px] text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none';
-
-  return (
-    <div className={`veyra-card space-y-3 ${goal.status === 'archived' ? 'opacity-70' : ''}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-2.5 flex-1 min-w-0">
-          <span
-            className="w-3 h-3 rounded-full mt-1.5 shrink-0"
-            style={{ backgroundColor: editing ? color : goal.color }}
-          />
-          {editing ? (
-            <div className="flex-1 min-w-0 space-y-2">
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') save();
-                  if (e.key === 'Escape') cancel();
-                }}
-                aria-label={`Edit goal ${goal.name}`}
-                autoFocus
-                className={`w-full ${inputClass}`}
-              />
-              <input
-                type="text"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') save();
-                  if (e.key === 'Escape') cancel();
-                }}
-                placeholder="Add description…"
-                aria-label={`Edit description of ${goal.name}`}
-                className={`w-full ${inputClass}`}
-              />
-            </div>
-          ) : (
-            <div className="flex-1 min-w-0 space-y-1">
-              <div className="text-[14.5px] font-medium text-[#EDEDED]">{goal.name}</div>
-              {goal.description ? (
-                <div className="text-[12.5px] text-[#9A9A9A]">{goal.description}</div>
-              ) : null}
-            </div>
-          )}
-        </div>
-
-        <div className="flex items-center gap-1.5 shrink-0">
-          {GOAL_STATUS_OPTIONS.map((opt) => (
-            <button
-              key={opt.id}
-              type="button"
-              aria-pressed={goal.status === opt.id}
-              onClick={() => updateMutation.mutate({ status: opt.id })}
-              className={[
-                'h-6 px-2 rounded-[6px] border text-[11px] font-medium transition-colors',
-                goal.status === opt.id
-                  ? opt.active
-                  : 'bg-[#262626] border-[#3C3C3C] text-[#9A9A9A] hover:text-[#EDEDED]',
-              ].join(' ')}
-            >
-              {opt.label}
-            </button>
-          ))}
-          <button
-            type="button"
-            aria-label={`Edit goal ${goal.name} details`}
-            title="Edit"
-            onClick={() => setEditing((v) => !v)}
-            className={`h-6 w-6 rounded-[6px] inline-flex items-center justify-center transition-colors ${
-              editing
-                ? 'text-[#D6DCFF] bg-[#1F2759]'
-                : 'text-[#6E6E6E] hover:text-[#EDEDED] hover:bg-[#2A2A2A]'
-            }`}
-          >
-            <Pencil size={12} />
-          </button>
-          <button
-            type="button"
-            aria-label={`Delete goal ${goal.name}`}
-            onClick={() => deleteMutation.mutate()}
-            disabled={deleteMutation.isPending}
-            className="h-6 w-6 rounded-[6px] inline-flex items-center justify-center text-[#6E6E6E] hover:text-[#FF9EC5] hover:bg-[#3D1A2B]/60 transition-colors"
-          >
-            <Trash2 size={12} />
-          </button>
-        </div>
-      </div>
-
-      {editing ? (
-        <div className="flex items-center justify-between gap-3 flex-wrap pt-3 border-t border-[#2A2A2A]">
-          <ColorPicker value={color} onChange={setColor} label={`${goal.name} color`} />
-          <div className="flex items-center gap-2">
-            <Button type="button" variant="ghost" size="sm" onClick={cancel}>
-              Cancel
-            </Button>
-            <Button type="button" variant="primary" size="sm" onClick={save} disabled={!canSave}>
-              Save
-            </Button>
-          </div>
-        </div>
-      ) : null}
-
-      {updateMutation.isError ? (
-        <div className="text-[12px] text-[#FF9EC5]">
-          {updateMutation.error instanceof Error
-            ? updateMutation.error.message
-            : 'Could not update goal.'}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// 2. Integrations & Outlook Sync Section
+// 1. Integrations & Outlook Sync Section
 // ---------------------------------------------------------------------------
 
 const HOOK_LISTEN_SNIPPET = `veyra hook listen --port 4174 --auto-summary --summarizer-cmd "claude -p"`;
@@ -1480,11 +1151,11 @@ function ServerCliSettingsSection() {
       <header className="flex items-start justify-between gap-3 flex-wrap">
         <div className="space-y-1">
           <h1 className="font-display text-[24px] font-semibold text-[#EDEDED]">
-            Server &amp; CLI
+            Server, CLI &amp; Shortcuts
           </h1>
           <p className="text-[13px] text-[#9A9A9A]">
             Run zero-config local SQLite or point Veyra Desktop &amp; CLI at your own Docker / VPS
-            server.
+            server, and customize keyboard hotkeys.
           </p>
         </div>
         {statusMessage ? (
@@ -1642,6 +1313,9 @@ function ServerCliSettingsSection() {
           </Button>
         </div>
       </form>
+
+      {/* Folded Keyboard Shortcuts & Global Hotkeys */}
+      <ShortcutsSettingsSection />
     </div>
   );
 }
@@ -1770,8 +1444,8 @@ const NAVIGATION_HOTKEYS: HotkeyRow[] = [
   },
   {
     label: 'Switch Primary Views',
-    description: 'Today, Plan, Calendar, Projects, Review',
-    binding: { chords: [['⌘', '1'], ['⌘', '5']], separator: 'to' },
+    description: 'Today, Plan, Calendar, Projects, Goals, Review',
+    binding: { chords: [['⌘', '1'], ['⌘', '6']], separator: 'to' },
   },
   {
     label: 'Save Active Drawer',
@@ -1961,15 +1635,15 @@ function ShortcutsSettingsSection() {
   ];
 
   return (
-    <div className="space-y-7 pb-6">
-      <header className="space-y-1.5">
-        <h1 className="font-display text-[24px] font-semibold text-[#EDEDED]">
+    <div className="space-y-6 pt-2 border-t border-[#2A2A2A] pb-6">
+      <div className="space-y-1">
+        <h2 className="font-display text-[18px] font-semibold text-[#EDEDED]">
           Keyboard Shortcuts
-        </h1>
+        </h2>
         <p className="text-[13px] text-[#9A9A9A]">
           Drive Veyra without touching the mouse. Global macOS hotkeys work from any app.
         </p>
-      </header>
+      </div>
 
       <HotkeyListCard
         heading="Global macOS Hotkeys"

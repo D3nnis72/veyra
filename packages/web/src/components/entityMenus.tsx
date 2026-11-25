@@ -1,8 +1,10 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import type { Block, CalendarEvent, ProjectWithStats } from '@veyra/core/types';
+import type { Block, CalendarEvent, Goal, ProjectWithStats } from '@veyra/core/types';
 import {
   Archive,
+  ArrowDown,
   ArrowRight,
+  ArrowUp,
   Ban,
   Briefcase,
   CheckCircle2,
@@ -21,6 +23,7 @@ import {
   Scissors,
   Sun,
   Trash2,
+  Trophy,
 } from 'lucide-react';
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import { apiClient, openExternalUrl } from '../api/client';
@@ -402,6 +405,117 @@ export function useProjectContextMenu(): EntityMenuHandle<ProjectWithStats> {
         items={items}
         onClose={state.close}
         label="Project actions"
+      />
+    ),
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Goals                                                               */
+/* ------------------------------------------------------------------ */
+
+export function useGoalContextMenu(): EntityMenuHandle<Goal> {
+  const queryClient = useQueryClient();
+  const {
+    openGoalDrawer,
+    openEditGoal,
+    openCloseGoal,
+    openCreateBlock,
+    navigate,
+    activeDrawer,
+    closeDrawer,
+  } = useAppShell();
+  const state = useContextMenuState<Goal>();
+
+  const refresh = () => void invalidateAllVeyraData(queryClient);
+
+  const reorderMutation = useMutation({
+    mutationFn: (vars: { goalId: string; direction: 'up' | 'down' }) =>
+      apiClient.reorderGoal(vars.goalId, { direction: vars.direction }),
+    onSettled: refresh,
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (goalId: string) => apiClient.deleteGoal(goalId),
+    onSuccess: (_d, goalId) => {
+      if (activeDrawer?.kind === 'goal' && activeDrawer.goalId === goalId) {
+        closeDrawer();
+      }
+    },
+    onSettled: refresh,
+  });
+
+  const goal = state.payload;
+  const items: Array<ContextMenuEntry | null | false> = goal
+    ? [
+        {
+          id: 'details',
+          label: 'Open Details',
+          icon: <PanelRight size={ICON} />,
+          onSelect: () => openGoalDrawer(goal.id),
+        },
+        {
+          id: 'edit',
+          label: 'Edit Goal',
+          icon: <Pencil size={ICON} />,
+          onSelect: () => openEditGoal(goal.id),
+        },
+        {
+          id: 'new-block',
+          label: 'New Block for this Goal',
+          icon: <Plus size={ICON} />,
+          onSelect: () => openCreateBlock({ goalId: goal.id }),
+        },
+        {
+          id: 'review',
+          label: 'Show in Review',
+          icon: <CheckCircle2 size={ICON} />,
+          onSelect: () => navigate('review'),
+        },
+        {
+          id: 'move-up',
+          label: 'Move Up',
+          icon: <ArrowUp size={ICON} />,
+          onSelect: () => reorderMutation.mutate({ goalId: goal.id, direction: 'up' }),
+        },
+        {
+          id: 'move-down',
+          label: 'Move Down',
+          icon: <ArrowDown size={ICON} />,
+          onSelect: () => reorderMutation.mutate({ goalId: goal.id, direction: 'down' }),
+        },
+        { type: 'divider', id: 'd1' },
+        {
+          id: 'achieved',
+          label: 'Mark Achieved',
+          icon: <Trophy size={ICON} className="text-[#7BE0A0]" />,
+          onSelect: () => openCloseGoal(goal.id, 'achieved'),
+        },
+        {
+          id: 'let-go',
+          label: 'Let Go',
+          icon: <Archive size={ICON} />,
+          onSelect: () => openCloseGoal(goal.id, 'archived'),
+        },
+        {
+          id: 'delete',
+          label: 'Delete Goal',
+          icon: <Trash2 size={ICON} />,
+          destructive: true,
+          onSelect: () => deleteMutation.mutate(goal.id),
+        },
+      ]
+    : [];
+
+  return {
+    open: state.open,
+    menu: (
+      <ContextMenu
+        position={state.position}
+        header={goal?.name}
+        items={items}
+        onClose={state.close}
+        label="Goal actions"
       />
     ),
   };

@@ -7,7 +7,7 @@ import type {
   Block,
   BlockDetail,
   DailyNote,
-  Goal,
+  GoalWithStats,
   ProjectWithStats,
   PublicSettings,
 } from '@veyra/core/types';
@@ -32,16 +32,27 @@ const NOTE_1_ID = '66666666-6666-4666-8666-666666666666';
 const SESSION_1_ID = '77777777-7777-4777-8777-777777777777';
 const SESSION_2_ID = '88888888-8888-4888-8888-888888888888';
 
-const BASE_GOALS: Goal[] = [
+const BASE_GOALS: GoalWithStats[] = [
   {
     id: GOAL_1_ID,
     name: 'Ship Veyra v1',
+    kind: 'company',
     description: 'Core local-first release',
+    doneWhen: 'v1 shipped to desktop',
+    checkInDate: null,
+    measure: null,
+    ifItStalls: '',
+    closingNote: null,
+    closedAt: null,
     color: '#3B4BD8',
     status: 'active',
     orderKey: 'a0',
     updatedAt: '2026-11-23T08:00:00.000Z',
     deletedAt: null,
+    weeklyFocusMinutes: 210,
+    weeklyBlockCount: 3,
+    linkedProjectCount: 1,
+    rankInKind: 1,
   },
 ];
 
@@ -319,7 +330,7 @@ function createTestQueryClient() {
 }
 
 describe('Veyra Web App Flows', () => {
-  let goalsState: Goal[];
+  let goalsState: GoalWithStats[];
   let projectsState: ProjectWithStats[];
   let blockDetailState: BlockDetail;
   let hookActivityState: ActivityLog[];
@@ -397,15 +408,26 @@ describe('Veyra Web App Flows', () => {
       }
       if (path === '/api/goals' && method === 'POST') {
         const body = JSON.parse(String(init?.body ?? '{}'));
-        const created: Goal = {
+        const created: GoalWithStats = {
           id: GOAL_2_ID,
           name: body.name,
+          kind: body.kind ?? 'personal',
           description: body.description ?? '',
+          doneWhen: body.doneWhen ?? '',
+          checkInDate: body.checkInDate ?? null,
+          measure: body.measure ?? null,
+          ifItStalls: body.ifItStalls ?? '',
+          closingNote: null,
+          closedAt: null,
           color: body.color ?? '#2E9E6F',
           status: 'active',
           orderKey: 'a1',
           updatedAt: '2026-11-23T10:00:00.000Z',
           deletedAt: null,
+          weeklyFocusMinutes: 0,
+          weeklyBlockCount: 0,
+          linkedProjectCount: 0,
+          rankInKind: 1,
         };
         goalsState = [...goalsState, created];
         return jsonResponse({ goal: created }, 201);
@@ -626,20 +648,20 @@ describe('Veyra Web App Flows', () => {
     await screen.findByText(/2h 15m focused today/i);
 
     // Navigate to full-page Settings
-    await user.click(screen.getByRole('button', { name: /Settings & Goals/i }));
+    await user.click(screen.getByRole('button', { name: /^Settings/i }));
 
-    // Left sidebar switches to full-page Settings navigation
+    // Left sidebar switches to full-page Settings navigation (3 tabs only)
     const settingsNav = await screen.findByRole('complementary', {
       name: 'Settings navigation',
     });
     expect(within(settingsNav).getByRole('button', { name: /Back to Today/i })).toBeInTheDocument();
-    expect(within(settingsNav).getByRole('button', { name: 'Goals' })).toBeInTheDocument();
     expect(within(settingsNav).getByRole('button', { name: 'Integrations' })).toBeInTheDocument();
     expect(within(settingsNav).getByRole('button', { name: 'Server & CLI' })).toBeInTheDocument();
     expect(within(settingsNav).getByRole('button', { name: 'Appearance' })).toBeInTheDocument();
+    expect(within(settingsNav).queryByRole('button', { name: 'Goals' })).not.toBeInTheDocument();
+    expect(within(settingsNav).queryByRole('button', { name: 'Shortcuts' })).not.toBeInTheDocument();
 
-    // Switch to Integrations section
-    await user.click(within(settingsNav).getByRole('button', { name: 'Integrations' }));
+    // Integrations is the default Settings section
     expect(
       await screen.findByRole('heading', { name: 'Integrations & Outlook Sync' }),
     ).toBeInTheDocument();
@@ -725,7 +747,7 @@ describe('Veyra Web App Flows', () => {
             route: 'calendar',
             previousRoute: 'today',
             activeProjectId: null,
-            settingsSection: 'goals',
+            settingsSection: 'integrations',
             activeDrawer: { kind: 'session', sessionId: SESSION_2_ID },
             liveSyncStatus: 'connected',
             focusStatus: null,
@@ -737,6 +759,10 @@ describe('Veyra Web App Flows', () => {
             openProject: vi.fn(),
             setSettingsSection: vi.fn(),
             openBlockDrawer: vi.fn(),
+            openGoalDrawer: vi.fn(),
+            openCreateGoal: vi.fn(),
+            openEditGoal: vi.fn(),
+            openCloseGoal: vi.fn(),
             openDailyNotesDrawer: vi.fn(),
             openMeetingDrawer: vi.fn(),
             openSessionDrawer: vi.fn(),

@@ -1,4 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
+import type { GoalKind } from '@veyra/core/types';
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { apiClient, type DesktopCommandAction, isElectronDesktop } from '../api/client';
 import {
@@ -25,7 +26,11 @@ import { OnboardingFlow } from './OnboardingFlow';
 import { QuickCaptureOverlay, type QuickCaptureTab } from './QuickCaptureOverlay';
 import { Sidebar } from './Sidebar';
 import { CalendarView } from '../views/CalendarView';
+import { CloseGoalSheet } from '../views/CloseGoalSheet';
 import { FocusView } from '../views/FocusView';
+import { GoalDetailDrawer } from '../views/GoalDetailDrawer';
+import { GoalFormDrawer } from '../views/GoalFormDrawer';
+import { GoalsView } from '../views/GoalsView';
 import { MeetingDetailDrawer } from '../views/MeetingDetailDrawer';
 import { PlanView } from '../views/PlanView';
 import { ProjectDetailView } from '../views/ProjectDetailView';
@@ -43,6 +48,7 @@ export interface AppViewsRegistry {
   calendar?: () => ReactNode;
   projects?: () => ReactNode;
   projectDetail?: (projectId: string) => ReactNode;
+  goals?: () => ReactNode;
   review?: () => ReactNode;
   settings?: (section: SettingsSection) => ReactNode;
   renderExtraDrawer?: (drawer: ActiveDrawer, onClose: () => void) => ReactNode;
@@ -68,13 +74,12 @@ const COMMAND_ROUTES = new Set<AppRoute>([
   'calendar',
   'projects',
   'project-detail',
+  'goals',
   'review',
   'settings',
 ]);
 const SETTINGS_SECTIONS = new Set<SettingsSection>([
-  'goals',
   'integrations',
-  'shortcuts',
   'server',
   'appearance',
 ]);
@@ -96,13 +101,13 @@ function MainAppShell({ views }: AppProps) {
 
   const settingsQuery = useSettingsQuery();
   const projectsQuery = useProjectsQuery({ includeArchived: false });
-  const goalsQuery = useGoalsQuery({ includeArchived: false });
+  const goalsQuery = useGoalsQuery({ activeOnly: true });
   const focusQuery = useFocusQuery();
 
   const [route, setRoute] = useState<AppRoute>('today');
   const [previousRoute, setPreviousRoute] = useState<AppRoute>('today');
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
-  const [settingsSection, setSettingsSection] = useState<SettingsSection>('goals');
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>('integrations');
   const [activeDrawer, setActiveDrawer] = useState<ActiveDrawer>(null);
 
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -115,6 +120,17 @@ function MainAppShell({ views }: AppProps) {
     defaults?: CreateBlockDefaults;
   }>({ open: false });
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
+  const [goalFormState, setGoalFormState] = useState<{
+    open: boolean;
+    mode: 'create' | 'edit';
+    goalId?: string | null;
+    defaultKind?: GoalKind;
+  }>({ open: false, mode: 'create' });
+  const [closeGoalState, setCloseGoalState] = useState<{
+    open: boolean;
+    goalId: string | null;
+    initialStatus: 'achieved' | 'archived';
+  }>({ open: false, goalId: null, initialStatus: 'achieved' });
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
 
   const focusStatus = focusQuery.data ?? null;
@@ -170,6 +186,30 @@ function MainAppShell({ views }: AppProps) {
   const openBlockDrawer = useCallback((blockId: string) => {
     setActiveDrawer({ kind: 'block', blockId });
   }, []);
+
+  const openGoalDrawer = useCallback((goalId: string) => {
+    setGoalFormState((prev) => ({ ...prev, open: false }));
+    setActiveDrawer({ kind: 'goal', goalId });
+  }, []);
+
+  const openCreateGoal = useCallback((defaultKind: GoalKind = 'personal') => {
+    setCommandPaletteOpen(false);
+    setQuickCaptureState((prev) => ({ ...prev, open: false }));
+    setGoalFormState({ open: true, mode: 'create', goalId: null, defaultKind });
+  }, []);
+
+  const openEditGoal = useCallback((goalId: string) => {
+    setCommandPaletteOpen(false);
+    setQuickCaptureState((prev) => ({ ...prev, open: false }));
+    setGoalFormState({ open: true, mode: 'edit', goalId });
+  }, []);
+
+  const openCloseGoal = useCallback(
+    (goalId: string, initialStatus: 'achieved' | 'archived' = 'achieved') => {
+      setCloseGoalState({ open: true, goalId, initialStatus });
+    },
+    [],
+  );
 
   const openDailyNotesDrawer = useCallback((date?: string) => {
     setActiveDrawer({ kind: 'daily-notes', date });
@@ -269,7 +309,7 @@ function MainAppShell({ views }: AppProps) {
     openQuickCapture,
   ]);
 
-  // Global keyboard shortcuts: ⌘K, ⌘N, ⌘S, ⌘,, ⌘⇧P, ⌃O (Focus Now), ⌘1-5, Esc
+  // Global keyboard shortcuts: ⌘K, ⌘N, ⌘S, ⌘,, ⌘⇧P, ⌃O (Focus Now), ⌘1-6, Esc
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
@@ -326,7 +366,7 @@ function MainAppShell({ views }: AppProps) {
 
       if (mod && key === ',') {
         e.preventDefault();
-        navigate('settings', { settingsSection: 'goals' });
+        navigate('settings', { settingsSection: 'integrations' });
         return;
       }
 
@@ -336,7 +376,8 @@ function MainAppShell({ views }: AppProps) {
           '2': 'plan',
           '3': 'calendar',
           '4': 'projects',
-          '5': 'review',
+          '5': 'goals',
+          '6': 'review',
         };
         if (navByDigit[key]) {
           e.preventDefault();
@@ -346,7 +387,11 @@ function MainAppShell({ views }: AppProps) {
       }
 
       if (e.key === 'Escape') {
-        if (commandPaletteOpen) {
+        if (closeGoalState.open) {
+          setCloseGoalState((prev) => ({ ...prev, open: false }));
+        } else if (goalFormState.open) {
+          setGoalFormState((prev) => ({ ...prev, open: false }));
+        } else if (commandPaletteOpen) {
           setCommandPaletteOpen(false);
         } else if (quickCaptureState.open) {
           setQuickCaptureState((prev) => ({ ...prev, open: false }));
@@ -360,7 +405,15 @@ function MainAppShell({ views }: AppProps) {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [commandPaletteOpen, quickCaptureState.open, createBlockState.open, activeDrawer, navigate]);
+  }, [
+    closeGoalState.open,
+    goalFormState.open,
+    commandPaletteOpen,
+    quickCaptureState.open,
+    createBlockState.open,
+    activeDrawer,
+    navigate,
+  ]);
 
   const shellValue = useMemo<AppShellContextValue>(
     () => ({
@@ -379,6 +432,10 @@ function MainAppShell({ views }: AppProps) {
       openProject,
       setSettingsSection,
       openBlockDrawer,
+      openGoalDrawer,
+      openCreateGoal,
+      openEditGoal,
+      openCloseGoal,
       openDailyNotesDrawer,
       openMeetingDrawer,
       openSessionDrawer,
@@ -404,6 +461,10 @@ function MainAppShell({ views }: AppProps) {
       navigate,
       openProject,
       openBlockDrawer,
+      openGoalDrawer,
+      openCreateGoal,
+      openEditGoal,
+      openCloseGoal,
       openDailyNotesDrawer,
       openMeetingDrawer,
       openSessionDrawer,
@@ -436,6 +497,8 @@ function MainAppShell({ views }: AppProps) {
           return views.projectDetail(activeProjectId);
         }
         return activeProjectId ? <ProjectDetailView projectId={activeProjectId} /> : <ProjectsView />;
+      case 'goals':
+        return views?.goals ? views.goals() : <GoalsView />;
       case 'review':
         return views?.review ? views.review() : <ReviewView />;
       case 'settings':
@@ -449,6 +512,9 @@ function MainAppShell({ views }: AppProps) {
 
   const inElectron = isElectronDesktop();
   const isFocusRoute = route === 'focus';
+  const closeGoalTarget = closeGoalState.goalId
+    ? (goalsQuery.data?.goals.find((g) => g.id === closeGoalState.goalId) ?? null)
+    : null;
 
   return (
     <AppShellContext.Provider value={shellValue}>
@@ -474,6 +540,19 @@ function MainAppShell({ views }: AppProps) {
           onStartFocus={(id) => void startFocusAndNavigate(id)}
         />
 
+        <GoalDetailDrawer
+          goalId={activeDrawer?.kind === 'goal' ? activeDrawer.goalId : null}
+          onClose={closeDrawer}
+        />
+
+        <GoalFormDrawer
+          open={goalFormState.open}
+          mode={goalFormState.mode}
+          goalId={goalFormState.goalId}
+          defaultKind={goalFormState.defaultKind}
+          onClose={() => setGoalFormState((prev) => ({ ...prev, open: false }))}
+        />
+
         <DailyNotesDrawer
           open={activeDrawer?.kind === 'daily-notes'}
           date={activeDrawer?.kind === 'daily-notes' ? activeDrawer.date : undefined}
@@ -493,6 +572,19 @@ function MainAppShell({ views }: AppProps) {
         {views?.renderExtraDrawer ? views.renderExtraDrawer(activeDrawer, closeDrawer) : null}
 
         {/* Global Overlays */}
+        <CloseGoalSheet
+          open={closeGoalState.open}
+          goal={closeGoalTarget}
+          goalId={closeGoalState.goalId}
+          initialStatus={closeGoalState.initialStatus}
+          onClose={() => setCloseGoalState((prev) => ({ ...prev, open: false }))}
+          onClosed={() => {
+            if (activeDrawer?.kind === 'goal' && activeDrawer.goalId === closeGoalState.goalId) {
+              closeDrawer();
+            }
+          }}
+        />
+
         <CommandPalette
           open={commandPaletteOpen}
           onClose={() => setCommandPaletteOpen(false)}
