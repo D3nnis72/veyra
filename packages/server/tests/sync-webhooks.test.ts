@@ -15,6 +15,7 @@ import {
 import { IcsFeedAdapter } from '../src/sync/ics-adapter.js';
 import { OutlookCliAdapter } from '../src/sync/outlook-cli-adapter.js';
 import { CalendarSyncRunner } from '../src/sync/sync-runner.js';
+import { createVeyraServer, type VeyraServerInstance } from '../src/app.js';
 import {
   WebhookDispatcher,
   computeWebhookSignature,
@@ -572,5 +573,131 @@ describe('WebhookDispatcher', () => {
 
     const hookLogs = listActivity(db, { actor: 'hook' });
     expect(hookLogs.map((l) => l.action)).toEqual(['webhook.failed', 'webhook.delivered']);
+  });
+
+  it('POST /api/review/complete persists snapshot and dispatches review.completed webhook when subscribed', async () => {
+    const receivedHooks: Array<{
+      event: string;
+      data: Record<string, unknown>;
+    }> = [];
+
+    const { url: hookUrl } = await startLocalServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      req.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8');
+        receivedHooks.push(JSON.parse(text) as { event: string; data: Record<string, unknown> });
+        res.writeHead(202, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      });
+    });
+
+    const server: VeyraServerInstance = createVeyraServer({
+      dbPath: ':memory:',
+      port: 0,
+      host: '127.0.0.1',
+      enableTestClock: true,
+      rolloverCheckIntervalMs: 600_000,
+      webhookOptions: { timeoutMs: 5_000, retryDelayMs: 10 },
+    });
+
+    try {
+      const { url: serverUrl } = await server.start();
+
+      // Subscribe webhook to review.completed
+      const patchRes = await fetch(`${serverUrl}/api/settings`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          timezone: 'Europe/Berlin',
+          webhookUrl: `${hookUrl}/webhook`,
+          webhookEvents: ['review.completed'],
+        }),
+      });
+      expect(patchRes.status).toBe(200);
+
+      // GET /api/review?week=47 resolves ISO week 47 of 2026 -> 2026-11-16
+      const week47Res = await fetch(`${serverUrl}/api/review?week=47`, {
+        headers: { 'X-Veyra-Now': '2026-11-25T10:00:00.000Z' },
+      });
+      expect(week47Res.status).toBe(200);
+      const week47 = (await week47Res.json()) as { weekStartDate: string; weekNumber: number };
+      expect(week47.weekStartDate).toBe('2026-11-16');
+      expect(week47.weekNumber).toBe(47);
+
+      // PUT /api/review/rule sets rule, then a second PUT with only previousRuleKept preserves ruleForNextWeek
+      const setRuleRes = await fetch(`${serverUrl}/api/review/rule`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-Veyra-Now': '2026-11-20T15:00:00.000Z' },
+        body: JSON.stringify({
+          weekStartDate: '2026-11-16',
+          ruleForNextWeek: 'Keep mornings clear',
+        }),
+      });
+      expect(setRuleRes.status).toBe(200);
+
+      const setKeptRes = await fetch(`${serverUrl}/api/review/rule`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-Veyra-Now': '2026-11-20T15:05:00.000Z' },
+        body: JSON.stringify({
+          weekStartDate: '2026-11-16',
+          previousRuleKept: 'partly',
+        }),
+      });
+      expect(setKeptRes.status).toBe(200);
+      const keptPayload = (await setKeptRes.json()) as {
+        review: { ruleForNextWeek: string; previousRuleKept: string | null };
+      };
+      expect(keptPayload.review.ruleForNextWeek).toBe('Keep mornings clear');
+      expect(keptPayload.review.previousRuleKept).toBe('partly');
+
+      // POST /api/review/complete persists snapshot and dispatches review.completed webhook
+      const completeRes = await fetch(`${serverUrl}/api/review/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Veyra-Now': '2026-11-20T16:00:00.000Z' },
+        body: JSON.stringify({
+          weekStartDate: '2026-11-16',
+          ruleForNextWeek: 'Protect 09:00-11:00 for deep build',
+          previousRuleKept: 'yes',
+        }),
+      });
+      expect(completeRes.status).toBe(200);
+      const completed = (await completeRes.json()) as {
+        review: { completedAt: string | null; snapshotJson: string | null };
+        snapshot: { weekStartDate: string; weekNumber: number; ruleForNextWeek: string };
+      };
+      expect(completed.review.completedAt).toBe('2026-11-20T16:00:00.000Z');
+      expect(completed.review.snapshotJson).toBeTruthy();
+      expect(completed.snapshot).toMatchObject({
+        weekStartDate: '2026-11-16',
+        weekNumber: 47,
+        ruleForNextWeek: 'Protect 09:00-11:00 for deep build',
+      });
+
+      // Wait briefly for fire-and-forget webhook delivery
+      const deadline = Date.now() + 3000;
+      while (receivedHooks.length === 0 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(receivedHooks).toHaveLength(1);
+      expect(receivedHooks[0].event).toBe('review.completed');
+      expect(receivedHooks[0].data).toMatchObject({
+        weekStartDate: '2026-11-16',
+        weekNumber: 47,
+        ruleForNextWeek: 'Protect 09:00-11:00 for deep build',
+      });
+
+      // POST /api/review/reopen clears completedAt
+      const reopenRes = await fetch(`${serverUrl}/api/review/reopen`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Veyra-Now': '2026-11-20T16:30:00.000Z' },
+        body: JSON.stringify({ weekStartDate: '2026-11-16' }),
+      });
+      expect(reopenRes.status).toBe(200);
+      const reopened = (await reopenRes.json()) as { review: { completedAt: string | null } };
+      expect(reopened.review.completedAt).toBeNull();
+    } finally {
+      await server.stop();
+    }
   });
 });

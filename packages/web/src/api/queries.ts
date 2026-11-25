@@ -124,10 +124,10 @@ export function useProjectDetailQuery(projectId: string | null) {
   });
 }
 
-export function useReviewQuery(weekStart?: string) {
+export function useReviewQuery(weekOrStart?: string | number) {
   return useQuery({
-    queryKey: queryKeys.review(weekStart),
-    queryFn: () => apiClient.getReview(weekStart),
+    queryKey: queryKeys.review(weekOrStart),
+    queryFn: () => apiClient.getReview(weekOrStart),
   });
 }
 

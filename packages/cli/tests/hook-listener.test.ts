@@ -89,6 +89,34 @@ describe('hook-listener unit helpers', () => {
     expect(resolveCommandForEvent('webhook.test', handlers)).toBeUndefined();
   });
 
+  it('hook-listener routes review.completed to onReviewComplete and exports VEYRA_WEEK_START, VEYRA_WEEK_NUMBER, and VEYRA_RULE_FOR_NEXT_WEEK', () => {
+    const handlers = {
+      onReviewComplete: 'echo review-done',
+      onAny: 'echo fallback',
+    };
+    expect(resolveCommandForEvent('review.completed', handlers)).toBe('echo review-done');
+    expect(resolveCommandForEvent('review.completed', { onAny: 'echo fallback' })).toBe(
+      'echo fallback',
+    );
+
+    const payload = {
+      event: 'review.completed',
+      timestamp: '2026-11-20T16:00:00.000Z',
+      data: {
+        weekStartDate: '2026-11-16',
+        weekNumber: 47,
+        ruleForNextWeek: 'Protect Tuesday mornings',
+      },
+    };
+    const raw = JSON.stringify(payload);
+    const env = extractHookEnv(payload, raw, { PATH: process.env.PATH });
+
+    expect(env.VEYRA_EVENT).toBe('review.completed');
+    expect(env.VEYRA_WEEK_START).toBe('2026-11-16');
+    expect(env.VEYRA_WEEK_NUMBER).toBe('47');
+    expect(env.VEYRA_RULE_FOR_NEXT_WEEK).toBe('Protect Tuesday mornings');
+  });
+
   it('formats human log lines cleanly for listening, event, handler_result, and rejected records', () => {
     expect(
       formatHookLogHuman({
@@ -100,6 +128,7 @@ describe('hook-listener unit helpers', () => {
           'focus.started': null,
           'focus.ended': null,
           'block.completed': './summarize.sh',
+          'review.completed': null,
           any: null,
         },
         secretConfigured: true,

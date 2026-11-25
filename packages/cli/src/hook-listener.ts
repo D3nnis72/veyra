@@ -31,6 +31,7 @@ export interface HookCommandMap {
   onFocusStart?: string;
   onFocusEnd?: string;
   onComplete?: string;
+  onReviewComplete?: string;
   onAny?: string;
 }
 
@@ -68,6 +69,7 @@ export type HookLogRecord =
         'focus.started': string | null;
         'focus.ended': string | null;
         'block.completed': string | null;
+        'review.completed': string | null;
         any: string | null;
       };
       secretConfigured: boolean;
@@ -211,6 +213,15 @@ export function extractHookEnv(
   if (typeof data.totalBlockMinutes === 'number') {
     env.VEYRA_TOTAL_BLOCK_MINUTES = String(data.totalBlockMinutes);
   }
+  if (typeof data.weekStartDate === 'string') {
+    env.VEYRA_WEEK_START = data.weekStartDate;
+  }
+  if (typeof data.weekNumber === 'number') {
+    env.VEYRA_WEEK_NUMBER = String(data.weekNumber);
+  }
+  if (typeof data.ruleForNextWeek === 'string') {
+    env.VEYRA_RULE_FOR_NEXT_WEEK = data.ruleForNextWeek;
+  }
 
   return env;
 }
@@ -230,6 +241,9 @@ export function resolveCommandForEvent(
   }
   if (eventName === 'block.completed') {
     return handlers.onComplete ?? handlers.onAny;
+  }
+  if (eventName === 'review.completed') {
+    return handlers.onReviewComplete ?? handlers.onAny;
   }
   return handlers.onAny;
 }
@@ -359,9 +373,9 @@ function readRequestBody(req: http.IncomingMessage, maxBytes: number): Promise<s
 export function formatHookLogHuman(record: HookLogRecord): string {
   switch (record.type) {
     case 'listening': {
-      const configured = (['focus.started', 'focus.ended', 'block.completed'] as const).filter(
-        (key) => Boolean(record.handlers[key]),
-      );
+      const configured = (
+        ['focus.started', 'focus.ended', 'block.completed', 'review.completed'] as const
+      ).filter((key) => Boolean(record.handlers[key]));
       const parts: string[] = [];
       if (record.autoSummaryEnabled) {
         parts.push('auto-summary (focus.ended, block.completed)');
@@ -673,6 +687,7 @@ export function startHookListener(options: HookListenerOptions = {}): Promise<Ho
           'focus.started': handlers.onFocusStart ?? null,
           'focus.ended': handlers.onFocusEnd ?? null,
           'block.completed': handlers.onComplete ?? null,
+          'review.completed': handlers.onReviewComplete ?? null,
           any: handlers.onAny ?? null,
         },
         secretConfigured: Boolean(secret),

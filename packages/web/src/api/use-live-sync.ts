@@ -80,8 +80,12 @@ function getKeysToInvalidate(payload: SseEventPayload | null): string[][] {
     return keys;
   }
 
-  if (entity === 'weekly_review' || type.startsWith('weekly_review.')) {
-    keys.push(['review'], ['today']);
+  if (
+    entity === 'weekly_review' ||
+    type.startsWith('weekly_review.') ||
+    type === 'review.completed'
+  ) {
+    keys.push(['review'], ['today'], ['projects'], ['plan']);
     return keys;
   }
 

@@ -42,6 +42,8 @@ import {
   calendarEventSourceSchema,
   closeGoal,
   completeBlock,
+  completeWeeklyReview,
+  completeWeeklyReviewInputSchema,
   computePlanCapacity,
   computeTodayCapacity,
   createBlock,
@@ -85,11 +87,15 @@ import {
   pauseFocus,
   projectStatusSchema,
   reopenBlock,
+  reopenWeeklyReview,
   reorderBlock,
   reorderGoal,
+  resolveIsoWeekStartDate,
   resumeFocus,
+  ruleKeptSchema,
   runDailyRolloverAndRecurrence,
   senseSignalSchema,
+  setPreviousRuleKept,
   setWeeklyRule,
   splitSession,
   startFocus,
@@ -280,8 +286,18 @@ const applySuggestedOrderBodySchema = z.object({
 
 const setWeeklyRuleBodySchema = z.object({
   weekStartDate: dateOnlySchema.optional(),
-  ruleForNextWeek: z.string(),
+  ruleForNextWeek: z.string().optional(),
+  previousRuleKept: ruleKeptSchema.nullable().optional(),
   notes: z.string().optional(),
+});
+
+const completeWeeklyReviewBodySchema = completeWeeklyReviewInputSchema.extend({
+  week: z.number().int().min(1).max(53).optional(),
+});
+
+const reopenWeeklyReviewBodySchema = z.object({
+  weekStartDate: dateOnlySchema.optional(),
+  week: z.number().int().min(1).max(53).optional(),
 });
 
 const upsertEventsBodySchema = z.object({
@@ -1512,7 +1528,20 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
     const now = getNow(c);
     runDailyRolloverAndRecurrence(db, now);
 
-    const weekStart = c.req.query('weekStart');
+    const rawWeek = c.req.query('week');
+    const rawWeekStart = c.req.query('weekStart');
+    let weekStart = rawWeekStart;
+
+    if (rawWeek !== undefined) {
+      if (!/^\d+$/.test(rawWeek.trim())) {
+        throw new ValidationError(`Invalid week parameter: '${rawWeek}' (expected integer 1-53)`);
+      }
+      const weekNum = Number.parseInt(rawWeek.trim(), 10);
+      const settings = getSettings(db);
+      const today = formatLocalDate(now, settings.timezone);
+      weekStart = resolveIsoWeekStartDate(weekNum, today);
+    }
+
     const summary = getWeeklyReview(db, weekStart, now);
     const projects = listProjects(db, now, { includeArchived: false });
 
@@ -1567,16 +1596,104 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
       );
     }
 
+    if (
+      parsed.data.ruleForNextWeek === undefined &&
+      parsed.data.previousRuleKept === undefined
+    ) {
+      throw new ValidationError('Either ruleForNextWeek or previousRuleKept is required');
+    }
+
     const settings = getSettings(db);
     const today = formatLocalDate(now, settings.timezone);
     const weekStartDate = parsed.data.weekStartDate ?? getWeekRange(today).weekStartDate;
 
+    if (parsed.data.ruleForNextWeek === undefined) {
+      const review = setPreviousRuleKept(db, weekStartDate, parsed.data.previousRuleKept ?? null, {
+        now,
+        actor,
+      });
+      emitSse('weekly_review.rule_kept_set', 'weekly_review', review.id, now);
+      return c.json({ review });
+    }
+
     const review = setWeeklyRule(db, weekStartDate, parsed.data.ruleForNextWeek, {
       notes: parsed.data.notes,
+      previousRuleKept: parsed.data.previousRuleKept,
       now,
       actor,
     });
     emitSse('weekly_review.rule_set', 'weekly_review', review.id, now);
+    return c.json({ review });
+  });
+
+  app.post('/api/review/complete', async (c) => {
+    const now = getNow(c);
+    const actor = getActor(c);
+    const raw = await readJsonBody(c);
+    const parsed = completeWeeklyReviewBodySchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new ValidationError(
+        parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
+      );
+    }
+
+    const settings = getSettings(db);
+    const today = formatLocalDate(now, settings.timezone);
+    const weekStartDate =
+      parsed.data.weekStartDate ??
+      (parsed.data.week !== undefined
+        ? resolveIsoWeekStartDate(parsed.data.week, today)
+        : undefined);
+
+    const result = completeWeeklyReview(
+      db,
+      {
+        weekStartDate,
+        ruleForNextWeek: parsed.data.ruleForNextWeek,
+        previousRuleKept: parsed.data.previousRuleKept,
+        notes: parsed.data.notes,
+        projectWeeklyTimes: parsed.data.projectWeeklyTimes,
+      },
+      { now, actor },
+    );
+
+    emitSse('review.completed', 'weekly_review', result.review.id, now);
+    void webhooks.emit(
+      'review.completed',
+      {
+        weekStartDate: result.review.weekStartDate,
+        weekNumber: result.snapshot.weekNumber,
+        ruleForNextWeek: result.review.ruleForNextWeek,
+        snapshot: result.snapshot,
+        review: result.review,
+      },
+      { now },
+    );
+
+    return c.json(result);
+  });
+
+  app.post('/api/review/reopen', async (c) => {
+    const now = getNow(c);
+    const actor = getActor(c);
+    const raw = await readJsonBody(c, true);
+    const parsed = reopenWeeklyReviewBodySchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new ValidationError(
+        parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
+      );
+    }
+
+    const settings = getSettings(db);
+    const today = formatLocalDate(now, settings.timezone);
+    const weekStartDate =
+      parsed.data.weekStartDate ??
+      (parsed.data.week !== undefined
+        ? resolveIsoWeekStartDate(parsed.data.week, today)
+        : getWeekRange(today).weekStartDate);
+
+    const review = reopenWeeklyReview(db, weekStartDate, { now, actor });
+    emitSse('weekly_review.reopened', 'weekly_review', review.id, now);
     return c.json({ review });
   });
 

@@ -10,6 +10,8 @@ import {
   type CalendarSyncStatus,
   type CloseGoalInput,
   type CompleteBlockInput,
+  type CompleteWeeklyReviewInput,
+  type CompleteWeeklyReviewResult,
   type CreateBlockInput,
   type CreateDailyNoteInput,
   type CreateGoalInput,
@@ -36,6 +38,7 @@ import {
   type ReorderBlockInput,
   type ReorderGoalInput,
   type RoomTodaySummary,
+  type RuleKept,
   type SplitSessionInput,
   type SplitSessionResult,
   type SuggestedOrderItem,
@@ -287,8 +290,12 @@ export class VeyraClient {
     return this.request<CalendarResponse>('GET', '/api/calendar', { query: { start, end } });
   }
 
-  review(weekStart?: string): Promise<ReviewResponse> {
-    return this.request<ReviewResponse>('GET', '/api/review', { query: { weekStart } });
+  review(weekOrStart?: string | number): Promise<ReviewResponse> {
+    const query =
+      typeof weekOrStart === 'number'
+        ? { week: weekOrStart }
+        : { weekStart: weekOrStart };
+    return this.request<ReviewResponse>('GET', '/api/review', { query });
   }
 
   getSettings(): Promise<SettingsResponse> {
@@ -548,10 +555,25 @@ export class VeyraClient {
 
   setWeeklyRule(input: {
     weekStartDate?: string;
-    ruleForNextWeek: string;
+    ruleForNextWeek?: string;
+    previousRuleKept?: RuleKept | null;
     notes?: string;
   }): Promise<{ review: WeeklyReview }> {
     return this.request<{ review: WeeklyReview }>('PUT', '/api/review/rule', { body: input });
+  }
+
+  completeReview(
+    input: CompleteWeeklyReviewInput & { week?: number },
+  ): Promise<CompleteWeeklyReviewResult> {
+    return this.request<CompleteWeeklyReviewResult>('POST', '/api/review/complete', {
+      body: input,
+    });
+  }
+
+  reopenReview(input?: { weekStartDate?: string; week?: number }): Promise<{ review: WeeklyReview }> {
+    return this.request<{ review: WeeklyReview }>('POST', '/api/review/reopen', {
+      body: input ?? {},
+    });
   }
 
   // Calendar Events

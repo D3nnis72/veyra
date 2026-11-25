@@ -814,4 +814,72 @@ describe('@veyra/cli integration', () => {
     expect(clearProjRes.exitCode).toBe(0);
     expect((JSON.parse(clearProjRes.stdout) as { weeklyTimeMinutes: number | null }).weeklyTimeMinutes).toBeNull();
   });
+
+  it('veyra review --week 47 --json and veyra review complete --week 47 --rule "..." --kept yes --json work end to end', async () => {
+    const reviewRes = await execCli(['review', '--week', '47', '--json'], baseEnv());
+    expect(reviewRes.exitCode).toBe(0);
+    const review = JSON.parse(reviewRes.stdout) as {
+      weekStartDate: string;
+      weekNumber: number;
+      completedAt: string | null;
+      chapterOpeningSentences: { week: string; progress: string; time: string; nextWeek: string };
+    };
+    expect(review.weekStartDate).toBe('2026-11-16');
+    expect(review.weekNumber).toBe(47);
+    expect(review.completedAt).toBeNull();
+    expect(review.chapterOpeningSentences.week.length).toBeGreaterThan(0);
+
+    const completeRes = await execCli(
+      [
+        'review',
+        'complete',
+        '--week',
+        '47',
+        '--rule',
+        'Keep Monday morning free for deep work',
+        '--kept',
+        'yes',
+        '--json',
+      ],
+      baseEnv({ VEYRA_NOW: '2026-11-20T16:00:00.000Z' }),
+    );
+    expect(completeRes.exitCode).toBe(0);
+    const completed = JSON.parse(completeRes.stdout) as {
+      review: {
+        weekStartDate: string;
+        ruleForNextWeek: string;
+        previousRuleKept: string | null;
+        completedAt: string | null;
+      };
+      snapshot: {
+        weekStartDate: string;
+        weekNumber: number;
+        ruleForNextWeek: string;
+      };
+    };
+    expect(completed.review).toMatchObject({
+      weekStartDate: '2026-11-16',
+      ruleForNextWeek: 'Keep Monday morning free for deep work',
+      previousRuleKept: 'yes',
+      completedAt: '2026-11-20T16:00:00.000Z',
+    });
+    expect(completed.snapshot).toMatchObject({
+      weekStartDate: '2026-11-16',
+      weekNumber: 47,
+      ruleForNextWeek: 'Keep Monday morning free for deep work',
+    });
+
+    const afterRes = await execCli(['review', '--week', '47', '--json'], baseEnv());
+    expect(afterRes.exitCode).toBe(0);
+    const after = JSON.parse(afterRes.stdout) as {
+      completedAt: string | null;
+      previousRuleKept: string | null;
+      ruleForNextWeek: string | null;
+      snapshot: { weekNumber: number } | null;
+    };
+    expect(after.completedAt).toBe('2026-11-20T16:00:00.000Z');
+    expect(after.previousRuleKept).toBe('yes');
+    expect(after.ruleForNextWeek).toBe('Keep Monday morning free for deep work');
+    expect(after.snapshot?.weekNumber).toBe(47);
+  });
 });

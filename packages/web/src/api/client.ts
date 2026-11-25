@@ -9,6 +9,8 @@ import type {
   CloseFocusResult,
   CloseGoalInput,
   CompleteBlockResult,
+  CompleteWeeklyReviewInput,
+  CompleteWeeklyReviewResult,
   CreateBlockInput,
   CreateDailyNoteInput,
   CreateGoalInput,
@@ -45,6 +47,7 @@ import type {
   ReorderBlockInput,
   ReorderGoalInput,
   RoomTodaySummary,
+  RuleKept,
   SenseSignal,
   SplitSessionInput,
   SplitSessionResult,
@@ -438,8 +441,8 @@ export const queryKeys = {
   today: ['today'] as const,
   plan: (weekStart?: string) => (weekStart ? (['plan', weekStart] as const) : (['plan'] as const)),
   calendar: (start?: string, end?: string) => ['calendar', start ?? '', end ?? ''] as const,
-  review: (weekStart?: string) =>
-    weekStart ? (['review', weekStart] as const) : (['review'] as const),
+  review: (weekOrStart?: string | number) =>
+    weekOrStart !== undefined ? (['review', String(weekOrStart)] as const) : (['review'] as const),
   goals: (filter?: ListGoalsFilter) => ['goals', filter ?? {}] as const,
   goal: (id: string) => ['goal', id] as const,
   projects: (filter?: ListProjectsFilter) => ['projects', filter ?? {}] as const,
@@ -481,16 +484,29 @@ export const apiClient = {
     return request<CalendarResponse>('GET', `/api/calendar${buildQuery({ start, end })}`);
   },
 
-  getReview(weekStart?: string): Promise<ReviewResponse> {
-    return request<ReviewResponse>('GET', `/api/review${buildQuery({ weekStart })}`);
+  getReview(weekOrStart?: string | number): Promise<ReviewResponse> {
+    const query =
+      typeof weekOrStart === 'number'
+        ? buildQuery({ week: weekOrStart })
+        : buildQuery({ weekStart: weekOrStart });
+    return request<ReviewResponse>('GET', `/api/review${query}`);
   },
 
   setWeeklyRule(body: {
     weekStartDate?: string;
-    ruleForNextWeek: string;
+    ruleForNextWeek?: string;
+    previousRuleKept?: RuleKept | null;
     notes?: string;
   }): Promise<{ review: WeeklyReview }> {
     return request<{ review: WeeklyReview }>('PUT', '/api/review/rule', body);
+  },
+
+  completeReview(input: CompleteWeeklyReviewInput): Promise<CompleteWeeklyReviewResult> {
+    return request<CompleteWeeklyReviewResult>('POST', '/api/review/complete', input);
+  },
+
+  reopenReview(weekStartDate: string): Promise<{ review: WeeklyReview }> {
+    return request<{ review: WeeklyReview }>('POST', '/api/review/reopen', { weekStartDate });
   },
 
   // Goals

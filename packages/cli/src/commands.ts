@@ -4,6 +4,7 @@ import {
   type BlockSizeMinutes,
   type CalendarEvent,
   type CalendarEventSource,
+  type CompleteWeeklyReviewResult,
   type CreateBlockInput,
   type DailyNote,
   type DropReason,
@@ -21,6 +22,7 @@ import {
   type ProjectWithStats,
   type RecurrenceRule,
   type RevisitHorizon,
+  type RuleKept,
   type SenseSignal,
   type UpdateBlockInput,
   type UpdateCalendarEventInput,
@@ -40,6 +42,7 @@ import {
   projectStatusSchema,
   recurrenceRuleSchema,
   revisitHorizonSchema,
+  ruleKeptSchema,
   senseSignalSchema,
 } from '@veyra/core/types';
 import { Command, CommanderError } from 'commander';
@@ -1438,6 +1441,7 @@ export function createProgram(ctx: ProgramContext): Command {
     .option('--on-focus-start <cmd>', 'Shell command to execute on focus.started')
     .option('--on-focus-end <cmd>', 'Shell command to execute on focus.ended')
     .option('--on-complete <cmd>', 'Shell command to execute on block.completed')
+    .option('--on-review-complete <cmd>', 'Shell command to execute on review.completed')
     .option('--on-any <cmd>', 'Fallback shell command for any unhandled lifecycle event')
     .option(
       '--auto-summary',
@@ -1482,6 +1486,7 @@ export function createProgram(ctx: ProgramContext): Command {
         onFocusStart?: string;
         onFocusEnd?: string;
         onComplete?: string;
+        onReviewComplete?: string;
         onAny?: string;
         autoSummary?: boolean;
         summarizerCmd?: string;
@@ -1529,6 +1534,7 @@ export function createProgram(ctx: ProgramContext): Command {
             onFocusStart: opts.onFocusStart,
             onFocusEnd: opts.onFocusEnd,
             onComplete: opts.onComplete,
+            onReviewComplete: opts.onReviewComplete,
             onAny: opts.onAny,
           },
           ...(autoSummaryEnabled
@@ -1804,18 +1810,36 @@ export function createProgram(ctx: ProgramContext): Command {
       },
     );
 
+  const parseWeekOption = (raw: string): { week?: number; weekStart?: string } => {
+    const trimmed = raw.trim();
+    if (/^\d+$/.test(trimmed)) {
+      const weekNum = Number.parseInt(trimmed, 10);
+      if (weekNum < 1 || weekNum > 53) {
+        throw new CliUsageError(
+          `Invalid --week '${raw}'. Expected ISO week number 1-53 or YYYY-MM-DD date.`,
+        );
+      }
+      return { week: weekNum };
+    }
+    return { weekStart: validateDateOnly(trimmed, '--week') };
+  };
+
   const reviewCmd = program
     .command('review')
-    .description('Inspect weekly review summary or set rule for next week')
-    .option('--week <YYYY-MM-DD>', 'Any date within the target week')
+    .description('Inspect weekly review summary, set rule for next week, or complete review')
+    .option('--week <N|YYYY-MM-DD>', 'ISO week number (1-53) or any YYYY-MM-DD date within the target week')
     .action(async (opts: { week?: string }) => {
-      const weekStart = opts.week ? validateDateOnly(opts.week, '--week') : undefined;
-      const data = await ctx.getClient().review(weekStart);
+      const parsedWeek = opts.week ? parseWeekOption(opts.week) : undefined;
+      const data = await ctx.getClient().review(parsedWeek?.week ?? parsedWeek?.weekStart);
       emit<ReviewResponse>(data, (d) => {
         const lines = [
-          `Weekly Review ${d.weekStartDate} .. ${d.weekEndDate}`,
-          `Focus: ${formatDuration(d.totalFocusMinutes)} (Build ${formatDuration(d.buildMinutes)} / Ops ${formatDuration(d.opsMinutes)}, Goal-aligned ${d.goalAlignmentPct}%)`,
-          `Energy: +${d.energyCounts.up} / =${d.energyCounts.neutral} / -${d.energyCounts.down}`,
+          `Weekly Review · Week ${d.weekNumber} (${d.weekStartDate} .. ${d.weekEndDate})${d.completedAt ? ' [Completed]' : ''}`,
+          `1. ${d.chapterOpeningSentences.week}`,
+          `2. ${d.chapterOpeningSentences.progress}`,
+          `3. ${d.chapterOpeningSentences.time}`,
+          `4. ${d.chapterOpeningSentences.nextWeek}`,
+          `Focus: ${formatDuration(d.totalFocusMinutes)} / room ${formatDuration(d.roomMinutesTotal)} (Build ${formatDuration(d.buildMinutes)} / Ops ${formatDuration(d.opsMinutes)}, Goals ${d.goalAlignmentPct}%: Company ${d.companyGoalPct}% / Personal ${d.personalGoalPct}%)`,
+          `Sense: moved ${d.senseCounts.moved} / partly ${d.senseCounts.partly} / motion ${d.senseCounts.motion} | Energy: +${d.energyCounts.up} / =${d.energyCounts.neutral} / -${d.energyCounts.down}`,
           `Rule for next week: ${d.ruleForNextWeek ?? '(not set)'}`,
           `Notes: ${d.dailyNotes.length} | Chronic carryovers: ${d.chronicCarryovers.length} | Past-revisit Later: ${d.pastRevisitLater.length}`,
         ];
@@ -1826,18 +1850,94 @@ export function createProgram(ctx: ProgramContext): Command {
   reviewCmd
     .command('set-rule <rule>')
     .description('Set the weekly rule for next week')
-    .option('--week <YYYY-MM-DD>', 'Week start date (defaults to current week)')
+    .option('--week <N|YYYY-MM-DD>', 'ISO week number (1-53) or week date (defaults to current week)')
+    .option('--kept <yes|partly|no>', 'Whether last week rule was kept')
     .option('--notes <text>', 'Optional review reflection notes')
-    .action(async (rule: string, opts: { week?: string; notes?: string }) => {
-      const weekStartDate = opts.week ? validateDateOnly(opts.week, '--week') : undefined;
-      const { review } = await ctx.getClient().setWeeklyRule({
+    .action(async (rule: string, opts: { week?: string; kept?: string; notes?: string }) => {
+      const client = ctx.getClient();
+      let weekStartDate: string | undefined;
+      if (opts.week) {
+        const parsedWeek = parseWeekOption(opts.week);
+        weekStartDate = parsedWeek.weekStart ?? (await client.review(parsedWeek.week)).weekStartDate;
+      }
+      let previousRuleKept: RuleKept | undefined;
+      if (opts.kept !== undefined) {
+        const parsedKept = ruleKeptSchema.safeParse(opts.kept.trim().toLowerCase());
+        if (!parsedKept.success) {
+          throw new CliUsageError(
+            `Invalid --kept '${opts.kept}'. Expected one of: yes, partly, no.`,
+          );
+        }
+        previousRuleKept = parsedKept.data;
+      }
+      const { review } = await client.setWeeklyRule({
         ...(weekStartDate ? { weekStartDate } : {}),
         ruleForNextWeek: rule,
+        ...(previousRuleKept !== undefined ? { previousRuleKept } : {}),
         ...(opts.notes !== undefined ? { notes: opts.notes } : {}),
       });
       emit<WeeklyReview>(
         review,
         (r) => `Saved rule for week of ${r.weekStartDate}: "${r.ruleForNextWeek}"`,
+      );
+    });
+
+  reviewCmd
+    .command('complete')
+    .description('Complete a weekly review, persist its snapshot, and trigger review.completed hooks')
+    .option('--week <N|YYYY-MM-DD>', 'ISO week number (1-53) or any YYYY-MM-DD date within the target week')
+    .option('--rule <text>', 'Rule for next week')
+    .option('--kept <yes|partly|no>', 'Whether last week rule was kept')
+    .option('--notes <text>', 'Optional review reflection notes')
+    .action(
+      async (opts: { week?: string; rule?: string; kept?: string; notes?: string }) => {
+        const client = ctx.getClient();
+        const parsedWeek = opts.week ? parseWeekOption(opts.week) : undefined;
+        let previousRuleKept: RuleKept | undefined;
+        if (opts.kept !== undefined) {
+          const parsedKept = ruleKeptSchema.safeParse(opts.kept.trim().toLowerCase());
+          if (!parsedKept.success) {
+            throw new CliUsageError(
+              `Invalid --kept '${opts.kept}'. Expected one of: yes, partly, no.`,
+            );
+          }
+          previousRuleKept = parsedKept.data;
+        }
+
+        let ruleForNextWeek = opts.rule;
+        if (ruleForNextWeek === undefined) {
+          const current = await client.review(parsedWeek?.week ?? parsedWeek?.weekStart);
+          ruleForNextWeek = current.ruleForNextWeek ?? '';
+        }
+
+        const result = await client.completeReview({
+          ...(parsedWeek?.weekStart ? { weekStartDate: parsedWeek.weekStart } : {}),
+          ...(parsedWeek?.week !== undefined ? { week: parsedWeek.week } : {}),
+          ruleForNextWeek,
+          ...(previousRuleKept !== undefined ? { previousRuleKept } : {}),
+          ...(opts.notes !== undefined ? { notes: opts.notes } : {}),
+        });
+        emit<CompleteWeeklyReviewResult>(
+          result,
+          (r) =>
+            `Completed Weekly Review for Week ${r.snapshot.weekNumber} (${r.review.weekStartDate}). Rule: "${r.review.ruleForNextWeek || '(none)'}"`,
+        );
+      },
+    );
+
+  reviewCmd
+    .command('reopen')
+    .description('Reopen a completed weekly review so it can be edited and re-completed')
+    .option('--week <N|YYYY-MM-DD>', 'ISO week number (1-53) or any YYYY-MM-DD date within the target week')
+    .action(async (opts: { week?: string }) => {
+      const parsedWeek = opts.week ? parseWeekOption(opts.week) : undefined;
+      const { review } = await ctx.getClient().reopenReview({
+        ...(parsedWeek?.weekStart ? { weekStartDate: parsedWeek.weekStart } : {}),
+        ...(parsedWeek?.week !== undefined ? { week: parsedWeek.week } : {}),
+      });
+      emit<WeeklyReview>(
+        review,
+        (r) => `Reopened Weekly Review for week of ${r.weekStartDate}`,
       );
     });
 
