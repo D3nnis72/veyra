@@ -81,6 +81,14 @@ Closing a goal asks two short things: was it achieved or let go, and one line on
 └───────────────────────────────────────────────────────────────────┘
 ```
 
+## Goals in the sidebar, edited in a drawer {#sidebar updated=2026-11-25}
+
+Wanted by the user on 2026-11-25: goals are edited the same way as blocks and projects, and they get a right click menu. Today goals only live in `Settings → Goals` with inline editing, and they have no context menu.
+
+Proposal, as read from the request: the app sidebar gets a `GOALS` section below the pinned projects, with the active goals grouped Personal and Company, each row with its icon wrapper and a thin bar for this week's focus against the weekly intent. A click opens a `GoalDetailDrawer`, a docked right drawer like `BlockDetailDrawer` (520 px): name, kind, why, done when, check in date, weekly intent, measure, if it stalls, color, then the history of outcome lines and measure updates. `Settings → Goals` keeps the full list including closed goals, and its edit button opens the same drawer instead of the inline card.
+
+The right click menu on a goal row (sidebar and Settings) uses the shared `ContextMenu`: `Open Details`, `New Block for this Goal`, `Show in Review`, `Move Up` and `Move Down` (priority), `Mark Achieved`, `Let Go`, `Delete Goal`. Achieved and Let go open the short closing question.
+
 ## Did this block make sense? {#sense updated=2026-11-24}
 
 Wanted by the user: at the end of a block and in the Weekly Review, a short look at whether the block made sense for its goal. The completion card in the Focus view already asks how the block felt (energy) and what actually moved forward. The concept adds one more question, "Did this block make sense for its goal?", with three answers: moved the goal, partly, just motion. The Weekly Review then splits goal alignment into company and personal focus time and lists the blocks marked partly or just motion under "Worth a second look". Fits principle 6 in [VISION.md](../../../VISION.md) (progress over motion).
