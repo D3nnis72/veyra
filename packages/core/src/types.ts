@@ -34,6 +34,21 @@ export const PROJECT_ACCENT_COLORS = [
   '#6E7280', // Neutral Slate
 ] as const;
 
+export const COLOR_PICKER_PRESETS: readonly { name: string; hex: string }[] = [
+  { name: 'Indigo', hex: '#5E6AD2' },
+  { name: 'Sky', hex: '#4DA3FF' },
+  { name: 'Cyan', hex: '#22D3EE' },
+  { name: 'Teal', hex: '#14B8A6' },
+  { name: 'Mint', hex: '#34D399' },
+  { name: 'Lime', hex: '#84CC16' },
+  { name: 'Amber', hex: '#F59E0B' },
+  { name: 'Orange', hex: '#F97316' },
+  { name: 'Coral', hex: '#FB7185' },
+  { name: 'Rose', hex: '#F43F5E' },
+  { name: 'Pink', hex: '#EC4899' },
+  { name: 'Violet', hex: '#9D7FF7' },
+] as const;
+
 const DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 export function isValidDateOnly(value: string): boolean {
@@ -102,6 +117,9 @@ export type RevisitHorizon = z.infer<typeof revisitHorizonSchema>;
 export const goalStatusSchema = z.enum(['active', 'achieved', 'archived']);
 export type GoalStatus = z.infer<typeof goalStatusSchema>;
 
+export const goalKindSchema = z.enum(['personal', 'company']);
+export type GoalKind = z.infer<typeof goalKindSchema>;
+
 export const projectStatusSchema = z.enum(['active', 'paused', 'archived']);
 export type ProjectStatus = z.infer<typeof projectStatusSchema>;
 
@@ -147,7 +165,14 @@ export type ExternalLink = z.infer<typeof externalLinkSchema>;
 export const goalSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1),
+  kind: goalKindSchema,
   description: z.string(),
+  doneWhen: z.string(),
+  checkInDate: dateOnlySchema.nullable(),
+  measure: z.string().nullable(),
+  ifItStalls: z.string(),
+  closingNote: z.string().nullable(),
+  closedAt: z.string().nullable(),
   color: z.string().min(1),
   status: goalStatusSchema,
   orderKey: z.string().min(1),
@@ -155,6 +180,16 @@ export const goalSchema = z.object({
   deletedAt: z.string().nullable(),
 });
 export type Goal = z.infer<typeof goalSchema>;
+
+export const goalMeasureUpdateSchema = z.object({
+  id: z.string().uuid(),
+  goalId: z.string().uuid(),
+  previousValue: z.string().nullable(),
+  value: z.string(),
+  weekStartDate: dateOnlySchema,
+  recordedAt: z.string(),
+});
+export type GoalMeasureUpdate = z.infer<typeof goalMeasureUpdateSchema>;
 
 export const projectSchema = z.object({
   id: z.string().uuid(),
@@ -356,7 +391,13 @@ export type ActivityLog = z.infer<typeof activityLogSchema>;
 
 export const createGoalInputSchema = z.object({
   name: z.string().trim().min(1),
+  kind: goalKindSchema.optional().default('personal'),
   description: z.string().optional().default(''),
+  doneWhen: z.string().optional().default(''),
+  checkInDate: dateOnlySchema.nullable().optional().default(null),
+  measure: z.string().nullable().optional().default(null),
+  ifItStalls: z.string().optional().default(''),
+  closingNote: z.string().nullable().optional().default(null),
   color: z.string().min(1).optional().default(DEFAULT_GOAL_COLOR),
   status: goalStatusSchema.optional().default('active'),
   orderKey: z.string().min(1).optional(),
@@ -365,12 +406,30 @@ export type CreateGoalInput = z.input<typeof createGoalInputSchema>;
 
 export const updateGoalInputSchema = z.object({
   name: z.string().trim().min(1).optional(),
+  kind: goalKindSchema.optional(),
   description: z.string().optional(),
+  doneWhen: z.string().optional(),
+  checkInDate: dateOnlySchema.nullable().optional(),
+  measure: z.string().nullable().optional(),
+  ifItStalls: z.string().optional(),
+  closingNote: z.string().nullable().optional(),
+  measureWeekStartDate: dateOnlySchema.optional(),
   color: z.string().min(1).optional(),
   status: goalStatusSchema.optional(),
   orderKey: z.string().min(1).optional(),
 });
 export type UpdateGoalInput = z.infer<typeof updateGoalInputSchema>;
+
+export const closeGoalInputSchema = z.object({
+  status: z.enum(['achieved', 'archived']),
+  closingNote: z.string().nullable().optional(),
+});
+export type CloseGoalInput = z.infer<typeof closeGoalInputSchema>;
+
+export const reorderGoalInputSchema = z.object({
+  direction: z.enum(['up', 'down']),
+});
+export type ReorderGoalInput = z.infer<typeof reorderGoalInputSchema>;
 
 const matchKeywordsInputSchema = z
   .array(z.string())
@@ -579,6 +638,8 @@ export type UpdateSettingsInput = z.infer<typeof updateSettingsInputSchema>;
 export interface ListGoalsFilter {
   status?: GoalStatus;
   includeArchived?: boolean;
+  activeOnly?: boolean;
+  kind?: GoalKind;
 }
 
 export interface ListProjectsFilter {
@@ -659,6 +720,36 @@ export interface ActiveWeeklyRuleResult {
   activeRule: WeeklyReview | null;
   nextWeekRule: WeeklyReview | null;
   activeRuleText: string | null;
+}
+
+export interface GoalWithStats extends Goal {
+  weeklyFocusMinutes: number;
+  weeklyBlockCount: number;
+  linkedProjectCount: number;
+  rankInKind: number;
+}
+
+export type GoalHistoryItem =
+  | {
+      kind: 'outcome';
+      id: string;
+      blockId: string;
+      blockTitle: string;
+      outcomeNote: string;
+      totalFocusMinutes: number;
+      timestamp: string;
+    }
+  | {
+      kind: 'measure';
+      id: string;
+      previousValue: string | null;
+      value: string;
+      weekStartDate: DateOnly;
+      timestamp: string;
+    };
+
+export interface GoalDetail extends GoalWithStats {
+  history: GoalHistoryItem[];
 }
 
 export interface ProjectWithStats extends Project {

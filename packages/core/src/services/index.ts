@@ -5,14 +5,17 @@ export {
 } from './internal.js';
 export {
   archiveProject,
+  closeGoal,
   createGoal,
   createProject,
   deleteGoal,
   deleteProject,
   getGoal,
+  getGoalDetail,
   getProject,
   listGoals,
   listProjects,
+  reorderGoal,
   updateGoal,
   updateProject,
 } from './goals-projects.js';

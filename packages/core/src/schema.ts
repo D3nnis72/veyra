@@ -7,6 +7,7 @@ import type {
   CalendarSyncMode,
   EnergySignal,
   ExternalLink,
+  GoalKind,
   GoalStatus,
   ProjectStatus,
   ThemeMode,
@@ -16,12 +17,30 @@ import type {
 export const goals = sqliteTable('goals', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
+  kind: text('kind').$type<GoalKind>().notNull().default('personal'),
   description: text('description').notNull().default(''),
+  doneWhen: text('done_when').notNull().default(''),
+  checkInDate: text('check_in_date'),
+  measure: text('measure'),
+  ifItStalls: text('if_it_stalls').notNull().default(''),
+  closingNote: text('closing_note'),
+  closedAt: text('closed_at'),
   color: text('color').notNull().default('#3B4BD8'),
   status: text('status').$type<GoalStatus>().notNull().default('active'),
   orderKey: text('order_key').notNull(),
   updatedAt: text('updated_at').notNull(),
   deletedAt: text('deleted_at'),
+});
+
+export const goalMeasureUpdates = sqliteTable('goal_measure_updates', {
+  id: text('id').primaryKey(),
+  goalId: text('goal_id')
+    .notNull()
+    .references(() => goals.id, { onDelete: 'cascade' }),
+  previousValue: text('previous_value'),
+  value: text('value').notNull(),
+  weekStartDate: text('week_start_date').notNull(),
+  recordedAt: text('recorded_at').notNull(),
 });
 
 export const projects = sqliteTable('projects', {
@@ -187,6 +206,7 @@ export const activityLog = sqliteTable('activity_log', {
 
 export const schema = {
   goals,
+  goalMeasureUpdates,
   projects,
   blocks,
   focusSessions,

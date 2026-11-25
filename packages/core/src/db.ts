@@ -22,12 +22,28 @@ const MIGRATIONS_SQL = `
 CREATE TABLE IF NOT EXISTS goals (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'personal',
   description TEXT NOT NULL DEFAULT '',
+  done_when TEXT NOT NULL DEFAULT '',
+  check_in_date TEXT,
+  measure TEXT,
+  if_it_stalls TEXT NOT NULL DEFAULT '',
+  closing_note TEXT,
+  closed_at TEXT,
   color TEXT NOT NULL DEFAULT '#3B4BD8',
   status TEXT NOT NULL DEFAULT 'active',
   order_key TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   deleted_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS goal_measure_updates (
+  id TEXT PRIMARY KEY,
+  goal_id TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+  previous_value TEXT,
+  value TEXT NOT NULL,
+  week_start_date TEXT NOT NULL,
+  recorded_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS projects (
@@ -181,6 +197,9 @@ CREATE INDEX IF NOT EXISTS idx_focus_sessions_open
 CREATE INDEX IF NOT EXISTS idx_daily_notes_date
   ON daily_notes(date) WHERE deleted_at IS NULL;
 
+CREATE INDEX IF NOT EXISTS idx_goal_measure_updates_goal_id
+  ON goal_measure_updates(goal_id, recorded_at DESC);
+
 CREATE INDEX IF NOT EXISTS idx_activity_log_created_at
   ON activity_log(created_at DESC);
 `;
@@ -191,6 +210,41 @@ CREATE INDEX IF NOT EXISTS idx_activity_log_created_at
  * is checked via `PRAGMA table_info` and added in place (no data loss).
  */
 const ADDITIVE_COLUMNS: ReadonlyArray<{ table: string; column: string; ddl: string }> = [
+  {
+    table: 'goals',
+    column: 'kind',
+    ddl: "ALTER TABLE goals ADD COLUMN kind TEXT NOT NULL DEFAULT 'personal'",
+  },
+  {
+    table: 'goals',
+    column: 'done_when',
+    ddl: "ALTER TABLE goals ADD COLUMN done_when TEXT NOT NULL DEFAULT ''",
+  },
+  {
+    table: 'goals',
+    column: 'check_in_date',
+    ddl: 'ALTER TABLE goals ADD COLUMN check_in_date TEXT',
+  },
+  {
+    table: 'goals',
+    column: 'measure',
+    ddl: 'ALTER TABLE goals ADD COLUMN measure TEXT',
+  },
+  {
+    table: 'goals',
+    column: 'if_it_stalls',
+    ddl: "ALTER TABLE goals ADD COLUMN if_it_stalls TEXT NOT NULL DEFAULT ''",
+  },
+  {
+    table: 'goals',
+    column: 'closing_note',
+    ddl: 'ALTER TABLE goals ADD COLUMN closing_note TEXT',
+  },
+  {
+    table: 'goals',
+    column: 'closed_at',
+    ddl: 'ALTER TABLE goals ADD COLUMN closed_at TEXT',
+  },
   {
     table: 'projects',
     column: 'match_keywords',

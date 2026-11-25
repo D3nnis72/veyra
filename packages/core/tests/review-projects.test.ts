@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  COLOR_PICKER_PRESETS,
   SYSTEM_OTHER_PROJECT_ID,
   ValidationError,
   type VeyraDb,
   addDailyNote,
+  closeGoal,
   completeBlock,
   createBlock,
   createGoal,
@@ -14,14 +16,17 @@ import {
   getActiveWeeklyRule,
   getBlock,
   getCalendarEvent,
+  getGoalDetail,
   getProject,
   getSettings,
   getWeeklyReview,
   listCalendarEvents,
   listDailyNotes,
+  listGoals,
   logManualSession,
   openVeyraDb,
   parkBlock,
+  reorderGoal,
   resolveNotionToken,
   runDailyRolloverAndRecurrence,
   setWeeklyRule,
@@ -29,6 +34,7 @@ import {
   updateBlock,
   updateCalendarEvent,
   updateDailyNote,
+  updateGoal,
   updateSettings,
   upsertCalendarEvents,
 } from '../src/index.js';
@@ -600,5 +606,259 @@ describe('Task 4: Calendar Upsert, Daily Notes, Weekly Review Rollups & Settings
     // Explicit null or whitespace clears notionToken
     const cleared = updateSettings(veyraDb, { notionToken: null });
     expect(cleared.notionToken).toBeNull();
+  });
+
+  it('creates and updates company goals with richer fields and records measure history on change', () => {
+    expect(COLOR_PICKER_PRESETS).toHaveLength(12);
+    expect(COLOR_PICKER_PRESETS[0]).toEqual({ name: 'Indigo', hex: '#5E6AD2' });
+
+    const createdAt = '2026-11-23T08:00:00.000Z';
+    const updatedAt = '2026-11-25T10:00:00.000Z';
+
+    const goal = createGoal(
+      veyraDb,
+      {
+        name: 'Generate upsells',
+        kind: 'company',
+        description: 'Grow expansion ARR across existing enterprise accounts',
+        doneWhen: '10 signed enterprise upsells in Q1',
+        checkInDate: '2027-03-31',
+        measure: '3 of 10 upsells',
+        ifItStalls: 'Pair with account leads for weekly pipeline review',
+        color: '#4DA3FF',
+      },
+      { now: createdAt },
+    );
+
+    expect(goal).toMatchObject({
+      name: 'Generate upsells',
+      kind: 'company',
+      doneWhen: '10 signed enterprise upsells in Q1',
+      checkInDate: '2027-03-31',
+      measure: '3 of 10 upsells',
+      ifItStalls: 'Pair with account leads for weekly pipeline review',
+      closingNote: null,
+      closedAt: null,
+    });
+
+    // Completed block in current quarter with outcome note
+    const recentBlk = createBlock(
+      veyraDb,
+      { title: 'Close Acme expansion', goalId: goal.id, bucket: 'scheduled', scheduledDate: '2026-11-24' },
+      { now: '2026-11-24T09:00:00.000Z' },
+    );
+    logManualSession(veyraDb, {
+      blockId: recentBlk.id,
+      startedAt: '2026-11-24T09:00:00.000Z',
+      endedAt: '2026-11-24T10:00:00.000Z',
+    });
+    completeBlock(
+      veyraDb,
+      recentBlk.id,
+      { outcomeNote: 'Signed 40k expansion with Acme' },
+      '2026-11-24T10:00:00.000Z',
+    );
+
+    // Completed block in current quarter WITHOUT outcome note (should be excluded from history)
+    const emptyOutcomeBlk = createBlock(
+      veyraDb,
+      { title: 'Internal prep', goalId: goal.id, bucket: 'scheduled', scheduledDate: '2026-11-24' },
+      { now: '2026-11-24T11:00:00.000Z' },
+    );
+    completeBlock(veyraDb, emptyOutcomeBlk.id, { outcomeNote: '   ' }, '2026-11-24T11:30:00.000Z');
+
+    // Old completed block outside quarter & >90 days ago (should be excluded from quarterly history)
+    const oldBlk = createBlock(
+      veyraDb,
+      { title: 'Ancient milestone', goalId: goal.id, bucket: 'scheduled', scheduledDate: '2026-06-01' },
+      { now: '2026-06-01T09:00:00.000Z' },
+    );
+    completeBlock(veyraDb, oldBlk.id, { outcomeNote: 'Old note' }, '2026-06-01T10:00:00.000Z');
+
+    // Update measure -> records measure history row
+    const updated = updateGoal(
+      veyraDb,
+      goal.id,
+      { measure: '4 of 10 upsells' },
+      { now: updatedAt },
+    );
+    expect(updated.measure).toBe('4 of 10 upsells');
+
+    // Updating unrelated field does NOT create duplicate measure history row
+    updateGoal(
+      veyraDb,
+      goal.id,
+      { description: 'Grow expansion ARR across enterprise accounts' },
+      { now: '2026-11-25T11:00:00.000Z' },
+    );
+
+    const detail = getGoalDetail(veyraDb, goal.id, '2026-11-25T12:00:00.000Z');
+    expect(detail.measure).toBe('4 of 10 upsells');
+    expect(detail.history).toHaveLength(2);
+    expect(detail.history[0]).toMatchObject({
+      kind: 'measure',
+      previousValue: '3 of 10 upsells',
+      value: '4 of 10 upsells',
+      weekStartDate: '2026-11-23',
+      timestamp: updatedAt,
+    });
+    expect(detail.history[1]).toMatchObject({
+      kind: 'outcome',
+      blockId: recentBlk.id,
+      blockTitle: 'Close Acme expansion',
+      outcomeNote: 'Signed 40k expansion with Acme',
+      totalFocusMinutes: 60,
+    });
+  });
+
+  it('closeGoal marks achieved or archived (Let Go), stores closingNote and closedAt, and excludes both from activeOnly listGoals', () => {
+    const achievedGoal = createGoal(
+      veyraDb,
+      { name: 'Ship v1', kind: 'personal' },
+      { now: '2026-11-23T08:00:00.000Z' },
+    );
+    const letGoGoal = createGoal(
+      veyraDb,
+      { name: 'Legacy migration', kind: 'company' },
+      { now: '2026-11-23T08:05:00.000Z' },
+    );
+    const linkedBlock = createBlock(
+      veyraDb,
+      { title: 'Final launch check', goalId: achievedGoal.id, bucket: 'scheduled', scheduledDate: '2026-11-23' },
+      { now: '2026-11-23T09:00:00.000Z' },
+    );
+
+    const closedAchieved = closeGoal(
+      veyraDb,
+      achievedGoal.id,
+      { status: 'achieved', closingNote: 'Hit target' },
+      { now: '2026-11-25T15:00:00.000Z' },
+    );
+    const closedLetGo = closeGoal(
+      veyraDb,
+      letGoGoal.id,
+      { status: 'archived', closingNote: 'No longer relevant' },
+      { now: '2026-11-25T15:05:00.000Z' },
+    );
+
+    expect(closedAchieved.status).toBe('achieved');
+    expect(closedAchieved.closingNote).toBe('Hit target');
+    expect(closedAchieved.closedAt).toBe('2026-11-25T15:00:00.000Z');
+
+    expect(closedLetGo.status).toBe('archived');
+    expect(closedLetGo.closingNote).toBe('No longer relevant');
+    expect(closedLetGo.closedAt).toBe('2026-11-25T15:05:00.000Z');
+
+    // activeOnly excludes both achieved and archived
+    expect(listGoals(veyraDb, { activeOnly: true }, '2026-11-25T16:00:00.000Z')).toHaveLength(0);
+
+    // includeArchived: true returns both with closedAt and rankInKind === 0
+    const allGoals = listGoals(veyraDb, { includeArchived: true }, '2026-11-25T16:00:00.000Z');
+    expect(allGoals).toHaveLength(2);
+    expect(allGoals.find((g) => g.id === achievedGoal.id)).toMatchObject({
+      status: 'achieved',
+      closedAt: '2026-11-25T15:00:00.000Z',
+      rankInKind: 0,
+    });
+    expect(allGoals.find((g) => g.id === letGoGoal.id)).toMatchObject({
+      status: 'archived',
+      closedAt: '2026-11-25T15:05:00.000Z',
+      rankInKind: 0,
+    });
+
+    // Linked blocks retain goalId
+    expect(getBlock(veyraDb, linkedBlock.id).goalId).toBe(achievedGoal.id);
+
+    // Reopening clears closedAt
+    const reopened = updateGoal(
+      veyraDb,
+      achievedGoal.id,
+      { status: 'active' },
+      { now: '2026-11-25T16:30:00.000Z' },
+    );
+    expect(reopened.status).toBe('active');
+    expect(reopened.closedAt).toBeNull();
+  });
+
+  it('reorderGoal swaps orderKey only within the same kind', () => {
+    const p1 = createGoal(veyraDb, { name: 'Personal 1', kind: 'personal' });
+    const p2 = createGoal(veyraDb, { name: 'Personal 2', kind: 'personal' });
+    const c1 = createGoal(veyraDb, { name: 'Company 1', kind: 'company' });
+    const c2 = createGoal(veyraDb, { name: 'Company 2', kind: 'company' });
+
+    reorderGoal(veyraDb, c2.id, { direction: 'up' });
+
+    const companyGoals = listGoals(veyraDb, { kind: 'company', activeOnly: true });
+    expect(companyGoals.map((g) => g.id)).toEqual([c2.id, c1.id]);
+    expect(companyGoals.map((g) => g.rankInKind)).toEqual([1, 2]);
+
+    const personalGoals = listGoals(veyraDb, { kind: 'personal', activeOnly: true });
+    expect(personalGoals.map((g) => g.id)).toEqual([p1.id, p2.id]);
+    expect(personalGoals.map((g) => g.rankInKind)).toEqual([1, 2]);
+  });
+
+  it('listGoals computes weeklyFocusMinutes, weeklyBlockCount, linkedProjectCount, and rankInKind without any weeklyIntent field', () => {
+    const mon = '2026-11-23';
+    const tue = '2026-11-24';
+    const now = '2026-11-25T12:00:00.000Z';
+
+    const g1 = createGoal(veyraDb, { name: 'Master Systems', kind: 'personal' }, { now: `${mon}T08:00:00.000Z` });
+    const g2 = createGoal(veyraDb, { name: 'Write Weekly', kind: 'personal' }, { now: `${mon}T08:01:00.000Z` });
+
+    createProject(veyraDb, { name: 'Proj A', defaultGoalId: g1.id }, { now: `${mon}T08:02:00.000Z` });
+    createProject(veyraDb, { name: 'Proj B', defaultGoalId: g1.id }, { now: `${mon}T08:03:00.000Z` });
+
+    const b1 = createBlock(
+      veyraDb,
+      { title: 'Block 1', goalId: g1.id, bucket: 'scheduled', scheduledDate: mon },
+      { now: `${mon}T08:10:00.000Z` },
+    );
+    logManualSession(veyraDb, {
+      blockId: b1.id,
+      startedAt: `${mon}T09:00:00.000Z`,
+      endedAt: `${mon}T09:45:00.000Z`, // 45m
+    });
+
+    const b2 = createBlock(
+      veyraDb,
+      { title: 'Block 2', goalId: g1.id, bucket: 'scheduled', scheduledDate: tue },
+      { now: `${tue}T08:10:00.000Z` },
+    );
+    logManualSession(veyraDb, {
+      blockId: b2.id,
+      startedAt: `${tue}T10:00:00.000Z`,
+      endedAt: `${tue}T10:30:00.000Z`, // 30m
+    });
+
+    // Previous week session (should NOT count in this week's stats)
+    const oldBlk = createBlock(
+      veyraDb,
+      { title: 'Last week block', goalId: g1.id, bucket: 'scheduled', scheduledDate: '2026-11-18' },
+      { now: '2026-11-18T08:00:00.000Z' },
+    );
+    logManualSession(veyraDb, {
+      blockId: oldBlk.id,
+      startedAt: '2026-11-18T09:00:00.000Z',
+      endedAt: '2026-11-18T11:00:00.000Z',
+    });
+
+    const listed = listGoals(veyraDb, { activeOnly: true }, now);
+    const stat1 = listed.find((g) => g.id === g1.id)!;
+    const stat2 = listed.find((g) => g.id === g2.id)!;
+
+    expect(stat1).toMatchObject({
+      weeklyFocusMinutes: 75,
+      weeklyBlockCount: 2,
+      linkedProjectCount: 2,
+      rankInKind: 1,
+    });
+    expect('weeklyIntent' in stat1).toBe(false);
+
+    expect(stat2).toMatchObject({
+      weeklyFocusMinutes: 0,
+      weeklyBlockCount: 0,
+      linkedProjectCount: 0,
+      rankInKind: 2,
+    });
   });
 });

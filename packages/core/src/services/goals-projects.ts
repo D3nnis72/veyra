@@ -3,21 +3,36 @@ import { and, asc, eq, isNull } from 'drizzle-orm';
 import type { VeyraDb } from '../db.js';
 import { NotFoundError, SystemProjectError, parseWithZod } from '../errors.js';
 import { generateOrderKey } from '../order-key.js';
-import { blocks, calendarEvents, dailyNotes, focusSessions, goals, projects } from '../schema.js';
+import {
+  blocks,
+  calendarEvents,
+  dailyNotes,
+  focusSessions,
+  goalMeasureUpdates,
+  goals,
+  projects,
+} from '../schema.js';
 import { formatLocalDate, getLocalDayBoundsIso, getWeekRange } from '../time.js';
 import {
+  type CloseGoalInput,
   type CreateGoalInput,
   type CreateProjectInput,
   type Goal,
+  type GoalDetail,
+  type GoalHistoryItem,
+  type GoalWithStats,
   type ListGoalsFilter,
   type ListProjectsFilter,
   type Project,
   type ProjectWithStats,
+  type ReorderGoalInput,
   SYSTEM_OTHER_PROJECT_ID,
   type UpdateGoalInput,
   type UpdateProjectInput,
+  closeGoalInputSchema,
   createGoalInputSchema,
   createProjectInputSchema,
+  reorderGoalInputSchema,
   updateGoalInputSchema,
   updateProjectInputSchema,
 } from '../types.js';
@@ -35,6 +50,15 @@ import {
 export { listActivity, recordActivity };
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
+
+function normalizeOptionalText(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
 
 function ensureActiveGoalExists(veyraDb: VeyraDb, goalId: string): Goal {
   const goal = veyraDb.db
@@ -88,7 +112,14 @@ export function createGoal(
   const goal: Goal = {
     id: crypto.randomUUID(),
     name: parsed.name,
+    kind: parsed.kind,
     description: parsed.description,
+    doneWhen: parsed.doneWhen,
+    checkInDate: parsed.checkInDate ?? null,
+    measure: normalizeOptionalText(parsed.measure),
+    ifItStalls: parsed.ifItStalls,
+    closingNote: normalizeOptionalText(parsed.closingNote),
+    closedAt: parsed.status === 'active' ? null : nowIso,
     color: parsed.color,
     status: parsed.status,
     orderKey,
@@ -108,24 +139,241 @@ export function getGoal(veyraDb: VeyraDb, id: string): Goal {
   return ensureActiveGoalExists(veyraDb, id);
 }
 
+function computeGoalsWithStats(
+  veyraDb: VeyraDb,
+  goalRows: Goal[],
+  allNonDeletedGoals: Goal[],
+  now?: Date | string,
+): GoalWithStats[] {
+  const nowDate = resolveNow(now);
+  const nowMs = nowDate.getTime();
+  const timezone = getActiveTimezone(veyraDb);
+  const today = formatLocalDate(nowDate, timezone);
+  const { weekStartDate, weekEndDate } = getWeekRange(today);
+  const weekStartMs = Date.parse(getLocalDayBoundsIso(weekStartDate, timezone).startIso);
+  const weekEndMs = Date.parse(getLocalDayBoundsIso(weekEndDate, timezone).endIso);
+
+  const rankByGoalId = new Map<string, number>();
+  const rankCounters: Record<Goal['kind'], number> = { personal: 0, company: 0 };
+  for (const g of allNonDeletedGoals) {
+    if (g.status === 'active') {
+      rankCounters[g.kind] += 1;
+      rankByGoalId.set(g.id, rankCounters[g.kind]);
+    } else {
+      rankByGoalId.set(g.id, 0);
+    }
+  }
+
+  const allProjects = veyraDb.db
+    .select({ defaultGoalId: projects.defaultGoalId, status: projects.status })
+    .from(projects)
+    .where(isNull(projects.deletedAt))
+    .all();
+
+  const linkedProjectCountByGoal = new Map<string, number>();
+  for (const project of allProjects) {
+    if (project.status !== 'archived' && project.defaultGoalId) {
+      linkedProjectCountByGoal.set(
+        project.defaultGoalId,
+        (linkedProjectCountByGoal.get(project.defaultGoalId) ?? 0) + 1,
+      );
+    }
+  }
+
+  const allBlocks = veyraDb.db
+    .select({
+      id: blocks.id,
+      goalId: blocks.goalId,
+      status: blocks.status,
+      updatedAt: blocks.updatedAt,
+    })
+    .from(blocks)
+    .where(isNull(blocks.deletedAt))
+    .all();
+
+  const blockToGoal = new Map<string, string | null>();
+  const weeklyBlockIdsByGoal = new Map<string, Set<string>>();
+
+  const addWeeklyBlock = (goalId: string, blockId: string) => {
+    let set = weeklyBlockIdsByGoal.get(goalId);
+    if (!set) {
+      set = new Set<string>();
+      weeklyBlockIdsByGoal.set(goalId, set);
+    }
+    set.add(blockId);
+  };
+
+  for (const blk of allBlocks) {
+    blockToGoal.set(blk.id, blk.goalId);
+    if (blk.goalId && blk.status === 'done') {
+      const doneMs = Date.parse(blk.updatedAt);
+      if (doneMs >= weekStartMs && doneMs < weekEndMs) {
+        addWeeklyBlock(blk.goalId, blk.id);
+      }
+    }
+  }
+
+  const allSessions = veyraDb.db
+    .select()
+    .from(focusSessions)
+    .where(isNull(focusSessions.deletedAt))
+    .all();
+
+  const weeklyMsByGoal = new Map<string, number>();
+  for (const session of allSessions) {
+    let goalId: string | null | undefined = blockToGoal.get(session.blockId);
+    if (goalId === undefined) {
+      const blk = veyraDb.db
+        .select({ goalId: blocks.goalId })
+        .from(blocks)
+        .where(eq(blocks.id, session.blockId))
+        .get();
+      goalId = blk?.goalId ?? null;
+      blockToGoal.set(session.blockId, goalId);
+    }
+    if (!goalId) {
+      continue;
+    }
+
+    const startMs = Date.parse(session.startedAt);
+    const endMs = session.endedAt ? Date.parse(session.endedAt) : nowMs;
+    const overlapMs = computeOverlapMs(startMs, endMs, weekStartMs, weekEndMs);
+    if (overlapMs > 0) {
+      weeklyMsByGoal.set(goalId, (weeklyMsByGoal.get(goalId) ?? 0) + overlapMs);
+      addWeeklyBlock(goalId, session.blockId);
+    }
+  }
+
+  return goalRows.map((goal) => ({
+    ...goal,
+    weeklyFocusMinutes: msToRoundedMinutes(weeklyMsByGoal.get(goal.id) ?? 0),
+    weeklyBlockCount: weeklyBlockIdsByGoal.get(goal.id)?.size ?? 0,
+    linkedProjectCount: linkedProjectCountByGoal.get(goal.id) ?? 0,
+    rankInKind: rankByGoalId.get(goal.id) ?? 0,
+  }));
+}
+
 export function listGoals(
   veyraDb: VeyraDb,
   options?: ListGoalsFilter,
-): Goal[] {
-  const rows = veyraDb.db
+  now?: Date | string,
+): GoalWithStats[] {
+  const allRows = veyraDb.db
     .select()
     .from(goals)
     .where(isNull(goals.deletedAt))
     .orderBy(asc(goals.orderKey))
     .all();
 
+  let rows = allRows;
+  if (options?.kind) {
+    rows = rows.filter((g) => g.kind === options.kind);
+  }
+  if (options?.activeOnly) {
+    rows = rows.filter((g) => g.status === 'active');
+  }
   if (options?.status) {
-    return rows.filter((g) => g.status === options.status);
+    rows = rows.filter((g) => g.status === options.status);
+  } else if (!options?.activeOnly && options?.includeArchived === false) {
+    rows = rows.filter((g) => g.status !== 'archived');
   }
-  if (options?.includeArchived === false) {
-    return rows.filter((g) => g.status !== 'archived');
+
+  return computeGoalsWithStats(veyraDb, rows, allRows, now);
+}
+
+export function getGoalDetail(
+  veyraDb: VeyraDb,
+  id: string,
+  now?: Date | string,
+): GoalDetail {
+  const goal = ensureActiveGoalExists(veyraDb, id);
+  const allRows = veyraDb.db
+    .select()
+    .from(goals)
+    .where(isNull(goals.deletedAt))
+    .orderBy(asc(goals.orderKey))
+    .all();
+
+  const stats = computeGoalsWithStats(veyraDb, [goal], allRows, now)[0];
+
+  const nowDate = resolveNow(now);
+  const nowMs = nowDate.getTime();
+  const timezone = getActiveTimezone(veyraDb);
+  const today = formatLocalDate(nowDate, timezone);
+  const [yearStr, monthStr] = today.split('-');
+  const quarterStartMonth = Math.floor((Number(monthStr) - 1) / 3) * 3 + 1;
+  const quarterStartDate = `${yearStr}-${String(quarterStartMonth).padStart(2, '0')}-01`;
+  const quarterStartMs = Date.parse(getLocalDayBoundsIso(quarterStartDate, timezone).startIso);
+  const historyCutoffMs = Math.min(quarterStartMs, nowMs - NINETY_DAYS_MS);
+
+  const history: GoalHistoryItem[] = [];
+
+  const completedGoalBlocks = veyraDb.db
+    .select()
+    .from(blocks)
+    .where(and(eq(blocks.goalId, id), eq(blocks.status, 'done'), isNull(blocks.deletedAt)))
+    .all();
+
+  for (const blk of completedGoalBlocks) {
+    const trimmedOutcome = blk.outcomeNote?.trim() ?? '';
+    if (!trimmedOutcome) {
+      continue;
+    }
+    if (Date.parse(blk.updatedAt) < historyCutoffMs) {
+      continue;
+    }
+    const blkSessions = veyraDb.db
+      .select()
+      .from(focusSessions)
+      .where(and(eq(focusSessions.blockId, blk.id), isNull(focusSessions.deletedAt)))
+      .all();
+    let totalMs = 0;
+    for (const s of blkSessions) {
+      const sStart = Date.parse(s.startedAt);
+      const sEnd = s.endedAt ? Date.parse(s.endedAt) : nowMs;
+      if (sEnd > sStart) {
+        totalMs += sEnd - sStart;
+      }
+    }
+    history.push({
+      kind: 'outcome',
+      id: `outcome:${blk.id}`,
+      blockId: blk.id,
+      blockTitle: blk.title,
+      outcomeNote: trimmedOutcome,
+      totalFocusMinutes: msToRoundedMinutes(totalMs),
+      timestamp: blk.updatedAt,
+    });
   }
-  return rows;
+
+  const measureRows = veyraDb.db
+    .select()
+    .from(goalMeasureUpdates)
+    .where(eq(goalMeasureUpdates.goalId, id))
+    .all();
+
+  for (const row of measureRows) {
+    if (Date.parse(row.recordedAt) < historyCutoffMs) {
+      continue;
+    }
+    history.push({
+      kind: 'measure',
+      id: row.id,
+      previousValue: row.previousValue,
+      value: row.value,
+      weekStartDate: row.weekStartDate,
+      timestamp: row.recordedAt,
+    });
+  }
+
+  history.sort(
+    (a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp) || b.id.localeCompare(a.id),
+  );
+
+  return {
+    ...stats,
+    history,
+  };
 }
 
 export function updateGoal(
@@ -136,15 +384,42 @@ export function updateGoal(
 ): Goal {
   const existing = ensureActiveGoalExists(veyraDb, id);
   const parsed = parseWithZod(updateGoalInputSchema, input);
-  const nowIso = resolveNow(options?.now).toISOString();
+  const nowDate = resolveNow(options?.now);
+  const nowIso = nowDate.toISOString();
   const actor = resolveActor(options?.actor);
+
+  const nextMeasure =
+    parsed.measure !== undefined ? normalizeOptionalText(parsed.measure) : existing.measure;
+  const shouldRecordMeasureUpdate =
+    parsed.measure !== undefined && nextMeasure !== null && nextMeasure !== existing.measure;
+
+  const nextStatus = parsed.status ?? existing.status;
+  let nextClosedAt = existing.closedAt;
+  if (nextStatus === 'active') {
+    nextClosedAt = null;
+  } else if (existing.status === 'active') {
+    nextClosedAt = nowIso;
+  }
+
+  const nextClosingNote =
+    parsed.closingNote !== undefined
+      ? normalizeOptionalText(parsed.closingNote)
+      : existing.closingNote;
 
   const updated: Goal = {
     ...existing,
     name: parsed.name ?? existing.name,
+    kind: parsed.kind ?? existing.kind,
     description: parsed.description ?? existing.description,
+    doneWhen: parsed.doneWhen ?? existing.doneWhen,
+    checkInDate:
+      parsed.checkInDate !== undefined ? parsed.checkInDate : existing.checkInDate,
+    measure: nextMeasure,
+    ifItStalls: parsed.ifItStalls ?? existing.ifItStalls,
+    closingNote: nextClosingNote,
+    closedAt: nextClosedAt,
     color: parsed.color ?? existing.color,
-    status: parsed.status ?? existing.status,
+    status: nextStatus,
     orderKey: parsed.orderKey ?? existing.orderKey,
     updatedAt: nowIso,
   };
@@ -154,7 +429,14 @@ export function updateGoal(
       .update(goals)
       .set({
         name: updated.name,
+        kind: updated.kind,
         description: updated.description,
+        doneWhen: updated.doneWhen,
+        checkInDate: updated.checkInDate,
+        measure: updated.measure,
+        ifItStalls: updated.ifItStalls,
+        closingNote: updated.closingNote,
+        closedAt: updated.closedAt,
         color: updated.color,
         status: updated.status,
         orderKey: updated.orderKey,
@@ -162,7 +444,141 @@ export function updateGoal(
       })
       .where(eq(goals.id, id))
       .run();
+
+    if (shouldRecordMeasureUpdate && nextMeasure !== null) {
+      const timezone = getActiveTimezone(veyraDb);
+      const weekStartDate =
+        parsed.measureWeekStartDate ??
+        getWeekRange(formatLocalDate(nowDate, timezone)).weekStartDate;
+      veyraDb.db
+        .insert(goalMeasureUpdates)
+        .values({
+          id: crypto.randomUUID(),
+          goalId: id,
+          previousValue: existing.measure,
+          value: nextMeasure,
+          weekStartDate,
+          recordedAt: nowIso,
+        })
+        .run();
+    }
+
     recordActivity(veyraDb, actor, 'goal.updated', `Updated goal "${updated.name}"`, nowIso);
+  })();
+
+  return updated;
+}
+
+export function closeGoal(
+  veyraDb: VeyraDb,
+  id: string,
+  input: CloseGoalInput,
+  options?: ServiceMutationOptions,
+): Goal {
+  const existing = ensureActiveGoalExists(veyraDb, id);
+  const parsed = parseWithZod(closeGoalInputSchema, input);
+  const nowIso = resolveNow(options?.now).toISOString();
+  const actor = resolveActor(options?.actor);
+
+  const nextClosingNote =
+    parsed.closingNote !== undefined
+      ? normalizeOptionalText(parsed.closingNote)
+      : existing.closingNote;
+
+  const closed: Goal = {
+    ...existing,
+    status: parsed.status,
+    closingNote: nextClosingNote,
+    closedAt: nowIso,
+    updatedAt: nowIso,
+  };
+
+  const action = parsed.status === 'achieved' ? 'goal.achieved' : 'goal.let_go';
+  const label = parsed.status === 'achieved' ? 'achieved' : 'let go';
+
+  veyraDb.sqlite.transaction(() => {
+    veyraDb.db
+      .update(goals)
+      .set({
+        status: closed.status,
+        closingNote: closed.closingNote,
+        closedAt: closed.closedAt,
+        updatedAt: closed.updatedAt,
+      })
+      .where(eq(goals.id, id))
+      .run();
+    recordActivity(veyraDb, actor, action, `Marked goal "${closed.name}" as ${label}`, nowIso);
+  })();
+
+  return closed;
+}
+
+export function reorderGoal(
+  veyraDb: VeyraDb,
+  id: string,
+  input: ReorderGoalInput,
+  options?: ServiceMutationOptions,
+): Goal {
+  const existing = ensureActiveGoalExists(veyraDb, id);
+  const parsed = parseWithZod(reorderGoalInputSchema, input);
+  const nowIso = resolveNow(options?.now).toISOString();
+  const actor = resolveActor(options?.actor);
+
+  if (existing.status !== 'active') {
+    return existing;
+  }
+
+  const siblings = veyraDb.db
+    .select()
+    .from(goals)
+    .where(and(eq(goals.kind, existing.kind), eq(goals.status, 'active'), isNull(goals.deletedAt)))
+    .orderBy(asc(goals.orderKey))
+    .all();
+
+  const idx = siblings.findIndex((g) => g.id === id);
+  if (idx === -1) {
+    return existing;
+  }
+  if (parsed.direction === 'up' && idx === 0) {
+    return existing;
+  }
+  if (parsed.direction === 'down' && idx === siblings.length - 1) {
+    return existing;
+  }
+
+  const beforeKey =
+    parsed.direction === 'up'
+      ? idx >= 2
+        ? siblings[idx - 2].orderKey
+        : null
+      : siblings[idx + 1].orderKey;
+  const afterKey =
+    parsed.direction === 'up'
+      ? siblings[idx - 1].orderKey
+      : idx + 2 < siblings.length
+        ? siblings[idx + 2].orderKey
+        : null;
+
+  const newOrderKey = generateOrderKey(beforeKey, afterKey);
+  const updated: Goal = {
+    ...existing,
+    orderKey: newOrderKey,
+    updatedAt: nowIso,
+  };
+
+  veyraDb.sqlite.transaction(() => {
+    veyraDb.db
+      .update(goals)
+      .set({ orderKey: updated.orderKey, updatedAt: updated.updatedAt })
+      .where(eq(goals.id, id))
+      .run();
+    recordActivity(
+      veyraDb,
+      actor,
+      'goal.reordered',
+      `Moved goal "${updated.name}" ${parsed.direction}`,
+      nowIso,
+    );
   })();
 
   return updated;

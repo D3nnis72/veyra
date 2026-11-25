@@ -14,10 +14,10 @@ import {
   recurrenceRuleSchema,
   resolveRevisitDate,
 } from '../src/index.js';
-import { projects, settings } from '../src/schema.js';
+import { goals, projects, settings } from '../src/schema.js';
 
 describe('@veyra/core database bootstrap, order-key, time, and contracts', () => {
-  it('creates all 9 tables on openVeyraDb(":memory:") with foreign keys enabled', () => {
+  it('creates all 10 tables on openVeyraDb(":memory:") with foreign keys enabled', () => {
     const veyraDb = openVeyraDb(':memory:');
     try {
       const rows = veyraDb.sqlite
@@ -31,6 +31,7 @@ describe('@veyra/core database bootstrap, order-key, time, and contracts', () =>
         'calendar_events',
         'daily_notes',
         'focus_sessions',
+        'goal_measure_updates',
         'goals',
         'projects',
         'settings',
@@ -195,6 +196,58 @@ describe('@veyra/core database bootstrap, order-key, time, and contracts', () =>
         expect(rows[0].timezone).toBe('UTC');
         expect(rows[0].onboardingCompleted).toBe(true);
         expect(rows[0].notionToken).toBeNull();
+      } finally {
+        upgraded.close();
+      }
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('migrates legacy goals table additively without losing existing rows and defaults kind to personal', async () => {
+    const { default: Database } = await import('better-sqlite3');
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'veyra-core-legacy-goals-'));
+    const dbPath = path.join(tmpDir, 'legacy-goals.db');
+    const legacyGoalId = '11111111-1111-4111-8111-111111111111';
+    try {
+      const legacy = new Database(dbPath);
+      legacy.exec(`
+        CREATE TABLE goals (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          color TEXT NOT NULL DEFAULT '#3B4BD8',
+          status TEXT NOT NULL DEFAULT 'active',
+          order_key TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          deleted_at TEXT
+        );
+        INSERT INTO goals (id, name, description, color, status, order_key, updated_at, deleted_at)
+        VALUES ('${legacyGoalId}', 'Ship v1', 'Legacy goal', '#3B4BD8', 'active', 'V', '2026-11-20T00:00:00.000Z', NULL);
+      `);
+      legacy.close();
+
+      const upgraded = openVeyraDb(dbPath);
+      try {
+        const rows = upgraded.db.select().from(goals).all();
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({
+          id: legacyGoalId,
+          name: 'Ship v1',
+          description: 'Legacy goal',
+          kind: 'personal',
+          doneWhen: '',
+          checkInDate: null,
+          measure: null,
+          ifItStalls: '',
+          closingNote: null,
+          closedAt: null,
+        });
+
+        const tables = upgraded.sqlite
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'goal_measure_updates'")
+          .all() as Array<{ name: string }>;
+        expect(tables).toHaveLength(1);
       } finally {
         upgraded.close();
       }
