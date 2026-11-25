@@ -6,6 +6,7 @@ import type { Block, GoalWithStats, ProjectWithStats } from '@veyra/core/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TodayResponse } from '../src/api/client';
 import { AppShellContext, type AppShellContextValue } from '../src/app/AppShellContext';
+import { FocusView } from '../src/views/FocusView';
 import { TodayView } from '../src/views/TodayView';
 
 const GOAL_1_ID = '11111111-1111-4111-8111-111111111111';
@@ -676,5 +677,185 @@ describe('TodayView prioritization, capacity, exits, Tell someone, Drop reason &
       expect(screen.queryByRole('region', { name: /Day look back/i })).not.toBeInTheDocument();
     });
     expect(window.localStorage.getItem('veyra.dayLookBack.dismissed.2026-11-24')).toBe('1');
+  });
+});
+
+describe('FocusView quiet goal context & Inline Complete sense question', () => {
+  const ACTIVE_SESSION = {
+    id: '88888888-8888-4888-8888-888888888888',
+    blockId: BLOCK_B_ID,
+    startedAt: '2026-11-25T09:00:00.000Z',
+    endedAt: null,
+    note: null,
+    updatedAt: '2026-11-25T09:00:00.000Z',
+    deletedAt: null,
+  };
+
+  it('FocusView shows quiet goal doneWhen/why context while active', async () => {
+    const qc = createTestQueryClient();
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('/api/today')) return jsonResponse(createTodayPayload());
+        if (url.includes(`/api/blocks/${BLOCK_B_ID}`)) {
+          return jsonResponse({
+            block: { ...BLOCK_B, sessions: [ACTIVE_SESSION], totalFocusMinutes: 25 },
+          });
+        }
+        return jsonResponse({});
+      }),
+    );
+
+    const shell = createMockShell({
+      route: 'focus',
+      liveElapsedSeconds: 25 * 60,
+      focusStatus: {
+        activeSession: ACTIVE_SESSION,
+        activeBlock: BLOCK_B,
+        elapsedSeconds: 25 * 60,
+        focusedTodayMinutes: 70,
+      },
+    });
+
+    const { unmount } = render(
+      <QueryClientProvider client={qc}>
+        <AppShellContext.Provider value={shell}>
+          <FocusView />
+        </AppShellContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Ship capacity UI' })).toBeInTheDocument();
+    const goalContext = screen.getByTestId('focus-goal-context');
+    expect(goalContext).toHaveTextContent(
+      /Daily capacity and weekly review live in desktop app/i,
+    );
+    unmount();
+
+    // Falls back to goal description ("Why") when doneWhen is empty
+    const goalWhyOnly: GoalWithStats = {
+      ...TEST_GOAL,
+      doneWhen: '',
+      description: 'Deliver calm local-first prioritization',
+    };
+    render(
+      <QueryClientProvider client={createTestQueryClient()}>
+        <AppShellContext.Provider
+          value={{
+            ...shell,
+            goals: [goalWhyOnly],
+          }}
+        >
+          <FocusView />
+        </AppShellContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByTestId('focus-goal-context')).toHaveTextContent(
+      /Deliver calm local-first prioritization/i,
+    );
+  });
+
+  it('FocusView Inline Complete renders Moved the goal / Partly / Just motion and submits senseSignal to completeFocus', async () => {
+    const user = userEvent.setup();
+    const qc = createTestQueryClient();
+    let completePayload: Record<string, unknown> | null = null;
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        const method = (init?.method ?? 'GET').toUpperCase();
+        if (url.includes('/api/focus/complete') && method === 'POST') {
+          completePayload = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+          return jsonResponse({
+            block: { ...BLOCK_B, status: 'done', senseSignal: completePayload.senseSignal },
+            closedSession: { ...ACTIVE_SESSION, endedAt: '2026-11-25T09:35:00.000Z' },
+            currentSessionMinutes: 35,
+            totalBlockMinutes: 35,
+            focusStatus: {
+              activeSession: null,
+              activeBlock: null,
+              elapsedSeconds: 0,
+              focusedTodayMinutes: 80,
+            },
+          });
+        }
+        if (url.includes('/api/today')) return jsonResponse(createTodayPayload());
+        if (url.includes(`/api/blocks/${BLOCK_B_ID}`)) {
+          return jsonResponse({
+            block: { ...BLOCK_B, sessions: [ACTIVE_SESSION], totalFocusMinutes: 35 },
+          });
+        }
+        return jsonResponse({});
+      }),
+    );
+
+    const shell = createMockShell({
+      route: 'focus',
+      liveElapsedSeconds: 35 * 60,
+      focusStatus: {
+        activeSession: ACTIVE_SESSION,
+        activeBlock: BLOCK_B,
+        elapsedSeconds: 35 * 60,
+        focusedTodayMinutes: 80,
+      },
+    });
+
+    render(
+      <QueryClientProvider client={qc}>
+        <AppShellContext.Provider value={shell}>
+          <FocusView />
+        </AppShellContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    // Open Inline Complete panel
+    await user.click(screen.getByRole('button', { name: /Complete Block/i }));
+
+    const energyHeading = screen.getByText(/HOW DID THIS BLOCK FEEL\?/i);
+    const senseHeading = screen.getByText(/DID THIS BLOCK MAKE SENSE FOR ITS GOAL\?/i);
+    const outcomeLabel = screen.getByText(/WHAT ACTUALLY MOVED FORWARD\? \(OPTIONAL\)/i);
+
+    // Verify order: Energy -> Sense -> Outcome
+    expect(
+      energyHeading.compareDocumentPosition(senseHeading) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      senseHeading.compareDocumentPosition(outcomeLabel) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    // Three equal-width toggle buttons, initially unselected
+    const movedBtn = screen.getByRole('button', { name: /Moved the goal/i });
+    const partlyBtn = screen.getByRole('button', { name: /Partly/i });
+    const motionBtn = screen.getByRole('button', { name: /Just motion/i });
+    expect(movedBtn).toHaveAttribute('aria-pressed', 'false');
+    expect(partlyBtn).toHaveAttribute('aria-pressed', 'false');
+    expect(motionBtn).toHaveAttribute('aria-pressed', 'false');
+
+    // Footer "logged to" row shows minutes, project name, GoalKindIconBadge, and goal name
+    const loggedToRow = screen.getByTestId('focus-complete-logged-to');
+    expect(loggedToRow).toHaveTextContent(/35m logged to Veyra Core/i);
+    expect(loggedToRow).toHaveTextContent(/Ship Veyra v1/i);
+    expect(loggedToRow.querySelector('[data-goal-kind="company"]')).toBeInTheDocument();
+
+    // Select "Moved the goal", enter outcome note, and submit
+    await user.click(movedBtn);
+    expect(movedBtn).toHaveAttribute('aria-pressed', 'true');
+
+    const outcomeInput = screen.getByLabelText(/WHAT ACTUALLY MOVED FORWARD\? \(OPTIONAL\)/i);
+    await user.type(outcomeInput, 'Shipped Today capacity & Fit Line UI');
+    await user.click(screen.getByRole('button', { name: /Finish Block/i }));
+
+    await waitFor(() => {
+      expect(completePayload).toEqual({
+        blockId: BLOCK_B_ID,
+        energySignal: 'up',
+        senseSignal: 'moved',
+        outcomeNote: 'Shipped Today capacity & Fit Line UI',
+      });
+    });
   });
 });

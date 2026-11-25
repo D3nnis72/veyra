@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import type { CalendarEvent, EnergySignal } from '@veyra/core/types';
+import type { CalendarEvent, EnergySignal, SenseSignal } from '@veyra/core/types';
 import {
   ArrowDown,
   ArrowLeft,
@@ -22,7 +22,7 @@ import {
 } from '../api/queries';
 import { useAppShell } from '../app/AppShellContext';
 import { Button } from '../components/Button';
-import { GoalChip } from '../components/GoalChip';
+import { GoalChip, GoalKindIconBadge } from '../components/GoalChip';
 import { ProjectBadge } from '../components/ProjectBadge';
 import { formatDuration, formatLocalTime } from '../components/icons';
 
@@ -61,6 +61,7 @@ export function FocusView() {
   const [panelMode, setPanelMode] = useState<'none' | 'pause' | 'complete'>('none');
   const [resumeNoteDraft, setResumeNoteDraft] = useState('');
   const [energySignal, setEnergySignal] = useState<EnergySignal | null>('up');
+  const [senseSignal, setSenseSignal] = useState<SenseSignal | null>(null);
   const [outcomeDraft, setOutcomeDraft] = useState('');
 
   const pauseInputRef = useRef<HTMLInputElement>(null);
@@ -71,6 +72,7 @@ export function FocusView() {
     setResumeNoteDraft('');
     setOutcomeDraft('');
     setEnergySignal('up');
+    setSenseSignal(null);
   }, [activeSession?.id]);
 
   useEffect(() => {
@@ -124,6 +126,7 @@ export function FocusView() {
       apiClient.completeFocus({
         blockId: activeBlock?.id,
         energySignal,
+        senseSignal,
         outcomeNote: outcomeDraft.trim() || null,
       }),
     onSuccess: () => {
@@ -192,6 +195,15 @@ export function FocusView() {
     () => (activeBlock?.goalId ? goals.find((g) => g.id === activeBlock.goalId) : undefined),
     [activeBlock, goals],
   );
+  const goalContextLine = useMemo(() => {
+    if (!currentGoal) return null;
+    const doneWhen = currentGoal.doneWhen?.trim();
+    const why = currentGoal.description?.trim();
+    if (doneWhen && why) return `${doneWhen} · ${why}`;
+    if (doneWhen) return doneWhen;
+    if (why) return why;
+    return null;
+  }, [currentGoal]);
 
   const elapsedMinuteBucket = Math.floor(liveElapsedSeconds / 60);
 
@@ -372,10 +384,19 @@ export function FocusView() {
 
       {/* Center Stage: Title, Count-up Stopwatch, Pause/Complete Inline Controls */}
       <div className="flex-1 flex flex-col items-center justify-center px-8 py-10 max-w-[580px] w-full mx-auto space-y-6">
-        <div className="text-center space-y-2">
+        <div className="text-center space-y-2 max-w-full">
           <h1 className="font-display text-[24px] font-semibold leading-snug text-[#EDEDED]">
             {activeBlock.title}
           </h1>
+          {goalContextLine ? (
+            <p
+              data-testid="focus-goal-context"
+              title={goalContextLine}
+              className="text-[12.5px] text-[#9A9A9A] truncate max-w-full"
+            >
+              {goalContextLine}
+            </p>
+          ) : null}
           {activeBlock.resumeNote ? (
             <p className="text-[13px] text-[#9A9A9A]">
               Last left off: <span className="text-[#C4C4C4]">{activeBlock.resumeNote}</span>
@@ -495,7 +516,7 @@ export function FocusView() {
 
         {/* Inline Complete Block Picker */}
         {panelMode === 'complete' ? (
-          <form onSubmit={handleCompleteSubmit} className="veyra-card w-full space-y-4">
+          <form onSubmit={handleCompleteSubmit} className="veyra-card w-full max-w-[560px] space-y-4">
             <div className="flex items-center justify-between gap-2">
               <span className="text-[12px] font-semibold uppercase tracking-[0.06em] text-[#7BE0A0]">
                 Complete Block
@@ -509,10 +530,13 @@ export function FocusView() {
 
             {/* 3-option energy picker */}
             <div className="space-y-1.5">
-              <div className="text-[11.5px] text-[#9A9A9A]">How did this block feel?</div>
+              <div className="text-[11px] font-semibold uppercase tracking-[0.07em] text-[#9A9A9A]">
+                HOW DID THIS BLOCK FEEL?
+              </div>
               <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
+                  aria-pressed={energySignal === 'up'}
                   onClick={() => setEnergySignal('up')}
                   className={[
                     'h-9 px-3 rounded-[8px] border text-[12.5px] font-medium inline-flex items-center justify-center gap-1.5 transition-colors',
@@ -526,6 +550,7 @@ export function FocusView() {
                 </button>
                 <button
                   type="button"
+                  aria-pressed={energySignal === 'neutral'}
                   onClick={() => setEnergySignal('neutral')}
                   className={[
                     'h-9 px-3 rounded-[8px] border text-[12.5px] font-medium inline-flex items-center justify-center gap-1.5 transition-colors',
@@ -539,6 +564,7 @@ export function FocusView() {
                 </button>
                 <button
                   type="button"
+                  aria-pressed={energySignal === 'down'}
                   onClick={() => setEnergySignal('down')}
                   className={[
                     'h-9 px-3 rounded-[8px] border text-[12.5px] font-medium inline-flex items-center justify-center gap-1.5 transition-colors',
@@ -553,9 +579,60 @@ export function FocusView() {
               </div>
             </div>
 
+            {/* 3-option goal sense-check picker (optional, toggleable) */}
             <div className="space-y-1.5">
-              <label htmlFor="focus-outcome-input" className="text-[11.5px] text-[#9A9A9A] block">
-                One-line outcome (optional)
+              <div className="text-[11px] font-semibold uppercase tracking-[0.07em] text-[#9A9A9A]">
+                DID THIS BLOCK MAKE SENSE FOR ITS GOAL?
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  aria-pressed={senseSignal === 'moved'}
+                  onClick={() => setSenseSignal((curr) => (curr === 'moved' ? null : 'moved'))}
+                  className={[
+                    'h-9 px-3 rounded-[8px] border text-[12.5px] font-medium inline-flex items-center justify-center gap-1.5 transition-colors',
+                    senseSignal === 'moved'
+                      ? 'bg-[#14331F] border-[#2FB463] text-[#7BE0A0]'
+                      : 'bg-[#262626] border-[#3C3C3C] text-[#C4C4C4] hover:border-[#4E4E4E]',
+                  ].join(' ')}
+                >
+                  <span>✓ Moved the goal</span>
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={senseSignal === 'partly'}
+                  onClick={() => setSenseSignal((curr) => (curr === 'partly' ? null : 'partly'))}
+                  className={[
+                    'h-9 px-3 rounded-[8px] border text-[12.5px] font-medium inline-flex items-center justify-center gap-1.5 transition-colors',
+                    senseSignal === 'partly'
+                      ? 'bg-[#2A2A2A] border-[#A3A3A3] text-[#EDEDED]'
+                      : 'bg-[#262626] border-[#3C3C3C] text-[#C4C4C4] hover:border-[#4E4E4E]',
+                  ].join(' ')}
+                >
+                  <span>~ Partly</span>
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={senseSignal === 'motion'}
+                  onClick={() => setSenseSignal((curr) => (curr === 'motion' ? null : 'motion'))}
+                  className={[
+                    'h-9 px-3 rounded-[8px] border text-[12.5px] font-medium inline-flex items-center justify-center gap-1.5 transition-colors',
+                    senseSignal === 'motion'
+                      ? 'bg-[#3D2410] border-[#F07C2A] text-[#F5A66B]'
+                      : 'bg-[#262626] border-[#3C3C3C] text-[#C4C4C4] hover:border-[#4E4E4E]',
+                  ].join(' ')}
+                >
+                  <span>✕ Just motion</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label
+                htmlFor="focus-outcome-input"
+                className="text-[11px] font-semibold uppercase tracking-[0.07em] text-[#9A9A9A] block"
+              >
+                WHAT ACTUALLY MOVED FORWARD? (OPTIONAL)
               </label>
               <input
                 id="focus-outcome-input"
@@ -568,24 +645,46 @@ export function FocusView() {
               />
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-1">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setPanelMode('none')}
-                disabled={completeMutation.isPending}
+            <div className="flex items-center justify-between gap-3 pt-2 border-t border-[#2A2A2A] flex-wrap">
+              <div
+                data-testid="focus-complete-logged-to"
+                className="inline-flex items-center gap-1.5 text-[12px] text-[#9A9A9A] tabular-nums min-w-0"
               >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                variant="primary"
-                size="sm"
-                leftIcon={<CheckCircle2 size={13} />}
-                disabled={completeMutation.isPending}
-              >
-                Finish Block
-              </Button>
+                <span className="truncate">
+                  {currentSessionMinutes}m logged to {currentProject?.name ?? 'Other'}
+                </span>
+                {currentGoal ? (
+                  <>
+                    <span className="text-[#6E6E6E] shrink-0">·</span>
+                    <GoalKindIconBadge
+                      kind={currentGoal.kind}
+                      color={currentGoal.color}
+                      size="xs"
+                    />
+                    <span className="text-[#C4C4C4] truncate">{currentGoal.name}</span>
+                  </>
+                ) : null}
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0 ml-auto">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setPanelMode('none')}
+                  disabled={completeMutation.isPending}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="sm"
+                  leftIcon={<CheckCircle2 size={13} />}
+                  disabled={completeMutation.isPending}
+                >
+                  Finish Block
+                </Button>
+              </div>
             </div>
           </form>
         ) : null}
