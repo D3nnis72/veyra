@@ -7,16 +7,19 @@ import {
   addDailyNote,
   closeGoal,
   completeBlock,
+  completeWeeklyReview,
   createBlock,
   createGoal,
   createProject,
   deleteDailyNote,
   deleteGoal,
   deleteProject,
+  dropBlock,
   getActiveWeeklyRule,
   getBlock,
   getCalendarEvent,
   getGoalDetail,
+  getIsoWeekNumber,
   getProject,
   getSettings,
   getWeeklyReview,
@@ -26,9 +29,12 @@ import {
   logManualSession,
   openVeyraDb,
   parkBlock,
+  reopenWeeklyReview,
   reorderGoal,
+  resolveIsoWeekStartDate,
   resolveNotionToken,
   runDailyRolloverAndRecurrence,
+  setPreviousRuleKept,
   setWeeklyRule,
   toPublicSettings,
   updateBlock,
@@ -860,5 +866,557 @@ describe('Task 4: Calendar Upsert, Daily Notes, Weekly Review Rollups & Settings
       linkedProjectCount: 0,
       rankInKind: 2,
     });
+  });
+
+  it('getIsoWeekNumber and resolveIsoWeekStartDate map week 47 of 2026 to Monday 2026-11-16 and reject week 0 or 54', () => {
+    expect(getIsoWeekNumber('2026-11-16')).toEqual({ isoYear: 2026, isoWeek: 47 });
+    expect(getIsoWeekNumber('2026-11-22')).toEqual({ isoYear: 2026, isoWeek: 47 });
+    expect(getIsoWeekNumber('2026-11-23')).toEqual({ isoYear: 2026, isoWeek: 48 });
+
+    // Year-boundary ISO week 1 & week 53 of 2026 (2026 starts on Thursday -> 53 ISO weeks)
+    expect(getIsoWeekNumber('2025-12-29')).toEqual({ isoYear: 2026, isoWeek: 1 });
+    expect(getIsoWeekNumber('2026-01-04')).toEqual({ isoYear: 2026, isoWeek: 1 });
+    expect(getIsoWeekNumber('2026-12-31')).toEqual({ isoYear: 2026, isoWeek: 53 });
+
+    expect(resolveIsoWeekStartDate(47, '2026-11-25')).toBe('2026-11-16');
+    expect(resolveIsoWeekStartDate(1, '2026-11-25')).toBe('2025-12-29');
+    expect(resolveIsoWeekStartDate(53, '2026-11-25')).toBe('2026-12-28');
+
+    // 2025 only has 52 ISO weeks
+    expect(() => resolveIsoWeekStartDate(53, '2025-06-15')).toThrow(ValidationError);
+    expect(() => resolveIsoWeekStartDate(0, '2026-11-25')).toThrow(ValidationError);
+    expect(() => resolveIsoWeekStartDate(54, '2026-11-25')).toThrow(ValidationError);
+    expect(() => resolveIsoWeekStartDate(1.5, '2026-11-25')).toThrow(ValidationError);
+  });
+
+  it('getWeeklyReview computes chapter opening sentences, Company vs Personal split, senseCounts, Mon-Fri dayStrip, goalReviews (check-in due, 2 quiet weeks, stalled), and worthSecondLook', () => {
+    const mon = '2026-11-23';
+    const tue = '2026-11-24';
+    const wed = '2026-11-25';
+    const friNow = '2026-11-27T17:00:00.000Z';
+
+    const companyGoal = createGoal(
+      veyraDb,
+      {
+        name: 'Generate upsells',
+        kind: 'company',
+        doneWhen: '10 signed upsells',
+        checkInDate: '2026-11-25', // check-in due during review week
+        measure: '4 of 10',
+      },
+      { now: '2026-11-01T08:00:00.000Z' },
+    );
+    const quietPersonalGoal = createGoal(
+      veyraDb,
+      {
+        name: 'Write technical essays',
+        kind: 'personal',
+        ifItStalls: 'Block 30m Friday morning for an outline',
+      },
+      { now: '2026-11-01T08:00:00.000Z' },
+    );
+    const stalledCompanyGoal = createGoal(
+      veyraDb,
+      {
+        name: 'Customer onboarding',
+        kind: 'company',
+        ifItStalls: 'Audit onboarding tickets before adding more work',
+      },
+      { now: '2026-11-01T08:00:00.000Z' },
+    );
+
+    const proj = createProject(
+      veyraDb,
+      { name: 'LioCare', defaultGoalId: companyGoal.id, weeklyTimeMinutes: 180 },
+      { now: '2026-11-01T08:00:00.000Z' },
+    );
+
+    // 2 moved blocks on companyGoal (120m + 60m = 180m)
+    const b1 = createBlock(
+      veyraDb,
+      {
+        title: 'Acme renewal pitch',
+        projectId: proj.id,
+        goalId: companyGoal.id,
+        bucket: 'scheduled',
+        scheduledDate: mon,
+        sizeMinutes: 120,
+      },
+      { now: `${mon}T08:00:00.000Z` },
+    );
+    logManualSession(veyraDb, {
+      blockId: b1.id,
+      startedAt: `${mon}T09:00:00.000Z`,
+      endedAt: `${mon}T11:00:00.000Z`,
+    });
+    completeBlock(
+      veyraDb,
+      b1.id,
+      { senseSignal: 'moved', energySignal: 'up', outcomeNote: 'Acme approved expansion scope' },
+      `${mon}T11:00:00.000Z`,
+    );
+
+    const b2 = createBlock(
+      veyraDb,
+      {
+        title: 'Siemens upsell deck',
+        projectId: proj.id,
+        goalId: companyGoal.id,
+        bucket: 'scheduled',
+        scheduledDate: tue,
+        sizeMinutes: 60,
+      },
+      { now: `${tue}T08:00:00.000Z` },
+    );
+    logManualSession(veyraDb, {
+      blockId: b2.id,
+      startedAt: `${tue}T09:00:00.000Z`,
+      endedAt: `${tue}T10:00:00.000Z`,
+    });
+    completeBlock(
+      veyraDb,
+      b2.id,
+      { senseSignal: 'moved', outcomeNote: 'Deck sent to Siemens sponsor' },
+      `${tue}T10:00:00.000Z`,
+    );
+
+    // 1 motion + 1 partly block on stalledCompanyGoal (60m + 30m = 90m)
+    const b3 = createBlock(
+      veyraDb,
+      {
+        title: 'Onboarding spreadsheet sync',
+        projectId: proj.id,
+        goalId: stalledCompanyGoal.id,
+        bucket: 'scheduled',
+        scheduledDate: wed,
+        sizeMinutes: 60,
+      },
+      { now: `${wed}T08:00:00.000Z` },
+    );
+    logManualSession(veyraDb, {
+      blockId: b3.id,
+      startedAt: `${wed}T09:00:00.000Z`,
+      endedAt: `${wed}T10:00:00.000Z`,
+    });
+    completeBlock(veyraDb, b3.id, { senseSignal: 'motion' }, `${wed}T10:00:00.000Z`);
+
+    const b4 = createBlock(
+      veyraDb,
+      {
+        title: 'Follow up ticket tags',
+        projectId: proj.id,
+        goalId: stalledCompanyGoal.id,
+        bucket: 'scheduled',
+        scheduledDate: wed,
+        sizeMinutes: 30,
+      },
+      { now: `${wed}T10:00:00.000Z` },
+    );
+    logManualSession(veyraDb, {
+      blockId: b4.id,
+      startedAt: `${wed}T10:30:00.000Z`,
+      endedAt: `${wed}T11:00:00.000Z`,
+    });
+    completeBlock(veyraDb, b4.id, { senseSignal: 'partly' }, `${wed}T11:00:00.000Z`);
+
+    // 1 meeting on Monday (60m)
+    upsertCalendarEvents(veyraDb, 'ics', [
+      {
+        externalId: 'mon-meet',
+        title: 'Weekly Sync',
+        startAt: `${mon}T14:00:00.000Z`,
+        endAt: `${mon}T15:00:00.000Z`,
+      },
+    ]);
+
+    setPreviousRuleKept(veyraDb, mon, 'partly', { now: friNow });
+
+    const review = getWeeklyReview(veyraDb, mon, friNow);
+
+    expect(review.weekNumber).toBe(48);
+    expect(review.previousRuleKept).toBe('partly');
+    expect(review.companyGoalMinutes).toBe(270);
+    expect(review.personalGoalMinutes).toBe(0);
+    expect(review.companyGoalPct).toBe(100);
+    expect(review.personalGoalPct).toBe(0);
+    expect(review.senseCounts).toEqual({ moved: 2, partly: 1, motion: 1 });
+    expect(review.worthSecondLook.map((b) => b.id)).toEqual([b4.id, b3.id]);
+
+    // Mon-Fri dayStrip (5 items)
+    expect(review.dayStrip).toHaveLength(5);
+    expect(review.dayStrip[0]).toMatchObject({
+      date: mon,
+      weekday: 'Mon',
+      focusMinutes: 120,
+      plannedMinutes: 120,
+      meetingMinutes: 60,
+      roomMinutes: 180, // 240 baseline - 60 meeting
+    });
+    expect(review.dayStrip[1]).toMatchObject({
+      date: tue,
+      weekday: 'Tue',
+      focusMinutes: 60,
+      plannedMinutes: 60,
+      meetingMinutes: 0,
+      roomMinutes: 240,
+    });
+    expect(review.roomMinutesTotal).toBe(180 + 240 * 4);
+    expect(review.plannedMinutesTotal).toBe(120 + 60 + 90);
+
+    // Goal reviews: Company first, then Personal, with NO weekly target property
+    expect(review.goalReviews.map((g) => g.goalId)).toEqual([
+      companyGoal.id,
+      stalledCompanyGoal.id,
+      quietPersonalGoal.id,
+    ]);
+    const companyRow = review.goalReviews[0];
+    expect(companyRow).toMatchObject({
+      goalId: companyGoal.id,
+      kind: 'company',
+      focusMinutes: 180,
+      blockCount: 2,
+      senseCounts: { moved: 2, partly: 0, motion: 0 },
+      isCheckInDue: true,
+      isQuietTwoWeeks: false,
+      isStalled: false,
+    });
+    expect(companyRow.topOutcomes).toEqual([
+      'Deck sent to Siemens sponsor',
+      'Acme approved expansion scope',
+    ]);
+    expect('weeklyTimeMinutes' in companyRow).toBe(false);
+
+    const stalledRow = review.goalReviews[1];
+    expect(stalledRow).toMatchObject({
+      goalId: stalledCompanyGoal.id,
+      isCheckInDue: false,
+      isQuietTwoWeeks: false,
+      isStalled: true,
+    });
+
+    const quietRow = review.goalReviews[2];
+    expect(quietRow).toMatchObject({
+      goalId: quietPersonalGoal.id,
+      kind: 'personal',
+      focusMinutes: 0,
+      blockCount: 0,
+      isCheckInDue: false,
+      isQuietTwoWeeks: true,
+      isStalled: true,
+    });
+
+    // Opening sentences populated and non-empty
+    expect(review.chapterOpeningSentences.week).toContain('4h 30m focus');
+    expect(review.chapterOpeningSentences.progress).toContain('Generate upsells moved twice');
+    expect(review.chapterOpeningSentences.progress).toContain('Write technical essays got no time');
+    expect(review.chapterOpeningSentences.time.length).toBeGreaterThan(0);
+    expect(review.chapterOpeningSentences.nextWeek.length).toBeGreaterThan(0);
+  });
+
+  it('getWeeklyReview groups projects into More than planned, Less than planned, Wanted but untouched, Time without a plan (> 60m), and On track (±20%) with 4-week sparklines', () => {
+    const mon = '2026-11-23';
+    const prevMon = '2026-11-16';
+    const friNow = '2026-11-27T17:00:00.000Z';
+
+    const overProj = createProject(veyraDb, { name: 'LioCare', weeklyTimeMinutes: 120 }); // 240m -> +120m (over)
+    const underProj = createProject(veyraDb, { name: 'Veyra', weeklyTimeMinutes: 240 }); // 60m -> -180m (under)
+    const untouchedProj = createProject(veyraDb, { name: 'Read Offer', weeklyTimeMinutes: 120 }); // 0m (untouched)
+    const unplannedOver60 = createProject(veyraDb, { name: 'Covestro', weeklyTimeMinutes: null }); // 90m (time_without_plan)
+    const unplannedSmall = createProject(veyraDb, { name: 'Tiny Admin', weeklyTimeMinutes: null }); // 30m (unplanned -> omitted)
+    const onTrackProj = createProject(veyraDb, { name: 'Core API', weeklyTimeMinutes: 120 }); // 130m (+8% -> on_track)
+
+    const logForProject = (projectId: string, date: string, startHour: number, minutes: number) => {
+      const blk = createBlock(
+        veyraDb,
+        { title: `Work ${date}`, projectId, bucket: 'scheduled', scheduledDate: date },
+        { now: `${date}T08:00:00.000Z` },
+      );
+      const startH = String(startHour).padStart(2, '0');
+      const totalEndMins = startHour * 60 + minutes;
+      const endHour = Math.floor(totalEndMins / 60);
+      const endMin = totalEndMins % 60;
+      const hh = String(endHour).padStart(2, '0');
+      const mm = String(endMin).padStart(2, '0');
+      logManualSession(veyraDb, {
+        blockId: blk.id,
+        startedAt: `${date}T${startH}:00:00.000Z`,
+        endedAt: `${date}T${hh}:${mm}:00.000Z`,
+      });
+    };
+
+    logForProject(overProj.id, prevMon, 9, 60);
+    logForProject(overProj.id, mon, 9, 240);
+    logForProject(underProj.id, '2026-11-24', 9, 60);
+    logForProject(unplannedOver60.id, '2026-11-25', 9, 90);
+    logForProject(unplannedSmall.id, '2026-11-25', 11, 30);
+    logForProject(onTrackProj.id, '2026-11-26', 9, 130);
+
+    const review = getWeeklyReview(veyraDb, mon, friNow);
+
+    expect(review.projectBuckets.moreThanPlanned.map((p) => p.projectId)).toEqual([overProj.id]);
+    expect(review.projectBuckets.moreThanPlanned[0]).toMatchObject({
+      projectId: overProj.id,
+      weeklyTimeMinutes: 120,
+      realMinutes: 240,
+      differenceMinutes: 120,
+      varianceStatus: 'over',
+      trend4w: [0, 0, 60, 240],
+    });
+
+    expect(review.projectBuckets.lessThanPlanned.map((p) => p.projectId)).toEqual([underProj.id]);
+    expect(review.projectBuckets.lessThanPlanned[0]).toMatchObject({
+      differenceMinutes: -180,
+      varianceStatus: 'under',
+    });
+
+    expect(review.projectBuckets.wantedUntouched.map((p) => p.projectId)).toEqual([untouchedProj.id]);
+    expect(review.projectBuckets.timeWithoutPlan.map((p) => p.projectId)).toEqual([unplannedOver60.id]);
+    expect(review.projectBuckets.onTrack.map((p) => p.projectId)).toEqual([onTrackProj.id]);
+
+    // unplannedSmall (<= 60m, no weeklyTimeMinutes) is omitted from all 5 buckets
+    const allBucketIds = [
+      ...review.projectBuckets.moreThanPlanned,
+      ...review.projectBuckets.lessThanPlanned,
+      ...review.projectBuckets.wantedUntouched,
+      ...review.projectBuckets.timeWithoutPlan,
+      ...review.projectBuckets.onTrack,
+    ].map((p) => p.projectId);
+    expect(allBucketIds).not.toContain(unplannedSmall.id);
+
+    expect(review.chapterOpeningSentences.time).toContain('LioCare took 2h more than planned');
+    expect(review.chapterOpeningSentences.time).toContain('Veyra took 3h less than planned');
+  });
+
+  it('getWeeklyReview emits up to 3 planningFindings once >= 3 weeks of data exist (Overplanning, Size drift, Dropped without consequence, Motion hot spots, Goal neglect)', () => {
+    const w1 = '2026-11-02';
+    const w2 = '2026-11-09';
+    const w3 = '2026-11-16';
+    const w4 = '2026-11-23';
+    const friW4 = '2026-11-27T17:00:00.000Z';
+
+    const neglectedGoal = createGoal(
+      veyraDb,
+      { name: 'Customer Communication', kind: 'company' },
+      { now: `${w1}T08:00:00.000Z` },
+    );
+    const driftProj = createProject(veyraDb, { name: 'LioCare' }, { now: `${w1}T08:00:00.000Z` });
+    const motionProj = createProject(veyraDb, { name: 'Covestro' }, { now: `${w1}T08:00:00.000Z` });
+
+    // Only 2 weeks of data so far -> findings MUST be empty
+    const earlyB1 = createBlock(
+      veyraDb,
+      { title: 'W1 task', projectId: driftProj.id, bucket: 'scheduled', scheduledDate: w1, sizeMinutes: 60 },
+      { now: `${w1}T08:00:00.000Z` },
+    );
+    logManualSession(veyraDb, {
+      blockId: earlyB1.id,
+      startedAt: `${w1}T09:00:00.000Z`,
+      endedAt: `${w1}T11:00:00.000Z`, // 120m actual vs 60m planned (+100% drift)
+    });
+    completeBlock(veyraDb, earlyB1.id, { senseSignal: 'moved' }, `${w1}T11:00:00.000Z`);
+
+    const earlyB2 = createBlock(
+      veyraDb,
+      { title: 'W2 task', projectId: driftProj.id, bucket: 'scheduled', scheduledDate: w2, sizeMinutes: 60 },
+      { now: `${w2}T08:00:00.000Z` },
+    );
+    logManualSession(veyraDb, {
+      blockId: earlyB2.id,
+      startedAt: `${w2}T09:00:00.000Z`,
+      endedAt: `${w2}T11:00:00.000Z`,
+    });
+    completeBlock(veyraDb, earlyB2.id, { senseSignal: 'moved' }, `${w2}T11:00:00.000Z`);
+
+    const reviewAt2Weeks = getWeeklyReview(veyraDb, w2, '2026-11-13T17:00:00.000Z');
+    expect(reviewAt2Weeks.planningFindings).toEqual([]);
+
+    // Add 3rd week of data -> unlocks findings (size_drift + goal_neglect)
+    const w3B = createBlock(
+      veyraDb,
+      { title: 'W3 task', projectId: driftProj.id, bucket: 'scheduled', scheduledDate: w3, sizeMinutes: 60 },
+      { now: `${w3}T08:00:00.000Z` },
+    );
+    logManualSession(veyraDb, {
+      blockId: w3B.id,
+      startedAt: `${w3}T09:00:00.000Z`,
+      endedAt: `${w3}T11:00:00.000Z`,
+    });
+    completeBlock(veyraDb, w3B.id, { senseSignal: 'moved' }, `${w3}T11:00:00.000Z`);
+
+    const reviewAt3Weeks = getWeeklyReview(veyraDb, w3, '2026-11-20T17:00:00.000Z');
+    expect(reviewAt3Weeks.planningFindings.some((f) => f.kind === 'size_drift')).toBe(true);
+    expect(reviewAt3Weeks.planningFindings.some((f) => f.kind === 'goal_neglect')).toBe(true);
+
+    // Add Overplanning (4 days in W4 planned > room), Dropped without consequence (3 drops), and Motion hot spot (3 motion blocks on Covestro)
+    for (const day of ['2026-11-23', '2026-11-24', '2026-11-25', '2026-11-26']) {
+      for (let i = 0; i < 3; i++) {
+        createBlock(
+          veyraDb,
+          { title: `Overplan ${day} #${i}`, projectId: driftProj.id, bucket: 'scheduled', scheduledDate: day, sizeMinutes: 120 },
+          { now: `${day}T08:00:00.000Z` },
+        );
+      }
+    }
+
+    for (let i = 0; i < 3; i++) {
+      const dropMe = createBlock(
+        veyraDb,
+        { title: `Cleanup #${i}`, projectId: motionProj.id, bucket: 'scheduled', scheduledDate: w4 },
+        { now: `${w4}T08:00:00.000Z` },
+      );
+      dropBlock(veyraDb, dropMe.id, { dropReason: 'not_important', now: `${w4}T12:00:00.000Z` });
+
+      const motionBlk = createBlock(
+        veyraDb,
+        { title: `Motion #${i}`, projectId: motionProj.id, bucket: 'scheduled', scheduledDate: w4 },
+        { now: `${w4}T08:00:00.000Z` },
+      );
+      completeBlock(veyraDb, motionBlk.id, { senseSignal: 'motion' }, `${w4}T15:00:00.000Z`);
+    }
+
+    const reviewW4 = getWeeklyReview(veyraDb, w4, friW4);
+    expect(reviewW4.planningFindings.length).toBeGreaterThan(0);
+    expect(reviewW4.planningFindings.length).toBeLessThanOrEqual(3);
+    expect(reviewW4.ruleSuggestions.length).toBeGreaterThan(0);
+    expect(reviewW4.ruleSuggestions.length).toBeLessThanOrEqual(3);
+    expect(neglectedGoal.id).toBeTruthy();
+
+    // Verify each of the remaining 3 finding detectors individually on fresh DBs
+    // 1) motion_hot_spot + dropped_without_consequence
+    const db2 = openVeyraDb(':memory:');
+    try {
+      updateSettings(db2, { timezone: 'Europe/Berlin' });
+      const p2 = createProject(db2, { name: 'Covestro' }, { now: `${w1}T08:00:00.000Z` });
+      for (const d of [w1, w2, w3]) {
+        const mb = createBlock(db2, { title: `M ${d}`, projectId: p2.id, bucket: 'scheduled', scheduledDate: d }, { now: `${d}T08:00:00.000Z` });
+        completeBlock(db2, mb.id, { senseSignal: 'motion' }, `${d}T10:00:00.000Z`);
+        const dr = createBlock(db2, { title: `D ${d}`, projectId: p2.id, bucket: 'scheduled', scheduledDate: d }, { now: `${d}T08:00:00.000Z` });
+        dropBlock(db2, dr.id, { dropReason: 'not_important', now: `${d}T11:00:00.000Z` });
+      }
+      const r2 = getWeeklyReview(db2, w3, '2026-11-20T17:00:00.000Z');
+      expect(r2.planningFindings.map((f) => f.kind)).toContain('motion_hot_spot');
+      expect(r2.planningFindings.map((f) => f.kind)).toContain('dropped_without_consequence');
+    } finally {
+      db2.close();
+    }
+
+    // 2) overplanning
+    const db3 = openVeyraDb(':memory:');
+    try {
+      updateSettings(db3, { timezone: 'Europe/Berlin' });
+      const p3 = createProject(db3, { name: 'Engine' }, { now: `${w1}T08:00:00.000Z` });
+      for (const d of [w1, w2, w3]) {
+        const b = createBlock(db3, { title: `Log ${d}`, projectId: p3.id, bucket: 'scheduled', scheduledDate: d }, { now: `${d}T08:00:00.000Z` });
+        logManualSession(db3, { blockId: b.id, startedAt: `${d}T09:00:00.000Z`, endedAt: `${d}T10:00:00.000Z` });
+      }
+      for (const day of ['2026-11-16', '2026-11-17', '2026-11-18', '2026-11-19']) {
+        for (let i = 0; i < 3; i++) {
+          createBlock(db3, { title: `Big ${day} ${i}`, projectId: p3.id, bucket: 'scheduled', scheduledDate: day, sizeMinutes: 120 }, { now: `${day}T08:00:00.000Z` });
+        }
+      }
+      const r3 = getWeeklyReview(db3, w3, '2026-11-20T17:00:00.000Z');
+      expect(r3.planningFindings.map((f) => f.kind)).toContain('overplanning');
+    } finally {
+      db3.close();
+    }
+  });
+
+  it('completeWeeklyReview updates project weekly times, persists completedAt and snapshotJson, and reopenWeeklyReview clears completedAt', () => {
+    const mon = '2026-11-16'; // ISO week 47
+    const completedNow = '2026-11-20T16:30:00.000Z';
+
+    const goal = createGoal(veyraDb, { name: 'Ship v2', kind: 'company', measure: '2 of 5' });
+    const proj = createProject(veyraDb, { name: 'Veyra Core', weeklyTimeMinutes: 180, defaultGoalId: goal.id });
+
+    const b1 = createBlock(
+      veyraDb,
+      { title: 'Review engine', projectId: proj.id, goalId: goal.id, bucket: 'scheduled', scheduledDate: mon },
+      { now: `${mon}T08:00:00.000Z` },
+    );
+    logManualSession(veyraDb, {
+      blockId: b1.id,
+      startedAt: `${mon}T09:00:00.000Z`,
+      endedAt: `${mon}T11:00:00.000Z`,
+    });
+    completeBlock(veyraDb, b1.id, { senseSignal: 'moved', outcomeNote: 'Engine ready' }, `${mon}T11:00:00.000Z`);
+
+    const completed = completeWeeklyReview(
+      veyraDb,
+      {
+        weekStartDate: mon,
+        ruleForNextWeek: 'Protect Tuesday mornings for Veyra Core',
+        previousRuleKept: 'yes',
+        notes: 'Good momentum',
+        projectWeeklyTimes: { [proj.id]: 300 },
+      },
+      { now: completedNow },
+    );
+
+    expect(completed.review.completedAt).toBe(completedNow);
+    expect(completed.review.previousRuleKept).toBe('yes');
+    expect(completed.review.ruleForNextWeek).toBe('Protect Tuesday mornings for Veyra Core');
+    expect(completed.review.snapshotJson).toBeTruthy();
+
+    // Project weeklyTimeMinutes was updated inline in the same transaction
+    expect(getProject(veyraDb, proj.id, completedNow).weeklyTimeMinutes).toBe(300);
+
+    // Snapshot & getWeeklyReview match
+    expect(completed.snapshot).toMatchObject({
+      weekStartDate: mon,
+      weekNumber: 47,
+      completedAt: completedNow,
+      totalFocusMinutes: 120,
+      ruleForNextWeek: 'Protect Tuesday mornings for Veyra Core',
+      previousRuleKept: 'yes',
+    });
+    expect(completed.snapshot.projectWeeklyTimes).toEqual([
+      { projectId: proj.id, name: 'Veyra Core', weeklyTimeMinutes: 300, realMinutes: 120 },
+    ]);
+    expect(completed.snapshot.goalsMoved).toHaveLength(1);
+    expect(completed.snapshot.goalsMoved[0]).toMatchObject({
+      goalId: goal.id,
+      focusMinutes: 120,
+      movedCount: 1,
+      measure: '2 of 5',
+    });
+
+    const fetched = getWeeklyReview(veyraDb, mon, completedNow);
+    expect(fetched.completedAt).toBe(completedNow);
+    expect(fetched.snapshot).toEqual(completed.snapshot);
+
+    // Reopen clears completedAt while preserving ruleForNextWeek and previousRuleKept
+    const reopened = reopenWeeklyReview(veyraDb, mon, { now: '2026-11-20T17:00:00.000Z' });
+    expect(reopened.completedAt).toBeNull();
+    expect(reopened.ruleForNextWeek).toBe('Protect Tuesday mornings for Veyra Core');
+    expect(reopened.previousRuleKept).toBe('yes');
+
+    const afterReopen = getWeeklyReview(veyraDb, mon, '2026-11-20T17:00:00.000Z');
+    expect(afterReopen.completedAt).toBeNull();
+    expect(afterReopen.snapshot).toBeNull();
+  });
+
+  it('handles empty weeks cleanly, preserves ruleForNextWeek on setPreviousRuleKept, and resolves ISO year boundaries', () => {
+    // 2027-01-01 (Friday) belongs to ISO week 53 of 2026
+    expect(getIsoWeekNumber('2027-01-01')).toEqual({ isoYear: 2026, isoWeek: 53 });
+    expect(resolveIsoWeekStartDate(53, '2027-01-01')).toBe('2026-12-28');
+    expect(getIsoWeekNumber('2027-01-04')).toEqual({ isoYear: 2027, isoWeek: 1 });
+
+    // Empty week on fresh DB
+    const empty = getWeeklyReview(veyraDb, '2026-03-23', '2026-03-27T17:00:00.000Z'); // DST week in Europe/Berlin
+    expect(empty.weekNumber).toBe(13);
+    expect(empty.totalFocusMinutes).toBe(0);
+    expect(empty.dayStrip).toHaveLength(5);
+    expect(empty.goalReviews).toEqual([]);
+    expect(empty.planningFindings).toEqual([]);
+    expect(empty.chapterOpeningSentences.week).toBe('No focus time logged this week yet.');
+    expect(empty.chapterOpeningSentences.progress).toBe('No active goals to track this week.');
+    expect(empty.chapterOpeningSentences.time).toBe('No project time variance to flag this week.');
+    expect(empty.chapterOpeningSentences.nextWeek).toBe('One rule to pick.');
+
+    // setPreviousRuleKept does not clobber existing ruleForNextWeek
+    setWeeklyRule(veyraDb, '2026-03-23', 'Keep mornings clear');
+    const kept = setPreviousRuleKept(veyraDb, '2026-03-23', 'yes');
+    expect(kept.ruleForNextWeek).toBe('Keep mornings clear');
+    expect(kept.previousRuleKept).toBe('yes');
   });
 });

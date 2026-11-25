@@ -64,11 +64,14 @@ export {
 } from './calendar-events.js';
 export {
   addDailyNote,
+  completeWeeklyReview,
   deleteDailyNote,
   getActiveWeeklyRule,
   getWeeklyReview,
   getWeeklyReviewRecord,
   listDailyNotes,
+  reopenWeeklyReview,
+  setPreviousRuleKept,
   setWeeklyRule,
   updateDailyNote,
 } from './notes-review.js';

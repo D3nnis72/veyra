@@ -1,4 +1,6 @@
+import { ValidationError } from './errors.js';
 import {
+  type DateOnly,
   type RevisitHorizon,
   type WeekdayToken,
   isValidDateOnly,
@@ -102,6 +104,47 @@ export function getWeekRange(dateStr: string): { weekStartDate: string; weekEndD
   const weekStartDate = addDaysToDateString(dateStr, -offsetFromMonday);
   const weekEndDate = addDaysToDateString(weekStartDate, 6);
   return { weekStartDate, weekEndDate };
+}
+
+/**
+ * Computes the ISO-8601 week year and week number (1..53) for a `YYYY-MM-DD` calendar date.
+ */
+export function getIsoWeekNumber(dateStr: DateOnly): { isoYear: number; isoWeek: number } {
+  if (!isValidDateOnly(dateStr)) {
+    throw new ValidationError(`Invalid YYYY-MM-DD date string: '${dateStr}'`);
+  }
+  const { year, month, day } = parseDateOnlyParts(dateStr);
+  const d = new Date(Date.UTC(year, month - 1, day));
+  const isoDay = d.getUTCDay() || 7; // Mon=1..Sun=7
+  // Shift to Thursday of the same ISO week to determine the ISO week-year
+  d.setUTCDate(d.getUTCDate() + 4 - isoDay);
+  const isoYear = d.getUTCFullYear();
+  const yearStart = new Date(Date.UTC(isoYear, 0, 1));
+  const daysSinceYearStart = Math.floor((d.getTime() - yearStart.getTime()) / 86_400_000) + 1;
+  const isoWeek = Math.ceil(daysSinceYearStart / 7);
+  return { isoYear, isoWeek };
+}
+
+/**
+ * Resolves an ISO week number (1..53) relative to the ISO week-year of `referenceDateStr`
+ * to its Monday `YYYY-MM-DD` start date. Throws `ValidationError` on invalid week numbers.
+ */
+export function resolveIsoWeekStartDate(weekNumber: number, referenceDateStr: DateOnly): DateOnly {
+  if (!Number.isInteger(weekNumber) || weekNumber < 1 || weekNumber > 53) {
+    throw new ValidationError(
+      `Invalid ISO week number: ${String(weekNumber)} (expected an integer between 1 and 53)`,
+    );
+  }
+  const { isoYear } = getIsoWeekNumber(referenceDateStr);
+  const maxWeeks = getIsoWeekNumber(`${isoYear}-12-28`).isoWeek;
+  if (weekNumber > maxWeeks) {
+    throw new ValidationError(
+      `ISO year ${isoYear} only has ${maxWeeks} weeks (got week ${weekNumber})`,
+    );
+  }
+  // January 4 is always in ISO week 1 of its year
+  const { weekStartDate: week1Monday } = getWeekRange(`${isoYear}-01-04`);
+  return addDaysToDateString(week1Monday, (weekNumber - 1) * 7);
 }
 
 /**

@@ -158,10 +158,14 @@ export type CalendarEventSource = z.infer<typeof calendarEventSourceSchema>;
 export const calendarSyncModeSchema = z.enum(['outlook_cli', 'ics', 'manual']);
 export type CalendarSyncMode = z.infer<typeof calendarSyncModeSchema>;
 
+export const ruleKeptSchema = z.enum(['yes', 'partly', 'no']);
+export type RuleKept = z.infer<typeof ruleKeptSchema>;
+
 export const webhookEventNameSchema = z.enum([
   'focus.started',
   'focus.ended',
   'block.completed',
+  'review.completed',
 ]);
 export type WebhookEventName = z.infer<typeof webhookEventNameSchema>;
 
@@ -307,7 +311,10 @@ export const weeklyReviewSchema = z.object({
   id: z.string().uuid(),
   weekStartDate: dateOnlySchema,
   ruleForNextWeek: z.string(),
+  previousRuleKept: ruleKeptSchema.nullable(),
   notes: z.string(),
+  completedAt: z.string().nullable(),
+  snapshotJson: z.string().nullable(),
   updatedAt: z.string(),
   deletedAt: z.string().nullable(),
 });
@@ -638,6 +645,17 @@ export const updateDailyNoteInputSchema = z.object({
 });
 export type UpdateDailyNoteInput = z.infer<typeof updateDailyNoteInputSchema>;
 
+export const completeWeeklyReviewInputSchema = z.object({
+  weekStartDate: dateOnlySchema.optional(),
+  ruleForNextWeek: z.string(),
+  previousRuleKept: ruleKeptSchema.nullable().optional(),
+  notes: z.string().optional(),
+  projectWeeklyTimes: z
+    .record(z.string().uuid(), z.number().int().min(15).max(4800).nullable())
+    .optional(),
+});
+export type CompleteWeeklyReviewInput = z.input<typeof completeWeeklyReviewInputSchema>;
+
 export const updateSettingsInputSchema = z.object({
   theme: themeModeSchema.optional(),
   timezone: z.string().min(1).optional(),
@@ -870,6 +888,122 @@ export interface EnergyCounts {
   down: number;
 }
 
+export interface SenseCounts {
+  moved: number;
+  partly: number;
+  motion: number;
+}
+
+export interface ReviewDayStripItem {
+  date: DateOnly;
+  weekday: string;
+  focusMinutes: number;
+  plannedMinutes: number;
+  roomMinutes: number;
+  meetingMinutes: number;
+}
+
+export interface GoalReviewItem {
+  goalId: string;
+  name: string;
+  kind: GoalKind;
+  color: string;
+  status: GoalStatus;
+  doneWhen: string;
+  checkInDate: DateOnly | null;
+  measure: string | null;
+  ifItStalls: string;
+  rankInKind: number;
+  focusMinutes: number;
+  blockCount: number;
+  senseCounts: SenseCounts;
+  topOutcomes: string[];
+  isCheckInDue: boolean;
+  isQuietTwoWeeks: boolean;
+  isStalled: boolean;
+}
+
+export interface ProjectReviewBucketItem {
+  projectId: string;
+  weeklyTimeMinutes: number | null;
+  realMinutes: number;
+  differenceMinutes: number | null;
+  blockCount: number;
+  carryoverCount: number;
+  trend4w: number[];
+  varianceStatus: ProjectVarianceStatus;
+}
+
+export interface ProjectReviewBuckets {
+  moreThanPlanned: ProjectReviewBucketItem[];
+  lessThanPlanned: ProjectReviewBucketItem[];
+  wantedUntouched: ProjectReviewBucketItem[];
+  timeWithoutPlan: ProjectReviewBucketItem[];
+  onTrack: ProjectReviewBucketItem[];
+}
+
+export type PlanningFindingKind =
+  | 'overplanning'
+  | 'size_drift'
+  | 'dropped_without_consequence'
+  | 'motion_hot_spot'
+  | 'goal_neglect';
+
+export interface PlanningFinding {
+  kind: PlanningFindingKind;
+  title: string;
+  summary: string;
+  suggestedRule: string;
+}
+
+export interface WeeklyReviewSnapshotGoal {
+  goalId: string;
+  name: string;
+  kind: GoalKind;
+  color: string;
+  focusMinutes: number;
+  blockCount: number;
+  movedCount: number;
+  measure: string | null;
+  topOutcomes: string[];
+}
+
+export interface WeeklyReviewSnapshotProject {
+  projectId: string;
+  name: string;
+  weeklyTimeMinutes: number | null;
+  realMinutes: number;
+}
+
+export interface WeeklyReviewSnapshot {
+  weekStartDate: DateOnly;
+  weekEndDate: DateOnly;
+  weekNumber: number;
+  completedAt: string;
+  totalFocusMinutes: number;
+  roomMinutesTotal: number;
+  plannedMinutesTotal: number;
+  goalAlignmentPct: number;
+  companyGoalPct: number;
+  personalGoalPct: number;
+  buildMinutes: number;
+  opsMinutes: number;
+  senseCounts: SenseCounts;
+  energyCounts: EnergyCounts;
+  previousRuleText: string | null;
+  previousRuleKept: RuleKept | null;
+  ruleForNextWeek: string;
+  goalsMoved: WeeklyReviewSnapshotGoal[];
+  projectWeeklyTimes: WeeklyReviewSnapshotProject[];
+}
+
+export interface ChapterOpeningSentences {
+  week: string;
+  progress: string;
+  time: string;
+  nextWeek: string;
+}
+
 export interface RolloverResult {
   today: DateOnly;
   timezone: string;
@@ -890,6 +1024,7 @@ export type ProgressFeedItem =
       outcomeNote: string | null;
       autoSummary: string | null;
       energySignal: EnergySignal | null;
+      senseSignal?: SenseSignal | null;
       totalFocusMinutes: number;
     }
   | {
@@ -930,12 +1065,28 @@ export interface OpsRadarSummary {
 export interface WeeklyReviewSummary {
   weekStartDate: DateOnly;
   weekEndDate: DateOnly;
+  weekNumber: number;
   timezone: string;
+  chapterOpeningSentences: ChapterOpeningSentences;
+  previousRuleKept: RuleKept | null;
   totalFocusMinutes: number;
+  roomMinutesTotal: number;
+  plannedMinutesTotal: number;
   goalAlignmentPct: number;
+  companyGoalMinutes: number;
+  personalGoalMinutes: number;
+  companyGoalPct: number;
+  personalGoalPct: number;
   buildMinutes: number;
   opsMinutes: number;
   energyCounts: EnergyCounts;
+  senseCounts: SenseCounts;
+  dayStrip: ReviewDayStripItem[];
+  goalReviews: GoalReviewItem[];
+  worthSecondLook: Block[];
+  projectBuckets: ProjectReviewBuckets;
+  planningFindings: PlanningFinding[];
+  ruleSuggestions: string[];
   progressFeed: ProgressFeedItem[];
   dailyNotes: DailyNote[];
   opsRadar: OpsRadarSummary;
@@ -945,6 +1096,14 @@ export interface WeeklyReviewSummary {
   weeklyReview: WeeklyReview | null;
   activeRuleText: string | null;
   ruleForNextWeek: string | null;
+  completedAt: string | null;
+  snapshot: WeeklyReviewSnapshot | null;
+}
+
+export interface CompleteWeeklyReviewResult {
+  review: WeeklyReview;
+  summary: WeeklyReviewSummary;
+  snapshot: WeeklyReviewSnapshot;
 }
 
 export interface CalendarSyncStatus {

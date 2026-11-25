@@ -137,7 +137,10 @@ CREATE TABLE IF NOT EXISTS weekly_reviews (
   id TEXT PRIMARY KEY,
   week_start_date TEXT NOT NULL,
   rule_for_next_week TEXT NOT NULL DEFAULT '',
+  previous_rule_kept TEXT,
   notes TEXT NOT NULL DEFAULT '',
+  completed_at TEXT,
+  snapshot_json TEXT,
   updated_at TEXT NOT NULL,
   deleted_at TEXT
 );
@@ -273,6 +276,21 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{ table: string; column: string; ddl: stri
     table: 'blocks',
     column: 'drop_reason',
     ddl: 'ALTER TABLE blocks ADD COLUMN drop_reason TEXT',
+  },
+  {
+    table: 'weekly_reviews',
+    column: 'previous_rule_kept',
+    ddl: 'ALTER TABLE weekly_reviews ADD COLUMN previous_rule_kept TEXT',
+  },
+  {
+    table: 'weekly_reviews',
+    column: 'completed_at',
+    ddl: 'ALTER TABLE weekly_reviews ADD COLUMN completed_at TEXT',
+  },
+  {
+    table: 'weekly_reviews',
+    column: 'snapshot_json',
+    ddl: 'ALTER TABLE weekly_reviews ADD COLUMN snapshot_json TEXT',
   },
   {
     table: 'settings',
