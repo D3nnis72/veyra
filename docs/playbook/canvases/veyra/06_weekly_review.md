@@ -21,7 +21,7 @@ Wanted by the user on 2026-11-25: the review deserves more detail than it has to
 
 Today the review is one page of facts side by side: four KPIs (total focus, goal alignment, build versus ops, energy), the progress feed, daily notes, the Ops radar, carryovers and Later check in, and the rule for next week. Everything is there, but nothing says in which order to look at it or what to conclude.
 
-Drawn on the Figma page Screens: [Weekly Review, two states](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=24-2350) and [Projects with weekly time](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=24-1427), plus the strip in [Plan](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=23-607).
+Drawn on the Figma page Screens: [Weekly Review, five states](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=24-2350) and [Projects with weekly time](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=24-1427), plus the strip in [Plan](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=23-607).
 
 The rework keeps one scrolling page and orders it into four chapters, each answering one question. A thin chapter bar at the top jumps between them and shows which ones you have walked through. Every chapter opens with one computed sentence, so a quick look at the four sentences already tells the week, and the detail below is there when you want it.
 
@@ -30,9 +30,9 @@ The rework keeps one scrolling page and orders it into four chapters, each answe
 | # | Chapter | What it shows |
 | --- | --- | --- |
 | 1 | What happened? | Last week's rule with a quick "kept it? yes, partly, no". Key numbers: focus time against room and against planned time (Step 05), goal share split into company and personal, build versus Ops, the moved / partly / just motion split, energy counts. A Monday to Friday strip with one bar per day: real focus, the room line and meeting hours. Daily notes of the week, folded. |
-| 2 | What moved? | One row per active goal, company first (Step 04): focus against intent, the sense split, the best outcome lines, the measure update, and a question for neglected or due goals. Below it the progress feed grouped by goal instead of by time, and "Worth a second look" with the partly and just motion blocks. |
+| 2 | What moved? | One row per active goal, company first (Step 04): measured focus time and block count this week (no weekly time target on goals), the sense split, the best outcome lines, the measure update, and a question for neglected or due goals. Below it the progress feed grouped by goal instead of by time, and "Worth a second look" with the partly and just motion blocks. |
 | 3 | Where did the time go? | The projects table against their weekly time (see below), the Ops radar as today, and "What your planning taught you" with at most three findings (Step 05). |
-| 4 | What changes next week? | Backlog check in (chronic carryovers, Later items due) with the existing actions, the weekly time per project for next week prefilled from this week and editable in place, and the rule for next week with up to three suggestions taken from the findings. |
+| 4 | What changes next week? | Backlog check in (chronic carryovers, Later items due) with the existing actions, the weekly time per project for next week prefilled from this week and editable in place, and the rule for next week directly on canvas (no card-on-card) with up to three suggestions taken from the findings. Completing the review automatically persists the snapshot and fires a `review.completed` local hook so T3 Code picks up next week's rule, goal outcomes, and project weekly times on Monday with zero manual copy-paste (`Copy Markdown` stays optional for sharing). |
 
 The opening sentences read for example: "18 h 40 m focus, 2 h under your room, 72 % on goals." · "Upsells moved twice, Customer Communication got no time." · "LioCare took 3 h more than planned, Veyra 2 h less." · "Two carryovers to decide, one rule to pick."
 
@@ -51,7 +51,7 @@ Where it shows up:
 
 The review groups projects into four plain buckets, ordered by size of the difference: **More than planned** (for example "LioCare 7 h 10 m of 4 h, +3 h"), **Less than planned**, **Wanted but untouched** (intent set, zero time), and **Time without a plan** (no intent, but more than one hour). Within about 20 percent of the intent counts as on track and stays folded.
 
-Goals and projects then share the intent: a goal's weekly intent defaults to the sum of the weekly time of its projects (through `defaultGoalId`), and only needs its own value when the goal covers work outside those projects. This replaces the separate goal field from Step 04 as the main input.
+Weekly time intentions stay on projects only. Goals show measured focus time without a weekly time target ([04](04_company_goals.md)).
 
 ## Text mockup {#mockup updated=2026-11-25}
 
@@ -76,10 +76,8 @@ Last rule: Protect 09:00–11:30 for one focused block   Kept? [Yes] [Partly] [N
 > [!card question indigo] Chapter bar or plain scrolling?
 > Proposal: a thin chapter bar that only jumps and marks chapters as seen. It does not lock the order, so the review can still be skimmed in two minutes.
 
-> [!card question indigo] Goal intent derived from projects?
-> Proposal above: goals take the sum of their projects by default. Simpler to fill in, but a goal that spans many projects (Internal Visibility) needs its own value.
-
 ## Set aside for now {#aside updated=2026-11-25}
 
+- **Weekly time targets on goals:** decided against on 2026-11-25; weekly time intentions stay on projects only.
 - **A wizard with one chapter per screen:** too slow for a quick week, and harder to compare chapters.
 - **Hour budgets that block planning:** against the Vision non goals; the weekly time stays an intention.

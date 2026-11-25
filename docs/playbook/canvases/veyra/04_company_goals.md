@@ -17,9 +17,9 @@ Builds on the shipped goals in [domain-invariants.md](../../../knowledge/archite
 
 ## Current direction {#direction updated=2026-11-25}
 
-Goals come in two kinds: **personal** goals and **company** goals. Both live in the same place, are linked to blocks, meetings and projects the same way, and use the same color and status. They are shown clearly apart: two separate groups in `Settings → Goals` with white headlines ("Personal", "Company") above their cards, and no extra tag on the cards. The kind is carried by the icon that replaces the plain color dot everywhere a goal appears (Settings, block completion card, Weekly Review): a person for Personal, a briefcase for Company. The icon sits in a small tinted rounded square in the goal color, like the project icons. Cards stay neutral. Tint, color bar and badge variants were tried and set aside. The building icon was replaced by the briefcase because it read as a document at 12 to 14 px.
+Goals come in two kinds: **personal** goals and **company** goals. Both live in their own top-level `Goals` view in the main sidebar (moved out of Settings on 2026-11-25), are linked to blocks, meetings and projects the same way, and share the unified color picker (12 curated presets plus custom hex) with projects. They are shown clearly apart: two separate groups on `Goals` with white headlines ("Personal", "Company") above their cards, and no extra tag on the cards. The kind is carried by the icon that replaces the plain color dot everywhere a goal appears (Goals view, Projects list, block/meeting drawers, Focus completion card, Weekly Review): a person for Personal, a briefcase for Company. The icon sits in a small tinted rounded square in the goal color, like the project icons. Cards stay neutral. Tint, color bar and badge variants were tried and set aside. The building icon was replaced by the briefcase because it read as a document at 12 to 14 px.
 
-Second layer, proposed on 2026-11-25 and not yet agreed: a goal becomes more than a name and a color. It carries a few fields that make it specific (what "done" looks like, how much focus it should get, when to check in), and the Weekly Review uses them to compare intention with what really happened. The sections below describe why and what.
+Second layer, proposed on 2026-11-25: a goal becomes more than a name and a color. It carries a few fields that make it specific (what "done" looks like, when to check in, optional measure and if-it-stalls rule), and the Weekly Review uses them to compare intention with what really happened. Weekly focus time targets live on projects, not on goals. The sections below describe why and what.
 
 Why this fits what exists: a `Project` already has a `defaultGoalId`, so hanging a customer project on the company goal "Upsells" already sends all its blocks there. What is missing is the difference between the kinds, the content that makes a goal specific, and the evaluation of it.
 
@@ -62,12 +62,11 @@ Proposal. The first four fields are always visible on the goal card, the rest st
 | Why it matters | Expansion is how the team hits its revenue plan without new logos | Shown quietly in the Focus view header and in the review row, keeps the goal tied to something you care about | yes, as `description` |
 | Done when | 10 upsells signed by end of Q1 | Makes the goal specific; the review asks against this sentence | no |
 | Check in date | 2027-03-31 | From this date the review asks: achieved, continue with a new date, or let go | no |
-| Weekly focus intent | about 4 h | The lead measure: review compares it with real focus time, without red or debt. Defaults to the sum of the weekly time of its projects ([06](06_weekly_review.md)), set by hand only when the goal spans other work | no |
 | Measure (optional) | 4 of 10 upsells | The lag measure, updated by hand once a week in the review; mainly for company goals | no |
 | If it stalls (optional) | If no upsell call is booked by Wednesday, I block 30 min to write two offers | Shown in the review when the goal got little time or mostly "just motion" | no |
 | Color, order, status | blue, 2nd, active | As today; order is the priority between goals | yes |
 
-Derived, not stored on the goal: linked projects (through `defaultGoalId`), focus time per week, number of blocks, the split of "did it make sense" answers, and the list of outcome lines.
+Derived, not stored on the goal: linked projects (through `defaultGoalId`), measured focus time per week (shown as actuals without a weekly target), number of blocks, the split of "did it make sense" answers, and the list of outcome lines. Weekly time intentions live on projects ([06](06_weekly_review.md)), not on goals.
 
 Closing a goal asks two short things: was it achieved or let go, and one line on what it brought. `Achieved` and `Let go` (today `archived`) both hide the goal from pickers and keep it in history.
 
@@ -75,9 +74,8 @@ Closing a goal asks two short things: was it achieved or let go, and one line on
 ┌ Company ──────────────────────────────────────────────────────────┐
 │ [briefcase] Generate upsells                     4 projects · ✎   │
 │ Done when: 10 upsells signed by end of Q1         Check in 31 Mar │
-│ This week 3h 10m of ~4h   ·   4 of 10 upsells                     │
+│ This week: 4h 50m focused · 3 blocks · 5 of 10 upsells            │
 │ Why: Expansion is how the team hits its plan without new logos    │
-│ ▸ More: if it stalls, color, status                               │
 └───────────────────────────────────────────────────────────────────┘
 ```
 
@@ -85,21 +83,21 @@ Closing a goal asks two short things: was it achieved or let go, and one line on
 
 Wanted by the user on 2026-11-25: goals are edited the same way as blocks and projects, and they get a right click menu. Today goals only live in `Settings → Goals` with inline editing, and they have no context menu.
 
-Proposal, as read from the request: the app sidebar gets a `GOALS` section below the pinned projects, with the active goals grouped Personal and Company, each row with its icon wrapper and a thin bar for this week's focus against the weekly intent. A click opens a `GoalDetailDrawer`, a docked right drawer like `BlockDetailDrawer` (520 px): name, kind, why, done when, check in date, weekly intent, measure, if it stalls, color, then the history of outcome lines and measure updates. `Settings → Goals` keeps the full list including closed goals, and its edit button opens the same drawer instead of the inline card.
+Direction: `Goals` becomes its own top-level view in the main sidebar (between `Projects` and `Review`), while `Settings` stays strictly for app settings (`Integrations`, `Server & CLI`, `Appearance`). Below `PINNED`, the sidebar keeps a `GOALS` section (with a `+` button to create a goal), listing active goals grouped into Personal and Company, each row with its kind icon wrapper and no weekly time bar. A click opens `GoalDetailDrawer` (520 px) with the goal's details, measured focus time this week, shared color picker (12 presets plus custom hex), history of outcomes and measure updates, and an `Edit` button. Creating, editing and closing goals live in the `Goals` step (`Goals · Overview`, `Create Goal Drawer`, `Edit Goal Drawer`, `Close Goal` sheet) and are reachable from the sidebar `+`, the context menu, or the detail drawer.
 
-The right click menu on a goal row (sidebar and Settings) uses the shared `ContextMenu`: `Open Details`, `New Block for this Goal`, `Show in Review`, `Move Up` and `Move Down` (priority), `Mark Achieved`, `Let Go`, `Delete Goal`. Achieved and Let go open the short closing question.
+The right click menu on a goal row (sidebar and Goals view) uses the shared `ContextMenu`: `Open Details`, `Edit Goal`, `New Block for this Goal`, `Show in Review`, `Move Up` and `Move Down` (priority), `Mark Achieved`, `Let Go`, `Delete Goal`. Achieved and Let go open the `Close Goal` sheet.
 
 ## Did this block make sense? {#sense updated=2026-11-25}
 
 Wanted by the user: at the end of a block and in the Weekly Review, a short look at whether the block made sense for its goal. The completion card in the Focus view already asks how the block felt (energy) and what actually moved forward. The concept adds one more question, "Did this block make sense for its goal?", with three answers: moved the goal, partly, just motion. The Weekly Review then splits goal alignment into company and personal focus time and lists the blocks marked partly or just motion under "Worth a second look". Fits principle 6 in [VISION.md](../../../VISION.md) (progress over motion).
 
-Drawn on the Figma page Screens, which since 2026-11-25 holds the target design: [Today with the goals sidebar, goal menu and GoalDetailDrawer](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=22-6), [Focus · Inline Complete with the sense question](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=22-881), [Settings · Goals](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=54-2475) and [Weekly Review](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=24-2350). The proposal page is deleted.
+Drawn on the Figma page Screens, which since 2026-11-25 holds the target design: [Today with the goals sidebar, goal menu and GoalDetailDrawer](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=22-6), [Focus · Inline Complete with the sense question](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=22-881), [Step 6 · Goals (Overview, Create, Edit and Close Goal)](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=136-7007) and [Weekly Review (5 states)](https://www.figma.com/design/071lgm98oyBn2xNWx2uBD1/Veyra?node-id=24-2350). The proposal page is deleted.
 
 ## What the Weekly Review does with it {#review updated=2026-11-25}
 
 Proposal. Today the review shows one number, goal alignment, the share of focus time linked to any goal. With the fields above it gets one row per active goal, ordered company first, then personal:
 
-- **Input against intention:** focus time this week next to the weekly intent, as a plain bar without red. Personal and company totals sit above the rows.
+- **Focus this week (no target):** actual focus time and block count this week, with Company and Personal totals above the rows. Goals carry no weekly hour target; weekly time intentions live on projects ([06](06_weekly_review.md)).
 - **Did it make sense:** the split of moved, partly and just motion for the goal's blocks. Much time with mostly "just motion" is the clearest motion signal Veyra can give.
 - **Progress trail:** the two or three best "What actually moved forward?" lines of the week for this goal.
 - **Measure update:** for goals with a measure, one input "Where are you now?" (4 of 10 becomes 5 of 10). This is the only place the number is updated, so it stays a weekly ritual and does not become a dashboard to watch.
@@ -109,7 +107,7 @@ The rule for next week, which the review already asks for, can then point at a g
 
 ## Later use {#later updated=2026-11-25}
 
-Proposal, ordered by how much it helps. First, day planning in T3 Code: `veyra goals --json` returns intent and real time per goal for the week, so the planning agent can say "Upsells got 40 min of 4 h so far, want a block today?". Second, a goal history: all outcome lines and measure updates of one goal over the quarter, which is exactly what you need to report your contribution to a company goal to the team. Third, the Focus view shows the goal's "why" and "done when" as one quiet line while a block runs. Fourth, closed goals with their closing line form a small record of what each quarter was about.
+Proposal, ordered by how much it helps. First, day planning in T3 Code: `veyra goals --json` returns real focus time and outcomes per goal for the week, so the planning agent can flag neglected goals ("Customer Communication got no blocks for two weeks, want one today?"). Second, a goal history: all outcome lines and measure updates of one goal over the quarter, which is exactly what you need to report your contribution to a company goal to the team. Third, the Focus view shows the goal's "why" and "done when" as one quiet line while a block runs. Fourth, closed goals with their closing line form a small record of what each quarter was about.
 
 ## What exists today {#today updated=2026-11-24}
 
@@ -123,16 +121,14 @@ A goal has a name, a description, a color, an order and a status of `active`, `a
 ## Open questions {#questions updated=2026-11-25}
 
 > [!card question indigo] Which fields make the cut?
-> Proposal: Kind, Why, Done when and Check in date always, Weekly focus intent strongly recommended, Measure and If it stalls optional. Each extra field makes creating a goal slower, so the question is which ones Dennis would really fill in.
-
-> [!card question indigo] Weekly focus intent: hours or share?
-> Hours ("about 4 h") are easy to compare. A share ("about a third of my focus time") adapts to short weeks. Hours are simpler; a short week would then show less without being wrong.
+> Proposal: Kind, Why, Done when and Check in date always, Measure and If it stalls optional. Each extra field makes creating a goal slower, so the question is which ones Dennis would really fill in.
 
 > [!card question indigo] Do company goals count in the "3 to 5 goals" limit?
 > VISION principle 6 names 3 to 5 goals. Proposal: count the kinds separately, otherwise the list fills up quickly. Not decided.
 
 ## Set aside for now {#aside updated=2026-11-25}
 
+- **Weekly focus time target on goals:** decided against on 2026-11-25. Weekly time intentions live on projects ([06](06_weekly_review.md)); goals only show measured focus time without a target or progress bar.
 - **Two levels** (personal goals point to a company goal): maps the contribution best but adds a second hierarchy, against the radical simplicity of Veyra. Revisit only if one level stops being enough.
 - **Scores or streaks per goal:** against the Vision non goals and easy to game.
 - **Building icon for company goals:** replaced by the briefcase, see Current direction.
