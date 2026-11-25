@@ -863,4 +863,125 @@ describe('Veyra Web App Flows', () => {
     const goalDrawer = await screen.findByRole('dialog', { name: 'Goal detail' });
     expect(within(goalDrawer).getByText(/Goal Detail · Company/i)).toBeInTheDocument();
   });
+
+  it('Escape closes CloseGoalSheet without closing GoalDetailDrawer, and Edit Goal replaces GoalDetailDrawer', async () => {
+    const user = userEvent.setup();
+    const qc = createTestQueryClient();
+
+    render(
+      <QueryClientProvider client={qc}>
+        <App />
+      </QueryClientProvider>,
+    );
+
+    // Open Goals view and click Ship Veyra v1 to open GoalDetailDrawer
+    await screen.findByText(/2h 15m focused today/i);
+    await user.click(screen.getByRole('button', { name: 'Goals' }));
+    const companySection = await screen.findByRole('region', { name: 'Company goals' });
+    await user.click(within(companySection).getByText('Ship Veyra v1'));
+
+    const goalDrawer = await screen.findByRole('dialog', { name: 'Goal detail' });
+    expect(await within(goalDrawer).findByText('Ship Veyra v1')).toBeInTheDocument();
+
+    // Open CloseGoalSheet on top of GoalDetailDrawer
+    await user.click(within(goalDrawer).getByRole('button', { name: 'Mark Achieved' }));
+    expect(await screen.findByRole('dialog', { name: 'Close goal' })).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Goal detail' })).toBeInTheDocument();
+
+    // First Escape closes ONLY CloseGoalSheet, leaving GoalDetailDrawer open
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Close goal' })).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole('dialog', { name: 'Goal detail' })).toBeInTheDocument();
+
+    // Clicking Edit goal cleanly replaces GoalDetailDrawer with GoalFormDrawer (no stacked drawers)
+    await user.click(within(goalDrawer).getByRole('button', { name: 'Edit goal' }));
+    expect(await screen.findByRole('dialog', { name: 'Edit goal' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Goal detail' })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+
+    // Escape closes GoalFormDrawer
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Edit goal' })).not.toBeInTheDocument();
+    });
+  });
+
+  it('SessionDetailDrawer loads archived goals so historical sessions still render closed GoalChips', async () => {
+    const archivedGoal: GoalWithStats = {
+      ...BASE_GOALS[0],
+      status: 'achieved',
+      closingNote: 'Completed v1 launch',
+      closedAt: '2026-11-20T12:00:00.000Z',
+    };
+    goalsState = [archivedGoal];
+
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const method = (init?.method ?? 'GET').toUpperCase();
+      const parsed = new URL(url, 'http://localhost:4173');
+      if (parsed.pathname === '/api/goals' && method === 'GET') {
+        const includeArchived = parsed.searchParams.get('includeArchived') === 'true';
+        return jsonResponse({
+          goals: includeArchived ? goalsState : goalsState.filter((g) => g.status === 'active'),
+        });
+      }
+      if (parsed.pathname === '/api/projects' && method === 'GET') {
+        return jsonResponse({ projects: projectsState });
+      }
+      if (parsed.pathname === `/api/blocks/${BLOCK_1_ID}` && method === 'GET') {
+        return jsonResponse({ block: blockDetailState });
+      }
+      if (parsed.pathname === '/api/calendar' && method === 'GET') {
+        return jsonResponse(BASE_CALENDAR);
+      }
+      return jsonResponse({});
+    });
+
+    const qc = createTestQueryClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <AppShellContext.Provider
+          value={{
+            route: 'calendar',
+            previousRoute: 'today',
+            activeProjectId: null,
+            settingsSection: 'integrations',
+            activeDrawer: { kind: 'session', sessionId: SESSION_2_ID },
+            liveSyncStatus: 'connected',
+            focusStatus: null,
+            liveElapsedSeconds: 0,
+            projects: BASE_PROJECTS,
+            goals: [],
+            settings: BASE_SETTINGS,
+            navigate: vi.fn(),
+            openProject: vi.fn(),
+            setSettingsSection: vi.fn(),
+            openBlockDrawer: vi.fn(),
+            openGoalDrawer: vi.fn(),
+            openCreateGoal: vi.fn(),
+            openEditGoal: vi.fn(),
+            openCloseGoal: vi.fn(),
+            openDailyNotesDrawer: vi.fn(),
+            openMeetingDrawer: vi.fn(),
+            openSessionDrawer: vi.fn(),
+            closeDrawer: vi.fn(),
+            openCommandPalette: vi.fn(),
+            openQuickCapture: vi.fn(),
+            openCreateBlock: vi.fn(),
+            openEditProject: vi.fn(),
+            startFocusAndNavigate: vi.fn(async () => {}),
+          }}
+        >
+          <SessionDetailDrawer sessionId={SESSION_2_ID} onClose={vi.fn()} />
+        </AppShellContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    const dialog = await screen.findByRole('dialog', { name: 'Session detail' });
+    expect(await within(dialog).findByText('Ship Veyra v1')).toBeInTheDocument();
+    expect(dialog.querySelector('[data-goal-kind="company"]')).toBeInTheDocument();
+  });
 });

@@ -25,6 +25,7 @@ import { formatDuration, formatShortDate, getTodayDateString } from '../componen
 export interface GoalDetailDrawerProps {
   goalId: string | null;
   onClose: () => void;
+  dismissOnEscape?: boolean;
 }
 
 function formatHistoryDate(iso: string): string {
@@ -33,7 +34,11 @@ function formatHistoryDate(iso: string): string {
   return formatShortDate(getTodayDateString(dt));
 }
 
-export function GoalDetailDrawer({ goalId, onClose }: GoalDetailDrawerProps) {
+export function GoalDetailDrawer({
+  goalId,
+  onClose,
+  dismissOnEscape = true,
+}: GoalDetailDrawerProps) {
   const queryClient = useQueryClient();
   const { openEditGoal, openCloseGoal } = useAppShell();
   const detailQuery = useGoalDetailQuery(goalId);
@@ -74,6 +79,7 @@ export function GoalDetailDrawer({ goalId, onClose }: GoalDetailDrawerProps) {
       <DockedDrawer
         open={Boolean(goalId)}
         onClose={onClose}
+        dismissOnEscape={dismissOnEscape}
         width={520}
         ariaLabel="Goal detail"
         title={goal ? `Goal Detail · ${kindLabel}` : 'Goal Detail'}
@@ -209,11 +215,34 @@ export function GoalDetailDrawer({ goalId, onClose }: GoalDetailDrawerProps) {
                 <Pill tone="neutral" className="tabular-nums">
                   {goal.linkedProjectCount} {goal.linkedProjectCount === 1 ? 'project' : 'projects'}
                 </Pill>
-                <Pill tone="neutral" className="tabular-nums">
-                  #{goal.rankInKind} in {kindLabel}
-                </Pill>
+                {goal.status === 'active' && goal.rankInKind > 0 ? (
+                  <Pill tone="neutral" className="tabular-nums">
+                    #{goal.rankInKind} in {kindLabel}
+                  </Pill>
+                ) : null}
               </div>
             </div>
+
+            {/* CLOSING NOTE (closed goals only) */}
+            {goal.status !== 'active' ? (
+              <div className="space-y-2 pb-5 border-b border-[#2A2A2A]">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.07em] text-[#6E6E6E]">
+                    Closing note
+                  </div>
+                  {goal.closedAt && formatHistoryDate(goal.closedAt) ? (
+                    <span className="text-[11.5px] text-[#6E6E6E] tabular-nums">
+                      Closed {formatHistoryDate(goal.closedAt)}
+                    </span>
+                  ) : null}
+                </div>
+                <p className="text-[13.5px] text-[#C4C4C4] leading-relaxed">
+                  {goal.closingNote || (
+                    <span className="text-[#6E6E6E]">No closing note recorded.</span>
+                  )}
+                </p>
+              </div>
+            ) : null}
 
             {/* WHY IT MATTERS */}
             <div className="space-y-1.5 pb-5 border-b border-[#2A2A2A]">

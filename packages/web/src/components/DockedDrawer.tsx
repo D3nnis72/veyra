@@ -9,6 +9,7 @@ export interface DockedDrawerProps {
   headerActions?: ReactNode;
   footer?: ReactNode;
   width?: number;
+  dismissOnEscape?: boolean;
   ariaLabel?: string;
   children: ReactNode;
 }
@@ -21,11 +22,12 @@ export function DockedDrawer({
   headerActions,
   footer,
   width = 520,
+  dismissOnEscape = true,
   ariaLabel = 'Detail drawer',
   children,
 }: DockedDrawerProps) {
   useEffect(() => {
-    if (!open) return;
+    if (!open || !dismissOnEscape) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
@@ -34,7 +36,7 @@ export function DockedDrawer({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open, onClose]);
+  }, [open, dismissOnEscape, onClose]);
 
   if (!open) return null;
 

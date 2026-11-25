@@ -15,6 +15,7 @@ export interface CloseGoalSheetProps {
   initialStatus?: 'achieved' | 'archived';
   onClose: () => void;
   onClosed?: () => void;
+  dismissOnEscape?: boolean;
 }
 
 export function CloseGoalSheet({
@@ -24,6 +25,7 @@ export function CloseGoalSheet({
   initialStatus = 'achieved',
   onClose,
   onClosed,
+  dismissOnEscape = true,
 }: CloseGoalSheetProps) {
   const queryClient = useQueryClient();
   const detailQuery = useGoalDetailQuery(open && !goalProp && goalId ? goalId : null);
@@ -59,6 +61,7 @@ export function CloseGoalSheet({
     <ModalSheet
       open={open}
       onClose={onClose}
+      dismissOnEscape={dismissOnEscape}
       width={540}
       ariaLabel="Close goal"
       title="Close Goal"
@@ -105,7 +108,7 @@ export function CloseGoalSheet({
               aria-pressed={status === 'achieved'}
               onClick={() => setStatus('achieved')}
               className={[
-                'h-full p-4 rounded-[10px] border text-left transition-colors flex flex-col gap-1.5',
+                'h-full p-4 rounded-[8px] border text-left transition-colors flex flex-col gap-2',
                 status === 'achieved'
                   ? 'bg-[#14331F]/65 border-[#2FB463]/70 text-[#EDEDED]'
                   : 'bg-[#242424] border-[#2A2A2A] text-[#C4C4C4] hover:border-[#3C3C3C]',
@@ -128,7 +131,7 @@ export function CloseGoalSheet({
               aria-pressed={status === 'archived'}
               onClick={() => setStatus('archived')}
               className={[
-                'h-full p-4 rounded-[10px] border text-left transition-colors flex flex-col gap-1.5',
+                'h-full p-4 rounded-[8px] border text-left transition-colors flex flex-col gap-2',
                 status === 'archived'
                   ? 'bg-[#1F2759]/80 border-[#5566F2] text-[#EDEDED]'
                   : 'bg-[#242424] border-[#2A2A2A] text-[#C4C4C4] hover:border-[#3C3C3C]',

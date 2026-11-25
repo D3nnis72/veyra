@@ -435,6 +435,11 @@ export function useGoalContextMenu(): EntityMenuHandle<Goal> {
     onSettled: refresh,
   });
 
+  const reactivateMutation = useMutation({
+    mutationFn: (goalId: string) => apiClient.updateGoal(goalId, { status: 'active' }),
+    onSettled: refresh,
+  });
+
   const deleteMutation = useMutation({
     mutationFn: (goalId: string) => apiClient.deleteGoal(goalId),
     onSuccess: (_d, goalId) => {
@@ -446,6 +451,7 @@ export function useGoalContextMenu(): EntityMenuHandle<Goal> {
   });
 
   const goal = state.payload;
+  const isActive = goal?.status === 'active';
   const items: Array<ContextMenuEntry | null | false> = goal
     ? [
         {
@@ -472,30 +478,36 @@ export function useGoalContextMenu(): EntityMenuHandle<Goal> {
           icon: <CheckCircle2 size={ICON} />,
           onSelect: () => navigate('review'),
         },
-        {
+        isActive && {
           id: 'move-up',
           label: 'Move Up',
           icon: <ArrowUp size={ICON} />,
           onSelect: () => reorderMutation.mutate({ goalId: goal.id, direction: 'up' }),
         },
-        {
+        isActive && {
           id: 'move-down',
           label: 'Move Down',
           icon: <ArrowDown size={ICON} />,
           onSelect: () => reorderMutation.mutate({ goalId: goal.id, direction: 'down' }),
         },
         { type: 'divider', id: 'd1' },
-        {
+        isActive && {
           id: 'achieved',
           label: 'Mark Achieved',
           icon: <Trophy size={ICON} className="text-[#7BE0A0]" />,
           onSelect: () => openCloseGoal(goal.id, 'achieved'),
         },
-        {
+        isActive && {
           id: 'let-go',
           label: 'Let Go',
           icon: <Archive size={ICON} />,
           onSelect: () => openCloseGoal(goal.id, 'archived'),
+        },
+        !isActive && {
+          id: 'reactivate',
+          label: 'Reactivate Goal',
+          icon: <RotateCcw size={ICON} />,
+          onSelect: () => reactivateMutation.mutate(goal.id),
         },
         {
           id: 'delete',

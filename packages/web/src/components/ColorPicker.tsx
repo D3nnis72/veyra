@@ -142,6 +142,7 @@ export function ColorPicker({ value, onChange, label, className = '' }: ColorPic
           <div className="h-9 px-2 rounded-[8px] bg-[#242424] border border-[#2A2A2A] flex items-center gap-2">
             <span
               aria-hidden="true"
+              data-testid="color-picker-draft-preview"
               className="h-[18px] w-[18px] rounded-[4px] border border-white/15 shrink-0"
               style={{ backgroundColor: draftPreview }}
             />
@@ -177,7 +178,6 @@ export function ColorPicker({ value, onChange, label, className = '' }: ColorPic
                   if (parsed) {
                     setHexDraft(parsed);
                     setHexError(null);
-                    onChange(parsed);
                   }
                 }}
                 className="sr-only"

@@ -195,12 +195,14 @@ function MainAppShell({ views }: AppProps) {
   const openCreateGoal = useCallback((defaultKind: GoalKind = 'personal') => {
     setCommandPaletteOpen(false);
     setQuickCaptureState((prev) => ({ ...prev, open: false }));
+    setActiveDrawer(null);
     setGoalFormState({ open: true, mode: 'create', goalId: null, defaultKind });
   }, []);
 
   const openEditGoal = useCallback((goalId: string) => {
     setCommandPaletteOpen(false);
     setQuickCaptureState((prev) => ({ ...prev, open: false }));
+    setActiveDrawer(null);
     setGoalFormState({ open: true, mode: 'edit', goalId });
   }, []);
 
@@ -543,6 +545,7 @@ function MainAppShell({ views }: AppProps) {
         <GoalDetailDrawer
           goalId={activeDrawer?.kind === 'goal' ? activeDrawer.goalId : null}
           onClose={closeDrawer}
+          dismissOnEscape={false}
         />
 
         <GoalFormDrawer
@@ -551,6 +554,7 @@ function MainAppShell({ views }: AppProps) {
           goalId={goalFormState.goalId}
           defaultKind={goalFormState.defaultKind}
           onClose={() => setGoalFormState((prev) => ({ ...prev, open: false }))}
+          dismissOnEscape={false}
         />
 
         <DailyNotesDrawer
@@ -578,6 +582,7 @@ function MainAppShell({ views }: AppProps) {
           goalId={closeGoalState.goalId}
           initialStatus={closeGoalState.initialStatus}
           onClose={() => setCloseGoalState((prev) => ({ ...prev, open: false }))}
+          dismissOnEscape={false}
           onClosed={() => {
             if (activeDrawer?.kind === 'goal' && activeDrawer.goalId === closeGoalState.goalId) {
               closeDrawer();

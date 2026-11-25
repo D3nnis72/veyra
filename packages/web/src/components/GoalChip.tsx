@@ -6,10 +6,10 @@ import { goalTint } from './goalTint';
 export type GoalKindIconSize = 'xs' | 'sm' | 'md' | 'lg';
 
 const BADGE_SIZE_CLASSES: Record<GoalKindIconSize, { box: string; icon: number }> = {
-  xs: { box: 'h-[18px] w-[18px] rounded-[5px]', icon: 11 },
+  xs: { box: 'h-[18px] w-[18px] rounded-[6px]', icon: 11 },
   sm: { box: 'h-5 w-5 rounded-[6px]', icon: 12 },
   md: { box: 'h-6 w-6 rounded-[6px]', icon: 13 },
-  lg: { box: 'h-11 w-11 rounded-[10px]', icon: 20 },
+  lg: { box: 'h-11 w-11 rounded-[8px]', icon: 20 },
 };
 
 export interface GoalKindIconBadgeProps {
@@ -74,7 +74,7 @@ export function GoalChip({
   };
 
   const baseClass = [
-    'inline-flex items-center gap-1.5 min-h-[26px] pl-1 pr-2.5 py-0.5 rounded-[6px] border text-[12px] font-medium leading-none max-w-full',
+    'inline-flex items-center gap-2 min-h-[26px] pl-1 pr-2 py-1 rounded-[6px] border text-[12px] font-medium leading-none max-w-full',
     onClick ? 'cursor-pointer hover:brightness-110 transition-[filter]' : '',
     className,
   ].join(' ');

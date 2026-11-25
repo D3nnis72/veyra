@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom/vitest';
 import {
@@ -215,6 +215,32 @@ describe('ColorPicker', () => {
     expect(onChange).not.toHaveBeenCalled();
     expect(screen.getByText(/valid hex/i)).toBeInTheDocument();
   });
+
+  it('updates preview and hex draft from native color input without calling onChange until Apply', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+
+    render(<ColorPicker value="#5E6AD2" onChange={onChange} />);
+
+    await user.click(screen.getByRole('button', { name: /Custom hex/i }));
+
+    const nativeColorInput = screen.getByLabelText('Custom color');
+    fireEvent.change(nativeColorInput, { target: { value: '#22cc88' } });
+
+    // Must not fire onChange on every color-wheel tick
+    expect(onChange).not.toHaveBeenCalled();
+
+    // Hex text input and 18x18 live preview stay in sync with draft
+    expect(screen.getByRole('textbox', { name: /Hex color/i })).toHaveValue('#22CC88');
+    expect(screen.getByTestId('color-picker-draft-preview')).toHaveStyle({
+      backgroundColor: 'rgb(34, 204, 136)',
+    });
+
+    // Committing via Apply invokes onChange cleanly
+    await user.click(screen.getByRole('button', { name: 'Apply' }));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith('#22CC88');
+  });
 });
 
 describe('GoalChip and GoalKindIconBadge', () => {
@@ -316,6 +342,14 @@ describe('GoalsView, GoalFormDrawer, CloseGoalSheet, and GoalDetailDrawer', () =
     expect(screen.getByText('Q3 Security Audit')).toBeInTheDocument();
     expect(screen.getByText(/Passed ahead of schedule/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reactivate' })).toBeInTheDocument();
+
+    // Closed goal card is keyboard accessible (role="button", tabIndex=0, Enter opens drawer)
+    const closedCard = screen.getByText('Q3 Security Audit').closest('[role="button"]') as HTMLElement;
+    expect(closedCard).toBeInTheDocument();
+    expect(closedCard).toHaveAttribute('tabindex', '0');
+    closedCard.focus();
+    await user.keyboard('{Enter}');
+    expect(openGoalDrawer).toHaveBeenCalledWith(CLOSED_GOAL_ID);
   });
 
   it('GoalFormDrawer places COLOR beneath KIND and submits company goal with doneWhen, checkInDate, measure, and ifItStalls', async () => {
@@ -483,5 +517,121 @@ describe('GoalsView, GoalFormDrawer, CloseGoalSheet, and GoalDetailDrawer', () =
 
     await user.click(within(dialog).getByRole('button', { name: 'Mark Achieved' }));
     expect(openCloseGoal).toHaveBeenCalledWith(COMPANY_GOAL_ID, 'achieved');
+  });
+
+  it('GoalFormDrawer in edit mode renders loading state and disables submit while detail query is pending', async () => {
+    const qc = createTestQueryClient();
+    let resolveCompanyGoal!: (res: Response) => void;
+    const pendingCompanyPromise = new Promise<Response>((resolve) => {
+      resolveCompanyGoal = resolve;
+    });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes(`/api/goals/${PERSONAL_GOAL_ID}`)) {
+          return jsonResponse({ goal: { ...PERSONAL_GOAL, history: [] } });
+        }
+        if (url.includes(`/api/goals/${COMPANY_GOAL_ID}`)) {
+          return pendingCompanyPromise;
+        }
+        return jsonResponse({});
+      }),
+    );
+
+    const { rerender } = render(
+      <QueryClientProvider client={qc}>
+        <GoalFormDrawer open mode="edit" goalId={PERSONAL_GOAL_ID} onClose={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    // Wait for first goal to hydrate
+    expect(await screen.findByDisplayValue('Deep Craft')).toBeInTheDocument();
+
+    // Switch to editing a second goal whose detail query is still pending
+    rerender(
+      <QueryClientProvider client={qc}>
+        <GoalFormDrawer open mode="edit" goalId={COMPANY_GOAL_ID} onClose={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    const dialog = screen.getByRole('dialog', { name: 'Edit goal' });
+    expect(within(dialog).getByText(/Loading goal/i)).toBeInTheDocument();
+    expect(within(dialog).queryByDisplayValue('Deep Craft')).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Save Changes' })).toBeDisabled();
+
+    // Once resolved, form hydrates with the second goal and enables Save Changes
+    resolveCompanyGoal(jsonResponse({ goal: COMPANY_GOAL_DETAIL }));
+    expect(await within(dialog).findByDisplayValue('askLio Launch')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Save Changes' })).toBeEnabled();
+  });
+
+  it('GoalDetailDrawer omits #0 rank chip, shows closingNote + closedAt, and exposes Reactivate in context menu for closed goals', async () => {
+    const user = userEvent.setup();
+    const qc = createTestQueryClient();
+    const shell = createMockShell();
+    const patchCalls: Array<Record<string, unknown>> = [];
+
+    const closedDetail: GoalDetail = {
+      ...CLOSED_GOAL,
+      rankInKind: 0,
+      history: [],
+    };
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        const method = (init?.method ?? 'GET').toUpperCase();
+        if (url.includes(`/api/goals/${CLOSED_GOAL_ID}`) && method === 'GET') {
+          return jsonResponse({ goal: closedDetail });
+        }
+        if (url.includes(`/api/goals/${CLOSED_GOAL_ID}`) && method === 'PATCH') {
+          const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+          patchCalls.push(body);
+          return jsonResponse({ goal: { ...CLOSED_GOAL, ...body } });
+        }
+        return jsonResponse({});
+      }),
+    );
+
+    render(
+      <QueryClientProvider client={qc}>
+        <AppShellContext.Provider value={shell}>
+          <GoalDetailDrawer goalId={CLOSED_GOAL_ID} onClose={vi.fn()} />
+        </AppShellContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    const dialog = await screen.findByRole('dialog', { name: 'Goal detail' });
+    expect(await within(dialog).findByText('Q3 Security Audit')).toBeInTheDocument();
+
+    // Never renders #0 in <Kind> for closed goals
+    expect(within(dialog).queryByText(/#0 in/i)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/#\d+ in/i)).not.toBeInTheDocument();
+
+    // Displays CLOSING NOTE and closedAt date
+    expect(within(dialog).getByText(/Closing note/i)).toBeInTheDocument();
+    expect(
+      within(dialog).getByText('Passed ahead of schedule with clean report'),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText(/Closed /i)).toBeInTheDocument();
+
+    // Context menu hides active-only actions and shows Reactivate Goal
+    await user.click(within(dialog).getByRole('button', { name: 'More goal actions' }));
+    const menu = await screen.findByRole('menu', { name: 'Goal actions' });
+    expect(within(menu).queryByRole('menuitem', { name: 'Move Up' })).not.toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitem', { name: 'Move Down' })).not.toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitem', { name: 'Mark Achieved' })).not.toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitem', { name: 'Let Go' })).not.toBeInTheDocument();
+
+    const reactivateItem = within(menu).getByRole('menuitem', { name: 'Reactivate Goal' });
+    expect(reactivateItem).toBeInTheDocument();
+    await user.click(reactivateItem);
+
+    await waitFor(() => {
+      expect(patchCalls).toContainEqual({ status: 'active' });
+    });
   });
 });

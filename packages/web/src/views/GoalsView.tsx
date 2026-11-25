@@ -40,6 +40,7 @@ function GoalCard({
       onClick={onOpen}
       onContextMenu={onContextMenu}
       onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           onOpen();
@@ -224,9 +225,18 @@ export function GoalsView() {
                   {closedGoals.map((goal) => (
                     <div
                       key={goal.id}
+                      role="button"
+                      tabIndex={0}
                       onClick={() => openGoalDrawer(goal.id)}
                       onContextMenu={(e) => goalMenu.open(e, goal)}
-                      className="veyra-card bg-[#171717] space-y-2 cursor-pointer hover:border-[#3C3C3C] transition-colors"
+                      onKeyDown={(e) => {
+                        if (e.target !== e.currentTarget) return;
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          openGoalDrawer(goal.id);
+                        }
+                      }}
+                      className="veyra-card bg-[#171717] space-y-2 cursor-pointer hover:border-[#3C3C3C] focus:outline-none focus-visible:border-[#5566F2] transition-colors"
                     >
                       <div className="flex items-center justify-between gap-3">
                         <div className="flex items-center gap-2.5 min-w-0">

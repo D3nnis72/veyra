@@ -10,6 +10,7 @@ export interface ModalSheetProps {
   footer?: ReactNode;
   width?: number;
   dismissible?: boolean;
+  dismissOnEscape?: boolean;
   ariaLabel?: string;
   bodyClassName?: string;
   children: ReactNode;
@@ -24,12 +25,13 @@ export function ModalSheet({
   footer,
   width = 640,
   dismissible = true,
+  dismissOnEscape = true,
   ariaLabel = 'Dialog',
   bodyClassName = '',
   children,
 }: ModalSheetProps) {
   useEffect(() => {
-    if (!open || !dismissible || !onClose) return;
+    if (!open || !dismissible || !dismissOnEscape || !onClose) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
@@ -38,7 +40,7 @@ export function ModalSheet({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open, dismissible, onClose]);
+  }, [open, dismissible, dismissOnEscape, onClose]);
 
   if (!open) return null;
 

@@ -97,7 +97,7 @@ export function SessionDetailDrawer({ sessionId, onClose }: SessionDetailDrawerP
   const block = blockDetailQuery.data?.block;
 
   const projectsQuery = useProjectsQuery({ includeArchived: false });
-  const goalsQuery = useGoalsQuery({ activeOnly: true });
+  const goalsQuery = useGoalsQuery({ includeArchived: true });
   const projects = projectsQuery.data?.projects ?? [];
   const goals = goalsQuery.data?.goals ?? [];
 
