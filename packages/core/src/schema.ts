@@ -208,6 +208,8 @@ export const settings = sqliteTable('settings', {
     .$type<Record<string, string>>()
     .notNull()
     .default({}),
+  workdayStart: text('workday_start').notNull().default('09:00'),
+  workdayEnd: text('workday_end').notNull().default('18:00'),
   updatedAt: text('updated_at').notNull(),
 });
 

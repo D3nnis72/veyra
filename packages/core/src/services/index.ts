@@ -86,6 +86,7 @@ export {
   type PlanCapacityResult,
   type ProjectSizeStats,
   type TodayCapacityResult,
+  type WeekdayRoomMode,
   applySuggestedOrder,
   computePlanCapacity,
   computeProjectSizeStatsMap,

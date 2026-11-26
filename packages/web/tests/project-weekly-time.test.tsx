@@ -726,4 +726,131 @@ describe('Plan Week Time Strip, Day Room & Block Rough Size (Task 10)', () => {
       expect(patchedPayloads).toContainEqual({ sizeMinutes: null });
     });
   });
+
+  it('CreateBlockModal and BlockDetailDrawer accept a custom block size', async () => {
+    const user = userEvent.setup();
+    const qc = createTestQueryClient();
+    const shell = createMockShell();
+    const createdPayloads: Array<Record<string, unknown>> = [];
+    const patchedPayloads: Array<Record<string, unknown>> = [];
+
+    let currentBlock: BlockDetail = {
+      ...SAMPLE_BLOCK,
+      sizeMinutes: 60,
+      sessions: [],
+      totalFocusMinutes: 0,
+    };
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        const method = (init?.method ?? 'GET').toUpperCase();
+        if (url.includes('/api/projects')) {
+          return jsonResponse({ projects: [PROJECT_OVER, PROJECT_UNDER] });
+        }
+        if (url.includes('/api/goals')) {
+          return jsonResponse({ goals: [SAMPLE_GOAL] });
+        }
+        if (url.includes('/api/blocks') && method === 'POST') {
+          const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+          createdPayloads.push(body);
+          return jsonResponse(
+            { block: { ...SAMPLE_BLOCK, title: String(body.title ?? ''), sizeMinutes: body.sizeMinutes ?? null } },
+            201,
+          );
+        }
+        if (url.includes(`/api/blocks/${BLOCK_1_ID}`) && method === 'GET') {
+          return jsonResponse({ block: currentBlock });
+        }
+        if (url.includes(`/api/blocks/${BLOCK_1_ID}`) && method === 'PATCH') {
+          const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+          patchedPayloads.push(body);
+          currentBlock = {
+            ...currentBlock,
+            sizeMinutes:
+              'sizeMinutes' in body
+                ? (body.sizeMinutes as BlockDetail['sizeMinutes'])
+                : currentBlock.sizeMinutes,
+          };
+          return jsonResponse({ block: currentBlock });
+        }
+        return jsonResponse({});
+      }),
+    );
+
+    // 1. CreateBlockModal: Custom "1h 30m" + Enter sets 90 without submitting; Esc only cancels the edit
+    const onCloseModal = vi.fn();
+    render(
+      <QueryClientProvider client={qc}>
+        <AppShellContext.Provider value={shell}>
+          <CreateBlockModal open onClose={onCloseModal} />
+        </AppShellContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    const createDialog = screen.getByRole('dialog', { name: 'Create Block' });
+    const createSizeGroup = within(createDialog).getByRole('group', { name: /Block size/i });
+    // The modal focuses the title shortly after opening; type it first so that focus jump
+    // does not land in the middle of the custom size edit.
+    const titleInput = within(createDialog).getByPlaceholderText(/What do you want to finish/i);
+    await waitFor(() => expect(titleInput).toHaveFocus());
+    await user.type(titleInput, 'Custom sized block');
+
+    await user.click(within(createSizeGroup).getByRole('button', { name: 'Custom size' }));
+    await user.keyboard('{Escape}');
+    expect(onCloseModal).not.toHaveBeenCalled();
+    expect(within(createSizeGroup).queryByRole('textbox', { name: 'Custom block size' })).toBeNull();
+
+    await user.click(within(createSizeGroup).getByRole('button', { name: 'Custom size' }));
+    await user.type(within(createSizeGroup).getByRole('textbox', { name: 'Custom block size' }), '1h 30m{Enter}');
+    expect(createdPayloads).toHaveLength(0);
+    const customCreate = within(createSizeGroup).getByRole('button', { name: 'Custom size 1h 30m' });
+    expect(customCreate).toHaveTextContent('1h 30m');
+    expect(customCreate).toHaveAttribute('aria-pressed', 'true');
+    expect(within(createSizeGroup).getByRole('button', { name: 'Auto' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+
+    await user.click(within(createDialog).getByRole('button', { name: /Create Block/i }));
+    await waitFor(() => expect(onCloseModal).toHaveBeenCalled());
+    expect(createdPayloads[0]).toMatchObject({ title: 'Custom sized block', sizeMinutes: 90 });
+
+    cleanup();
+
+    // 2. BlockDetailDrawer: pick Custom 45m; Esc cancels without saving or closing the drawer
+    const onCloseDrawer = vi.fn();
+    render(
+      <QueryClientProvider client={qc}>
+        <AppShellContext.Provider value={shell}>
+          <BlockDetailDrawer blockId={BLOCK_1_ID} onClose={onCloseDrawer} />
+        </AppShellContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    const drawer = await screen.findByRole('dialog', { name: 'Block detail' });
+    const drawerSizeGroup = await within(drawer).findByRole('group', { name: /Block size/i });
+
+    await user.click(within(drawerSizeGroup).getByRole('button', { name: 'Custom size' }));
+    await user.type(within(drawerSizeGroup).getByRole('textbox', { name: 'Custom block size' }), '75{Escape}');
+    expect(onCloseDrawer).not.toHaveBeenCalled();
+    expect(patchedPayloads).toHaveLength(0);
+
+    await user.click(within(drawerSizeGroup).getByRole('button', { name: 'Custom size' }));
+    await user.type(within(drawerSizeGroup).getByRole('textbox', { name: 'Custom block size' }), '45m{Enter}');
+    await waitFor(() => {
+      expect(patchedPayloads).toContainEqual({ sizeMinutes: 45 });
+    });
+    await waitFor(() => {
+      expect(within(drawerSizeGroup).getByRole('button', { name: 'Custom size 45m' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+    });
+    expect(within(drawerSizeGroup).getByRole('button', { name: '1h' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+  });
 });

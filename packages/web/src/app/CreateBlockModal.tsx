@@ -1,6 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  BLOCK_SIZE_OPTIONS,
   type BlockBucket,
   type BlockSizeMinutes,
   type ExternalLink,
@@ -21,6 +20,7 @@ import {
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../api/client';
 import { invalidateBlockRelated } from '../api/queries';
+import { BlockSizePicker } from '../components/BlockSizePicker';
 import { Button } from '../components/Button';
 import { GoalKindIconBadge } from '../components/GoalChip';
 import { LinkChip } from '../components/LinkChip';
@@ -30,7 +30,7 @@ import { ProjectBadge } from '../components/ProjectBadge';
 import { SelectPopover } from '../components/SelectPopover';
 import { ToggleSwitch } from '../components/ToggleSwitch';
 import { goalChipStyle } from '../components/goalTint';
-import { addDaysDateString, formatDuration, getTodayDateString } from '../components/icons';
+import { addDaysDateString, getTodayDateString } from '../components/icons';
 import { type CreateBlockDefaults, useAppShell } from './AppShellContext';
 import { formatHotkeyLabel, matchesAnyAccelerator, useHotkeys } from './hotkeys';
 
@@ -441,36 +441,8 @@ export function CreateBlockModal({ open, defaults, onClose }: CreateBlockModalPr
             ]}
           />
 
-          {/* Rough Size Chip Selector (Auto / 30m / 1h / 2h) */}
-          <div
-            role="group"
-            aria-label="Block size"
-            className="inline-flex items-center h-9 p-0.5 rounded-[8px] bg-[#171717] border border-[#3C3C3C]"
-          >
-            <span className="px-2 text-[11.5px] font-medium text-[#6E6E6E] select-none">
-              Size
-            </span>
-            {([null, ...BLOCK_SIZE_OPTIONS] as const).map((opt) => {
-              const active = sizeMinutes === opt;
-              const label = opt === null ? 'Auto' : formatDuration(opt);
-              return (
-                <button
-                  key={opt ?? 'auto'}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => setSizeMinutes(opt)}
-                  className={[
-                    'h-full px-2 rounded-[6px] text-[12px] font-medium tabular-nums transition-colors',
-                    active
-                      ? 'bg-[#262626] text-[#EDEDED]'
-                      : 'text-[#9A9A9A] hover:text-[#EDEDED]',
-                  ].join(' ')}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
+          {/* Block size: Auto / 30m / 1h / 2h presets plus Custom */}
+          <BlockSizePicker value={sizeMinutes} onChange={setSizeMinutes} />
         </div>
 
         {/* Links */}

@@ -141,8 +141,16 @@ export function updateSettings(
       parsed.globalCaptureShortcut ?? existing.globalCaptureShortcut,
     runInMenuBar: parsed.runInMenuBar ?? existing.runInMenuBar,
     hotkeys: parsed.hotkeys ?? existing.hotkeys,
+    workdayStart: parsed.workdayStart ?? existing.workdayStart,
+    workdayEnd: parsed.workdayEnd ?? existing.workdayEnd,
     updatedAt: nowIso,
   };
+
+  if (updated.workdayStart >= updated.workdayEnd) {
+    throw new ValidationError(
+      `Workday start '${updated.workdayStart}' must be before workday end '${updated.workdayEnd}'`,
+    );
+  }
 
   veyraDb.sqlite.transaction(() => {
     veyraDb.db
@@ -171,6 +179,8 @@ export function updateSettings(
         globalCaptureShortcut: updated.globalCaptureShortcut,
         runInMenuBar: updated.runInMenuBar,
         hotkeys: updated.hotkeys,
+        workdayStart: updated.workdayStart,
+        workdayEnd: updated.workdayEnd,
         updatedAt: updated.updatedAt,
       })
       .where(eq(settings.id, DEFAULT_SETTINGS_ID))

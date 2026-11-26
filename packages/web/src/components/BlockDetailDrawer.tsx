@@ -1,6 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  BLOCK_SIZE_OPTIONS,
   type BlockDetail,
   type ExternalLink,
   type FocusSession,
@@ -41,6 +40,7 @@ import {
 } from '../api/queries';
 import { AutoSummarySection } from './AutoSummarySection';
 import { Button } from './Button';
+import { BlockSizePicker } from './BlockSizePicker';
 import { DockedDrawer } from './DockedDrawer';
 import { GoalKindIconBadge } from './GoalChip';
 import { LinkChip } from './LinkChip';
@@ -1008,36 +1008,11 @@ export function BlockDetailDrawer({ blockId, onClose, onStartFocus }: BlockDetai
                 ) : null}
               </div>
 
-              {/* Rough Size Chip Selector (Auto / 30m / 1h / 2h) */}
-              <div
-                role="group"
-                aria-label="Block size"
-                className="inline-flex items-center h-9 p-0.5 rounded-[8px] bg-[#171717] border border-[#3C3C3C]"
-              >
-                <span className="px-2 text-[11.5px] font-medium text-[#6E6E6E] select-none">
-                  Size
-                </span>
-                {([null, ...BLOCK_SIZE_OPTIONS] as const).map((opt) => {
-                  const active = block.sizeMinutes === opt;
-                  const label = opt === null ? 'Auto' : formatDuration(opt);
-                  return (
-                    <button
-                      key={opt ?? 'auto'}
-                      type="button"
-                      aria-pressed={active}
-                      onClick={() => updateMutation.mutate({ sizeMinutes: opt })}
-                      className={[
-                        'h-full px-2 rounded-[6px] text-[12px] font-medium tabular-nums transition-colors',
-                        active
-                          ? 'bg-[#262626] text-[#EDEDED]'
-                          : 'text-[#9A9A9A] hover:text-[#EDEDED]',
-                      ].join(' ')}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-              </div>
+              {/* Block size: Auto / 30m / 1h / 2h presets plus Custom */}
+              <BlockSizePicker
+                value={block.sizeMinutes}
+                onChange={(next) => updateMutation.mutate({ sizeMinutes: next })}
+              />
             </div>
           </div>
 

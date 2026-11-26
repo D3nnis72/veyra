@@ -170,6 +170,8 @@ CREATE TABLE IF NOT EXISTS settings (
   global_capture_shortcut TEXT NOT NULL DEFAULT 'CommandOrControl+Shift+P',
   run_in_menu_bar INTEGER NOT NULL DEFAULT 1,
   hotkeys TEXT NOT NULL DEFAULT '{}',
+  workday_start TEXT NOT NULL DEFAULT '09:00',
+  workday_end TEXT NOT NULL DEFAULT '18:00',
   updated_at TEXT NOT NULL
 );
 
@@ -337,6 +339,16 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{ table: string; column: string; ddl: stri
     table: 'settings',
     column: 'hotkeys',
     ddl: "ALTER TABLE settings ADD COLUMN hotkeys TEXT NOT NULL DEFAULT '{}'",
+  },
+  {
+    table: 'settings',
+    column: 'workday_start',
+    ddl: "ALTER TABLE settings ADD COLUMN workday_start TEXT NOT NULL DEFAULT '09:00'",
+  },
+  {
+    table: 'settings',
+    column: 'workday_end',
+    ddl: "ALTER TABLE settings ADD COLUMN workday_end TEXT NOT NULL DEFAULT '18:00'",
   },
 ];
 

@@ -35,7 +35,7 @@ Veyra is a personal work cockpit built around **Goals → Projects → Blocks �
    veyra project create "Platform Core" --weekly-time 4h --goal "Generate upsells" --json
    veyra project update "Platform Core" --weekly-time 3h --json   # pass none to clear
    ```
-3. Add new blocks (use `--ops` for operational/unplanned work; use `--size 30m|1h|2h` or `auto`; omit `--date` to capture into `Inbox`):
+3. Add new blocks (use `--ops` for operational/unplanned work; use `--size` with minutes or a duration such as `30m`, `45m`, `1h30m`, `2h` (5m–10h, rounded to 5m) or `auto`; omit `--date` to capture into `Inbox`):
    ```bash
    veyra add "Implement retry backoff" --project "Platform Core" --date 2026-11-23 --size 1h --start 09:30 --end 11:00 --json
    veyra add "Triage Sentry alerts" --ops --date 2026-11-23 --repeat mon,wed,fri --json

@@ -188,7 +188,13 @@ function createTodayPayload(overrides: Partial<TodayResponse> = {}): TodayRespon
     roomToday: {
       roomMinutes: 220, // 3h 40m
       baselineFocusMinutes: 310,
+      focusedTodayMinutes: 90, // 1h 30m
+      focusBudgetLeftMinutes: 220, // 3h 40m
+      freeTimeLeftMinutes: 300, // 5h
       meetingMinutes: 90, // 1h 30m
+      countsFromNow: true,
+      workdayStart: '09:00',
+      workdayEnd: '18:00',
       hasLearnedBaseline: true,
       weekdayLabel: 'Monday',
     },
@@ -334,7 +340,7 @@ describe('TodayView prioritization, capacity, exits, Tell someone, Drop reason &
 
     // Room today line beneath date
     expect(
-      await screen.findByText(/Room today ≈ 3h 40m · your usual Monday focus, minus 1h 30m of meetings/i),
+      await screen.findByText(/Room today ≈ 3h 40m · 5h free until 18:00, 3h 40m of your usual Monday 5h 10m focus budget left/i),
     ).toBeInTheDocument();
 
     // Rule hint in UP NEXT header
@@ -658,9 +664,15 @@ describe('TodayView prioritization, capacity, exits, Tell someone, Drop reason &
       .getByText('Send Q4 rollout plan to Alex')
       .closest('[data-overflow-row]') as HTMLElement;
     expect(blockCRow.className).not.toContain('border-[#5566F2]/70');
+    // No card is preselected on load: a mouse user only sees a highlight on what they picked.
+    const upNextRegion = screen.getByRole('region', { name: /Up Next/i });
+    for (const card of within(upNextRegion).getAllByRole('button', { name: /Ship capacity UI|Clean Slack triage queue/ })) {
+      expect(card.getAttribute('style') ?? '').toBe('');
+    }
 
-    // Move selection past the 2 fitting blocks onto the first overflow row (index 2 -> BLOCK_C)
-    await user.keyboard('{ArrowDown}{ArrowDown}');
+    // Nothing is highlighted until the first arrow key; three presses walk past the 2 fitting
+    // blocks onto the first overflow row (index 2 -> BLOCK_C).
+    await user.keyboard('{ArrowDown}{ArrowDown}{ArrowDown}');
     await waitFor(() => {
       expect(blockCRow.className).toContain('border-[#5566F2]/70');
     });

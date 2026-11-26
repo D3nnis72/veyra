@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   SYSTEM_OTHER_PROJECT_ID,
   type VeyraDb,
+  blockSizeMinutesSchema,
   openVeyraDb,
+  parseBlockSizeInput,
+  parseDurationMinutes,
 } from '../src/index.js';
 import { focusSessions } from '../src/schema.js';
 import { SystemProjectError, ValidationError } from '../src/errors.js';
@@ -460,8 +463,53 @@ describe('Task 3: Goals, Projects, Blocks, Rollover, Recurrence & Later Revisit'
     expect(reopened.dropReason).toBeNull();
     expect(getBlockDetail(veyraDb, block.id).dropReason).toBeNull();
 
-    expect(() =>
-      createBlock(veyraDb, { title: 'Invalid size', sizeMinutes: 45 as unknown as 60 }),
-    ).toThrow(ValidationError);
+    const custom = createBlock(veyraDb, { title: 'Custom size', sizeMinutes: 45 });
+    expect(custom.sizeMinutes).toBe(45);
+    expect(updateBlock(veyraDb, custom.id, { sizeMinutes: 90 }).sizeMinutes).toBe(90);
+
+    expect(() => createBlock(veyraDb, { title: 'Invalid size', sizeMinutes: 7 })).toThrow(
+      ValidationError,
+    );
+    expect(() => createBlock(veyraDb, { title: 'Too big', sizeMinutes: 900 })).toThrow(
+      ValidationError,
+    );
+  });
+});
+
+describe('block size schema and parser', () => {
+  it('accepts integer minutes 5–600 in steps of 5', () => {
+    expect(blockSizeMinutesSchema.safeParse(45).success).toBe(true);
+    expect(blockSizeMinutesSchema.safeParse(5).success).toBe(true);
+    expect(blockSizeMinutesSchema.safeParse(600).success).toBe(true);
+    expect(blockSizeMinutesSchema.safeParse(7).success).toBe(false);
+    expect(blockSizeMinutesSchema.safeParse(0).success).toBe(false);
+    expect(blockSizeMinutesSchema.safeParse(900).success).toBe(false);
+    expect(blockSizeMinutesSchema.safeParse(45.5).success).toBe(false);
+  });
+
+  it('parses human durations', () => {
+    expect(parseDurationMinutes('45')).toBe(45);
+    expect(parseDurationMinutes('90m')).toBe(90);
+    expect(parseDurationMinutes('90 min')).toBe(90);
+    expect(parseDurationMinutes('1h')).toBe(60);
+    expect(parseDurationMinutes('1.5h')).toBe(90);
+    expect(parseDurationMinutes('1,5h')).toBe(90);
+    expect(parseDurationMinutes('1h30m')).toBe(90);
+    expect(parseDurationMinutes('1h 30m')).toBe(90);
+    expect(parseDurationMinutes('1h30')).toBe(90);
+    expect(parseDurationMinutes('1:30')).toBe(90);
+    expect(parseDurationMinutes('')).toBeNull();
+    expect(parseDurationMinutes('abc')).toBeNull();
+    expect(parseDurationMinutes('h')).toBeNull();
+  });
+
+  it('rounds block size input to 5 minutes and clamps to 5–600', () => {
+    expect(parseBlockSizeInput('47')).toBe(45);
+    expect(parseBlockSizeInput('48m')).toBe(50);
+    expect(parseBlockSizeInput('3h')).toBe(180);
+    expect(parseBlockSizeInput('2')).toBe(5);
+    expect(parseBlockSizeInput('12h')).toBe(600);
+    expect(parseBlockSizeInput('0')).toBeNull();
+    expect(parseBlockSizeInput('soon')).toBeNull();
   });
 });

@@ -126,6 +126,8 @@ function makeSettingsResponse(
     globalCaptureShortcut: 'CommandOrControl+Shift+P',
     hotkeys: {},
     runInMenuBar: true,
+    workdayStart: '09:00',
+    workdayEnd: '18:00',
     updatedAt: new Date().toISOString(),
   };
   return {

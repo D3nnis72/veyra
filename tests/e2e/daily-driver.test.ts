@@ -1159,7 +1159,7 @@ console.log(JSON.stringify([
     const tuesdayMorning = '2026-11-24T08:00:00.000Z';
     const tuesdayDate = '2026-11-24';
 
-    // Schedule 3 blocks on Tuesday so the third overflows roomToday (240m baseline with 1h meeting -> 180m room)
+    // Schedule blocks on Tuesday so one overflows roomToday (08:00 UTC = 09:00 local: min(240m baseline, 9h workday minus 1h meeting) -> 240m room; 180m Ops + 120m priority = 300m)
     await api('POST', '/api/events/upsert', {
       now: tuesdayMorning,
       body: {
@@ -1183,7 +1183,7 @@ console.log(JSON.stringify([
         isOps: true,
         bucket: 'scheduled',
         scheduledDate: tuesdayDate,
-        sizeMinutes: 120,
+        sizeMinutes: 180,
       },
     });
     const opsBlockId = opsOverflowRes.data.block.id;

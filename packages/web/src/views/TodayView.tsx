@@ -1,3 +1,18 @@
+import {
+  DndContext,
+  type DragEndEvent,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type {
   Block,
@@ -30,7 +45,14 @@ import {
   Video,
   X,
 } from 'lucide-react';
-import { type MouseEvent as ReactMouseEvent, useEffect, useMemo, useState } from 'react';
+import {
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { apiClient, openExternalUrl } from '../api/client';
 import { invalidateBlockRelated, useCalendarQuery, useTodayQuery } from '../api/queries';
 import { useAppShell } from '../app/AppShellContext';
@@ -78,14 +100,13 @@ function persistLookBackDismissed(date: string): void {
 }
 
 function formatRoomTodayLine(room: RoomTodaySummary): string {
-  const baselinePart = room.hasLearnedBaseline
-    ? `your usual ${room.weekdayLabel} focus`
-    : `default ${formatDuration(room.baselineFocusMinutes)} baseline`;
-  const meetingPart =
-    room.meetingMinutes > 0
-      ? `minus ${formatDuration(room.meetingMinutes)} of meetings`
-      : 'no meetings';
-  return `Room today ≈ ${formatDuration(room.roomMinutes)} · ${baselinePart}, ${meetingPart}`;
+  const freePart = room.countsFromNow
+    ? `${formatDuration(room.freeTimeLeftMinutes)} free until ${room.workdayEnd}`
+    : `${formatDuration(room.freeTimeLeftMinutes)} free ${room.workdayStart}–${room.workdayEnd}`;
+  const budgetLabel = room.hasLearnedBaseline
+    ? `your usual ${room.weekdayLabel} ${formatDuration(room.baselineFocusMinutes)}`
+    : `your ${formatDuration(room.baselineFocusMinutes)}`;
+  return `Room today ≈ ${formatDuration(room.roomMinutes)} · ${freePart}, ${formatDuration(room.focusBudgetLeftMinutes)} of ${budgetLabel} focus budget left`;
 }
 
 function canTellSomeone(block: Block): boolean {
@@ -179,7 +200,19 @@ export function TodayView() {
   const activeBlockId = focusStatus?.activeBlock?.id ?? null;
   const focusedTodayMinutes = focusStatus?.focusedTodayMinutes ?? 0;
 
-  const upNext = data?.upNext ?? [];
+  const serverUpNext = useMemo(() => data?.upNext ?? [], [data?.upNext]);
+  // Optimistic order after a drag, held until the refetched server order matches it.
+  const [localOrderIds, setLocalOrderIds] = useState<string[] | null>(null);
+  const upNext = useMemo(() => {
+    if (!localOrderIds) return serverUpNext;
+    const byId = new Map(serverUpNext.map((b) => [b.id, b]));
+    const ordered = localOrderIds.flatMap((id) => {
+      const blk = byId.get(id);
+      return blk ? [blk] : [];
+    });
+    const orderedIds = new Set(ordered.map((b) => b.id));
+    return [...ordered, ...serverUpNext.filter((b) => !orderedIds.has(b.id))];
+  }, [serverUpNext, localOrderIds]);
   const completedToday = data?.completedToday ?? [];
   const upcomingEvents = data?.upcomingEvents ?? [];
   const roomToday = data?.roomToday;
@@ -197,7 +230,10 @@ export function TodayView() {
   const [recentlyDroppedBlocks, setRecentlyDroppedBlocks] = useState<Block[]>([]);
   const [openTellSomeoneBlockId, setOpenTellSomeoneBlockId] = useState<string | null>(null);
   const [dismissedLookBackDates, setDismissedLookBackDates] = useState<Record<string, boolean>>({});
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  // Keyboard selection is tracked by block id and only highlighted after arrow-key navigation,
+  // so a mouse user never sees a card marked as selected that they did not pick.
+  const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
+  const [keyboardNavActive, setKeyboardNavActive] = useState(false);
 
   const recentlyDroppedIds = useMemo(
     () => new Set(recentlyDroppedBlocks.map((b) => b.id)),
@@ -240,6 +276,53 @@ export function TodayView() {
     () => upNext.slice(fitLineIndex).filter((b) => !recentlyDroppedIds.has(b.id)),
     [upNext, fitLineIndex, recentlyDroppedIds],
   );
+
+  const visibleUpNext = useMemo(
+    () => [...fittingBlocks, ...overflowBlocks],
+    [fittingBlocks, overflowBlocks],
+  );
+  const visibleUpNextIds = useMemo(() => visibleUpNext.map((b) => b.id), [visibleUpNext]);
+
+  useEffect(() => {
+    if (!localOrderIds) return;
+    const serverIds = serverUpNext.map((b) => b.id);
+    if (
+      serverIds.length === localOrderIds.length &&
+      serverIds.every((id, idx) => id === localOrderIds[idx])
+    ) {
+      setLocalOrderIds(null);
+    }
+  }, [serverUpNext, localOrderIds]);
+
+  const reorderTodayMutation = useMutation({
+    mutationFn: (blockIds: string[]) => apiClient.applySuggestedOrder(blockIds),
+    onSuccess: () => {
+      invalidateBlockRelated(queryClient);
+    },
+    onError: () => {
+      setLocalOrderIds(null);
+    },
+  });
+
+  const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  // A drag ends with pointerup on the moved card itself, which would also fire a click and open
+  // the drawer. This flag swallows that one click.
+  const suppressClickRef = useRef(false);
+
+  const handleTodayDragEnd = (event: DragEndEvent) => {
+    window.setTimeout(() => {
+      suppressClickRef.current = false;
+    }, 0);
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const ids = upNext.map((b) => b.id);
+    const oldIndex = ids.indexOf(String(active.id));
+    const newIndex = ids.indexOf(String(over.id));
+    if (oldIndex < 0 || newIndex < 0) return;
+    const nextIds = arrayMove(ids, oldIndex, newIndex);
+    setLocalOrderIds(nextIds);
+    reorderTodayMutation.mutate(nextIds);
+  };
 
   const showFitLine = Boolean(fitLine && upNext.length > fitLine.fitLineIndex);
   const showOverflowSection = overflowBlocks.length > 0 || recentlyDroppedBlocks.length > 0;
@@ -317,10 +400,17 @@ export function TodayView() {
   };
 
   useEffect(() => {
-    if (selectedIndex >= upNext.length) {
-      setSelectedIndex(0);
+    if (selectedBlockId && !visibleUpNextIds.includes(selectedBlockId)) {
+      setSelectedBlockId(null);
     }
-  }, [upNext.length, selectedIndex]);
+  }, [visibleUpNextIds, selectedBlockId]);
+
+  // Any pointer interaction ends keyboard mode so the keyboard highlight does not linger.
+  useEffect(() => {
+    const onPointerDown = () => setKeyboardNavActive(false);
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => window.removeEventListener('pointerdown', onPointerDown);
+  }, []);
 
   // Keyboard navigation on Today: ArrowUp/ArrowDown select, Enter starts Focus on focused/first item
   useEffect(() => {
@@ -335,16 +425,28 @@ export function TodayView() {
       ) {
         return;
       }
-      if (activeDrawer !== null || openTellSomeoneBlockId !== null || upNext.length === 0) return;
+      if (activeDrawer !== null || openTellSomeoneBlockId !== null || visibleUpNextIds.length === 0) {
+        return;
+      }
 
-      if (e.key === 'ArrowDown') {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
-        setSelectedIndex((idx) => (idx + 1) % upNext.length);
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        setSelectedIndex((idx) => (idx - 1 + upNext.length) % upNext.length);
+        const count = visibleUpNextIds.length;
+        const current =
+          keyboardNavActive && selectedBlockId ? visibleUpNextIds.indexOf(selectedBlockId) : -1;
+        const nextIndex =
+          e.key === 'ArrowDown'
+            ? (current + 1) % count
+            : current <= 0
+              ? count - 1
+              : current - 1;
+        setKeyboardNavActive(true);
+        setSelectedBlockId(visibleUpNextIds[nextIndex] ?? null);
       } else if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
-        const chosen = upNext[selectedIndex] ?? upNext[0];
+        const chosen =
+          (keyboardNavActive && selectedBlockId
+            ? visibleUpNext.find((b) => b.id === selectedBlockId)
+            : undefined) ?? visibleUpNext[0];
         if (chosen) {
           e.preventDefault();
           void startFocusAndNavigate(chosen.id);
@@ -354,11 +456,20 @@ export function TodayView() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeDrawer, openTellSomeoneBlockId, upNext, selectedIndex, startFocusAndNavigate]);
+  }, [
+    activeDrawer,
+    openTellSomeoneBlockId,
+    visibleUpNext,
+    visibleUpNextIds,
+    keyboardNavActive,
+    selectedBlockId,
+    startFocusAndNavigate,
+  ]);
 
   const drawerSelectedBlockId = activeDrawer?.kind === 'block' ? activeDrawer.blockId : null;
   const drawerSelectedEventId = activeDrawer?.kind === 'meeting' ? activeDrawer.eventId : null;
-  const keyboardSelectedBlockId = !drawerSelectedBlockId ? (upNext[selectedIndex]?.id ?? null) : null;
+  const keyboardSelectedBlockId =
+    !drawerSelectedBlockId && keyboardNavActive ? selectedBlockId : null;
 
   return (
     <div className="min-h-full flex flex-col">
@@ -557,6 +668,18 @@ export function TodayView() {
           </div>
         ) : null}
 
+        <DndContext
+          sensors={dndSensors}
+          collisionDetection={closestCenter}
+          onDragStart={() => {
+            suppressClickRef.current = true;
+          }}
+          onDragCancel={() => {
+            suppressClickRef.current = false;
+          }}
+          onDragEnd={handleTodayDragEnd}
+        >
+        <SortableContext items={visibleUpNextIds} strategy={verticalListSortingStrategy}>
         {/* UP NEXT Section */}
         <section className="space-y-3" aria-label="Up Next">
           <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -625,7 +748,7 @@ export function TodayView() {
             </div>
           ) : (
             <div className="space-y-3.5">
-              {fittingBlocks.map((block, index) => {
+              {fittingBlocks.map((block) => {
                 const project = projectsById.get(block.projectId);
                 const goal = block.goalId ? goalsById.get(block.goalId) : undefined;
                 const suggested = suggestedOrderByBlockId.get(block.id);
@@ -634,8 +757,8 @@ export function TodayView() {
                   drawerSelectedBlockId === block.id || keyboardSelectedBlockId === block.id;
 
                 return (
+                  <SortableTodayRow key={block.id} id={block.id} suppressClickRef={suppressClickRef}>
                   <TodayBlockCard
-                    key={block.id}
                     block={block}
                     project={project}
                     goal={goal}
@@ -643,12 +766,14 @@ export function TodayView() {
                     isRunning={isRunning}
                     isSelected={isSelected}
                     onSelect={() => {
-                      setSelectedIndex(index);
+                      setSelectedBlockId(block.id);
+                      setKeyboardNavActive(false);
                       openBlockDrawer(block.id);
                     }}
                     onPlay={() => void startFocusAndNavigate(block.id)}
                     onContextMenu={(e) => blockMenu.open(e, block)}
                   />
+                  </SortableTodayRow>
                 );
               })}
             </div>
@@ -696,18 +821,25 @@ export function TodayView() {
                 const showTellSomeone = canTellSomeone(block);
                 const isPopoverOpen = openTellSomeoneBlockId === block.id;
 
+                const selectOverflow = () => {
+                  setSelectedBlockId(block.id);
+                  setKeyboardNavActive(false);
+                  openBlockDrawer(block.id);
+                };
+
                 return (
-                  <div key={block.id} className="relative">
+                  <SortableTodayRow key={block.id} id={block.id} suppressClickRef={suppressClickRef}>
+                  <div className="relative">
                     <div
                       data-overflow-row={block.id}
                       role="button"
                       tabIndex={0}
-                      onClick={() => openBlockDrawer(block.id)}
+                      onClick={selectOverflow}
                       onContextMenu={(e) => blockMenu.open(e, block)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault();
-                          openBlockDrawer(block.id);
+                          selectOverflow();
                         }
                       }}
                       className={[
@@ -827,6 +959,7 @@ export function TodayView() {
                       </div>
                     ) : null}
                   </div>
+                  </SortableTodayRow>
                 );
               })}
 
@@ -890,6 +1023,8 @@ export function TodayView() {
             </div>
           </section>
         ) : null}
+        </SortableContext>
+        </DndContext>
 
         {/* COMPLETED TODAY Section */}
         {completedToday.length > 0 ? (
@@ -1039,6 +1174,41 @@ function DayLookBackCard({ lookBack, onDismiss }: DayLookBackCardProps) {
 
       <p className="text-[12px] text-[#6E6E6E]">What did not fit is capacity, not failure.</p>
     </section>
+  );
+}
+
+function SortableTodayRow({
+  id,
+  suppressClickRef,
+  children,
+}: {
+  id: string;
+  suppressClickRef: { current: boolean };
+  children: ReactNode;
+}) {
+  const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  return (
+    <div
+      ref={setNodeRef}
+      data-sortable-row={id}
+      style={{
+        transform: CSS.Translate.toString(transform),
+        transition,
+        position: 'relative',
+        zIndex: isDragging ? 20 : undefined,
+        opacity: isDragging ? 0.9 : undefined,
+        cursor: isDragging ? 'grabbing' : undefined,
+      }}
+      onClickCapture={(e) => {
+        if (suppressClickRef.current) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }}
+      {...listeners}
+    >
+      {children}
+    </div>
   );
 }
 

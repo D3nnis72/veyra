@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createVeyraServer, type VeyraServerInstance } from '@veyra/server';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { parseBlockSizeOption } from '../src/commands.js';
 import { runCli } from '../src/index.js';
 
 interface CliRunResult {
@@ -786,6 +787,23 @@ describe('@veyra/cli integration', () => {
     expect(todayData.suggestedOrder.length).toBeGreaterThanOrEqual(2);
     expect(typeof todayData.fitLine.fitLineIndex).toBe('number');
 
+    // Custom sizes: --size accepts any 5-minute step between 5m and 10h
+    const add3 = await execCli(
+      ['add', 'Custom sized', '--project', proj.id, '--date', '2026-11-23', '--size', '90m', '--json'],
+      baseEnv(),
+    );
+    expect(add3.exitCode).toBe(0);
+    const blk3 = JSON.parse(add3.stdout) as { id: string; sizeMinutes: number | null };
+    expect(blk3.sizeMinutes).toBe(90);
+
+    const customUpdateRes = await execCli(['update', blk3.id, '--size', '2h15m', '--json'], baseEnv());
+    expect(customUpdateRes.exitCode).toBe(0);
+    expect((JSON.parse(customUpdateRes.stdout) as { sizeMinutes: number | null }).sizeMinutes).toBe(135);
+
+    const badSizeRes = await execCli(['update', blk3.id, '--size', '11h', '--json'], baseEnv());
+    expect(badSizeRes.exitCode).not.toBe(0);
+    expect(badSizeRes.stderr).toContain("Invalid --size '11h'");
+
     // Update size to auto (clears to null)
     const autoSizeRes = await execCli(['update', blk2.id, '--size', 'auto', '--json'], baseEnv());
     expect(autoSizeRes.exitCode).toBe(0);
@@ -881,5 +899,31 @@ describe('@veyra/cli integration', () => {
     expect(after.previousRuleKept).toBe('yes');
     expect(after.ruleForNextWeek).toBe('Keep Monday morning free for deep work');
     expect(after.snapshot?.weekNumber).toBe(47);
+  });
+});
+
+describe('parseBlockSizeOption', () => {
+  it('parses minute and hour-minute forms', () => {
+    expect(parseBlockSizeOption('90m')).toBe(90);
+    expect(parseBlockSizeOption('1h30m')).toBe(90);
+    expect(parseBlockSizeOption('1h 30m')).toBe(90);
+    expect(parseBlockSizeOption('1.5h')).toBe(90);
+    expect(parseBlockSizeOption('45')).toBe(45);
+    expect(parseBlockSizeOption('3h')).toBe(180);
+    expect(parseBlockSizeOption('30')).toBe(30);
+    expect(parseBlockSizeOption('2h')).toBe(120);
+  });
+
+  it('rounds to 5 minutes and clears with auto', () => {
+    expect(parseBlockSizeOption('47')).toBe(45);
+    expect(parseBlockSizeOption('auto')).toBeNull();
+    expect(parseBlockSizeOption('none')).toBeNull();
+  });
+
+  it('rejects out-of-range or unparseable sizes', () => {
+    expect(() => parseBlockSizeOption('2')).toThrow(/Invalid --size/);
+    expect(() => parseBlockSizeOption('900')).toThrow(/Invalid --size/);
+    expect(() => parseBlockSizeOption('11h')).toThrow(/Invalid --size/);
+    expect(() => parseBlockSizeOption('big')).toThrow(/Invalid --size/);
   });
 });

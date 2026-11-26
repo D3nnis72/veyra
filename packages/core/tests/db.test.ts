@@ -74,6 +74,8 @@ describe('@veyra/core database bootstrap, order-key, time, and contracts', () =>
           calendarSyncIntervalMin: 15,
           skipDeclinedAndAllDay: true,
           runInMenuBar: true,
+          workdayStart: '09:00',
+          workdayEnd: '18:00',
           globalCaptureShortcut: DEFAULT_GLOBAL_CAPTURE_SHORTCUT,
           onboardingCompleted: false,
         });
@@ -196,6 +198,8 @@ describe('@veyra/core database bootstrap, order-key, time, and contracts', () =>
         expect(rows[0].timezone).toBe('UTC');
         expect(rows[0].onboardingCompleted).toBe(true);
         expect(rows[0].notionToken).toBeNull();
+        expect(rows[0].workdayStart).toBe('09:00');
+        expect(rows[0].workdayEnd).toBe('18:00');
       } finally {
         upgraded.close();
       }

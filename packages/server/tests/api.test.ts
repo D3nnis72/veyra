@@ -921,10 +921,10 @@ describe('@veyra/server REST API', () => {
     await fetch(`${baseUrl}/api/settings`, {
       method: 'PATCH',
       headers: json,
-      body: JSON.stringify({ timezone: 'UTC' }),
+      body: JSON.stringify({ timezone: 'UTC', workdayEnd: '13:00' }),
     });
 
-    // Add a 1h meeting today -> fallback 240 - 60 = 180m room
+    // Now 09:00, workday ends 13:00, 1h meeting ahead -> 180m free < 240m budget -> 180m room
     await fetch(`${baseUrl}/api/events/upsert`, {
       method: 'POST',
       headers: json,
@@ -992,7 +992,10 @@ describe('@veyra/server REST API', () => {
     expect(todayData.roomToday).toMatchObject({
       roomMinutes: 180,
       baselineFocusMinutes: 240,
+      focusBudgetLeftMinutes: 240,
+      freeTimeLeftMinutes: 180,
       meetingMinutes: 60,
+      workdayEnd: '13:00',
     });
     expect(todayData.suggestedOrder[0].blockId).toBe(dueBlock.id);
     expect(todayData.fitLine).toMatchObject({
@@ -1077,6 +1080,21 @@ describe('@veyra/server REST API', () => {
     });
     const { block: b1 } = (await b1Res.json()) as { block: { id: string; sizeMinutes: number } };
     expect(b1.sizeMinutes).toBe(30);
+
+    const customRes = await fetch(`${baseUrl}/api/blocks/${b1.id}`, {
+      method: 'PATCH',
+      headers: json,
+      body: JSON.stringify({ sizeMinutes: 45 }),
+    });
+    expect(customRes.status).toBe(200);
+    expect(((await customRes.json()) as { block: { sizeMinutes: number } }).block.sizeMinutes).toBe(45);
+
+    const invalidSizeRes = await fetch(`${baseUrl}/api/blocks/${b1.id}`, {
+      method: 'PATCH',
+      headers: json,
+      body: JSON.stringify({ sizeMinutes: 7 }),
+    });
+    expect(invalidSizeRes.status).toBe(400);
 
     const dropRes = await fetch(`${baseUrl}/api/blocks/${b1.id}/drop`, {
       method: 'POST',

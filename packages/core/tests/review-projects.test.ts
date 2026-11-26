@@ -1059,7 +1059,7 @@ describe('Task 4: Calendar Upsert, Daily Notes, Weekly Review Rollups & Settings
       focusMinutes: 120,
       plannedMinutes: 120,
       meetingMinutes: 60,
-      roomMinutes: 180, // 240 baseline - 60 meeting
+      roomMinutes: 240, // min(240 budget, 540m workday - 60m meeting)
     });
     expect(review.dayStrip[1]).toMatchObject({
       date: tue,
@@ -1069,7 +1069,7 @@ describe('Task 4: Calendar Upsert, Daily Notes, Weekly Review Rollups & Settings
       meetingMinutes: 0,
       roomMinutes: 240,
     });
-    expect(review.roomMinutesTotal).toBe(180 + 240 * 4);
+    expect(review.roomMinutesTotal).toBe(240 * 5);
     expect(review.plannedMinutesTotal).toBe(120 + 60 + 90);
 
     // Goal reviews: Company first, then Personal, with NO weekly target property

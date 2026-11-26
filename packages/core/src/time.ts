@@ -221,8 +221,17 @@ function getTimeZoneOffsetMs(date: Date, timezone: string): number {
 }
 
 function localMidnightToUtcDate(dateStr: string, timezone: string): Date {
+  return localWallTimeToUtcDate(dateStr, 0, 0, timezone);
+}
+
+function localWallTimeToUtcDate(
+  dateStr: string,
+  hour: number,
+  minute: number,
+  timezone: string,
+): Date {
   const { year, month, day } = parseDateOnlyParts(dateStr);
-  const utcGuess = new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
+  const utcGuess = new Date(Date.UTC(year, month - 1, day, hour, minute, 0));
   const offset1 = getTimeZoneOffsetMs(utcGuess, timezone);
   const candidate = new Date(utcGuess.getTime() - offset1);
   const offset2 = getTimeZoneOffsetMs(candidate, timezone);
@@ -230,6 +239,21 @@ function localMidnightToUtcDate(dateStr: string, timezone: string): Date {
     return new Date(utcGuess.getTime() - offset2);
   }
   return candidate;
+}
+
+/**
+ * Converts a local wall-clock time `HH:mm` on the local date `YYYY-MM-DD` in the given
+ * IANA timezone to a UTC ISO timestamp.
+ */
+export function getLocalTimeIso(dateStr: string, timeOfDay: string, timezone: string): string {
+  if (!isValidTimeZone(timezone)) {
+    throw new Error(`Invalid IANA timezone: '${timezone}'`);
+  }
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(timeOfDay);
+  if (!match) {
+    throw new Error(`Invalid HH:mm time of day: '${timeOfDay}'`);
+  }
+  return localWallTimeToUtcDate(dateStr, Number(match[1]), Number(match[2]), timezone).toISOString();
 }
 
 /**

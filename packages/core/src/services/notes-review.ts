@@ -886,7 +886,7 @@ export function getWeeklyReview(
       }
     }
 
-    const room = computeWeekdayRoom(veyraDb, date, nowDate, allActiveEvents);
+    const room = computeWeekdayRoom(veyraDb, date, nowDate, allActiveEvents, 'fullDay');
     dayStrip.push({
       date,
       weekday: WEEKDAY_SHORT_LABELS[offset],

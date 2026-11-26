@@ -3,7 +3,7 @@ id: architecture.domain-invariants
 type: rule
 scope: architecture
 authority: canonical
-sourceVersion: f62c1c9
+sourceVersion: d06790f
 extends: architecture
 dependsOn:
   - architecture.monorepo-boundaries
@@ -51,7 +51,7 @@ All domain rules execute inside `@veyra/core` services backed by SQLite (`packag
 - `scheduled` requires a date-only `scheduledDate` (`YYYY-MM-DD`). Optional `plannedStartAt` and `plannedEndAt` reserve a future calendar slot without turning `Plan` into rigid timeblocking.
 - `later` requires a date-only `revisitAt` checkpoint (defaulting to 14 days out when parked without an explicit horizon). Moving a block out of `scheduled` clears `scheduledDate` and planned slot timestamps; moving out of `later` clears `revisitAt`.
 - `dueDate` is always optional and date-only (never a clock time) for real external cutoffs only.
-- Optional `sizeMinutes` (`30`, `60`, or `120`) captures a rough block size used strictly for capacity fit lines and `Plan` strips (never a countdown or quota); when unset, capacity calculations fall back to the project's learned default size.
+- Optional `sizeMinutes` (integer minutes from `5` to `600` in steps of `5`; `30`, `60`, and `120` are the UI presets) captures a rough block size used strictly for capacity fit lines and `Plan` strips (never a countdown or quota); when unset, capacity calculations fall back to the project's learned default size.
 - Dropping a block accepts an optional `dropReason` (`not_important`, `someone_else`, or `no_room`). Reopening a block to `todo` clears `dropReason`.
 
 ## Single Focus, Sense Check, And Multi-Day Sessions
@@ -66,7 +66,7 @@ All domain rules execute inside `@veyra/core` services backed by SQLite (`packag
 
 Deterministic capacity signals live in `packages/core/src/services/capacity.ts` so `@veyra/web` and `@veyra/cli` consume identical facts:
 
-- **Weekday room (`computeWeekdayRoom`):** Median real focus time for that weekday across the prior 4 weeks minus today's non-deleted meetings, falling back to a 240-minute focus baseline minus meetings until at least 2 historical weekday samples exist.
+- **Weekday room (`computeWeekdayRoom`):** `roomMinutes = min(focusBudgetLeft, freeTimeLeft)`, i.e. the focus that is still realistic from now on. The focus budget is the median real focus time for that weekday across the prior 4 weeks (zero-focus days excluded), falling back to 240 minutes until at least 2 samples exist; on today, focus already logged today (including a running session up to now) is taken off it. Free time is the span from `max(now, Settings.workdayStart)` to `Settings.workdayEnd` (defaults `09:00`–`18:00`, local time) minus the merged non-deleted meetings inside that span, so past meetings no longer count and overlapping meetings count once; after `workdayEnd` it is 0. `Room today` and the fit line use this `remaining` mode. Other dates, and Plan day columns, the Weekly Review day strip and the Day look back (`fullDay` mode), count the whole workday with no focus taken off. `RoomTodaySummary` carries the parts (`focusedTodayMinutes`, `focusBudgetLeftMinutes`, `freeTimeLeftMinutes`, `meetingMinutes`, `workdayStart`/`workdayEnd`) so clients can explain the number.
 - **Learned block size & drift (`computeProjectSizeStatsMap`):** Over an 8-week window, once a project has at least 3 completed blocks with focus sessions, its learned default size is the median actual duration snapped to `30`, `60`, or `120` minutes (otherwise `60` minutes), alongside its size drift ratio vs. planned sizes.
 - **Fit line & suggested order (`computeTodayCapacity`):** Splits `UP NEXT` at cumulative `Room today` into fitting blocks and `Probably not today`. Ranks blocks deterministically with a one-line reason per item: real commitments (`dueDate` today/tomorrow or prep for a meeting today), then goal-linked work ordered by goal priority and projects behind `weeklyTimeMinutes`, then remaining non-Ops blocks, then `Ops` last. Learned adjustments sink blocks belonging to a project motion hotspot (`>= 3` sensed blocks and `>= 60%` `motion`, excluding the system `Other` project) and flag chronic carryovers (`carryoverCount >= 3`) for decision instead of promoting them. Never auto-reorders: `applySuggestedOrder` writes new `orderKey`s only on explicit user action.
 - **Day look back:** Computed once today's `UP NEXT` clears (with at least one completed block today) or on first open the next morning, summarizing focused input, goal share, blocks that moved a goal, and items that did not fit.

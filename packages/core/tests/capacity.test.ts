@@ -18,6 +18,7 @@ import {
   logManualSession,
   openVeyraDb,
   runDailyRolloverAndRecurrence,
+  startFocus,
   updateBlock,
   updateSettings,
   upsertCalendarEvents,
@@ -35,12 +36,13 @@ describe('Task 7: Capacity, Room, Learned Block Sizes, Suggested Order, 8-Week P
     veyraDb.close();
   });
 
-  it('computeWeekdayRoom falls back to 240m minus meetings with < 2 weeks history, then uses 4-week weekday median once >= 2 weeks exist (excluding zero days & merging overlapping meetings)', () => {
-    // Today: Wednesday 2026-11-25
+  it('computeWeekdayRoom falls back to a 240m budget with < 2 weeks history, then uses the 4-week weekday median once >= 2 weeks exist (excluding zero days & merging overlapping meetings)', () => {
+    // Today: Wednesday 2026-11-25, before the default 09:00–18:00 workday starts (UTC)
     const today = '2026-11-25';
     const now = '2026-11-25T08:00:00.000Z';
 
-    // Overlapping meetings on today: 09:00-10:00 and 09:30-10:30 => union is 90m (not 120m)
+    // Overlapping meetings 09:00-10:00 and 09:30-10:30 => union 90m (not 120m),
+    // plus 11:00-17:00 (360m) => 450m of meetings, 540m workday => 90m free.
     upsertCalendarEvents(veyraDb, 'manual', [
       {
         externalId: 'm1',
@@ -54,18 +56,31 @@ describe('Task 7: Capacity, Room, Learned Block Sizes, Suggested Order, 8-Week P
         startAt: '2026-11-25T09:30:00.000Z',
         endAt: '2026-11-25T10:30:00.000Z',
       },
+      {
+        externalId: 'm3',
+        title: 'Offsite',
+        startAt: '2026-11-25T11:00:00.000Z',
+        endAt: '2026-11-25T17:00:00.000Z',
+      },
     ]);
 
-    // 0 weeks of history -> fallback 240m - 90m = 150m
+    // 0 weeks of history -> budget 240m, free time 90m -> room 90m
     const room0 = computeWeekdayRoom(veyraDb, today, now);
     expect(room0).toEqual({
-      roomMinutes: 150,
+      roomMinutes: 90,
       baselineFocusMinutes: 240,
-      meetingMinutes: 90,
+      focusedTodayMinutes: 0,
+      focusBudgetLeftMinutes: 240,
+      freeTimeLeftMinutes: 90,
+      meetingMinutes: 450,
+      countsFromNow: true,
+      workdayStart: '09:00',
+      workdayEnd: '18:00',
       hasLearnedBaseline: false,
       weekdayLabel: 'Wednesday',
     });
 
+    // From here on, pass the events without the offsite so the focus budget is the limit (450m free).
     // Add 1 prior Wednesday (2026-11-18): 180m focus -> still < 2 active weeks, fallback 240m
     const blk = createBlock(veyraDb, { title: 'Deep work' }, { now: '2026-10-20T08:00:00.000Z' });
     logManualSession(veyraDb, {
@@ -74,10 +89,15 @@ describe('Task 7: Capacity, Room, Learned Block Sizes, Suggested Order, 8-Week P
       endedAt: '2026-11-18T12:00:00.000Z', // 180m
     });
 
-    const room1 = computeWeekdayRoom(veyraDb, today, now);
+    const room1 = computeWeekdayRoom(veyraDb, today, now, [
+      { startAt: '2026-11-25T09:00:00.000Z', endAt: '2026-11-25T10:00:00.000Z' },
+      { startAt: '2026-11-25T09:30:00.000Z', endAt: '2026-11-25T10:30:00.000Z' },
+    ]);
     expect(room1.hasLearnedBaseline).toBe(false);
     expect(room1.baselineFocusMinutes).toBe(240);
-    expect(room1.roomMinutes).toBe(150);
+    expect(room1.meetingMinutes).toBe(90);
+    expect(room1.freeTimeLeftMinutes).toBe(450);
+    expect(room1.roomMinutes).toBe(240);
 
     // Add 2nd prior Wednesday (2026-11-11): 220m focus. Leave 2026-11-04 (0m) and 2026-10-28 (0m) inactive (PTO).
     // Active totals: [180, 220] -> median = 200m (zero days excluded!)
@@ -87,11 +107,10 @@ describe('Task 7: Capacity, Room, Learned Block Sizes, Suggested Order, 8-Week P
       endedAt: '2026-11-11T12:40:00.000Z', // 220m
     });
 
-    const room2 = computeWeekdayRoom(veyraDb, today, now);
+    const room2 = computeWeekdayRoom(veyraDb, today, now, []);
     expect(room2.hasLearnedBaseline).toBe(true);
     expect(room2.baselineFocusMinutes).toBe(200);
-    expect(room2.meetingMinutes).toBe(90);
-    expect(room2.roomMinutes).toBe(110);
+    expect(room2.roomMinutes).toBe(200);
 
     // Add 3rd prior Wednesday (2026-10-28): 300m focus -> active totals [180, 220, 300] -> median = 220m
     logManualSession(veyraDb, {
@@ -100,10 +119,134 @@ describe('Task 7: Capacity, Room, Learned Block Sizes, Suggested Order, 8-Week P
       endedAt: '2026-10-28T13:00:00.000Z', // 300m
     });
 
-    const room3 = computeWeekdayRoom(veyraDb, today, now);
+    const room3 = computeWeekdayRoom(veyraDb, today, now, []);
     expect(room3.hasLearnedBaseline).toBe(true);
     expect(room3.baselineFocusMinutes).toBe(220);
-    expect(room3.roomMinutes).toBe(130);
+    expect(room3.roomMinutes).toBe(220);
+  });
+
+  it('computeWeekdayRoom mid-day ignores past meetings and takes focus already done today off the budget', () => {
+    // Thursday 2026-11-26, 11:15 Europe/Berlin (10:15 UTC), default 09:00–18:00 workday.
+    updateSettings(veyraDb, { timezone: 'Europe/Berlin' });
+    const today = '2026-11-26';
+    const now = '2026-11-26T10:15:00.000Z';
+
+    const meetings = [
+      ['09:30', '09:50'],
+      ['09:45', '10:15'],
+      ['13:00', '13:30'],
+      ['14:00', '14:30'],
+      ['15:00', '16:00'],
+      ['16:00', '17:00'],
+    ].map(([start, end], idx) => ({
+      externalId: `mid-${idx}`,
+      title: `Meeting ${idx}`,
+      startAt: `${today}T${start}:00.000Z`,
+      endAt: `${today}T${end}:00.000Z`,
+    }));
+    upsertCalendarEvents(veyraDb, 'manual', meetings);
+
+    // 88m of focus already done this morning (09:00–10:28 local)
+    const blk = createBlock(veyraDb, { title: 'Morning focus' }, { now: '2026-11-26T07:00:00.000Z' });
+    logManualSession(veyraDb, {
+      blockId: blk.id,
+      startedAt: '2026-11-26T08:00:00.000Z',
+      endedAt: '2026-11-26T09:28:00.000Z',
+    });
+
+    const room = computeWeekdayRoom(veyraDb, today, now);
+    // Range 10:15–17:00 UTC = 405m; meetings still ahead = 30 + 30 + 60 + 60 = 180m -> 225m free.
+    // Budget 240 - 88 = 152m -> room = min(152, 225) = 152m.
+    expect(room).toMatchObject({
+      roomMinutes: 152,
+      baselineFocusMinutes: 240,
+      focusedTodayMinutes: 88,
+      focusBudgetLeftMinutes: 152,
+      freeTimeLeftMinutes: 225,
+      meetingMinutes: 180,
+      countsFromNow: true,
+      workdayEnd: '18:00',
+      weekdayLabel: 'Thursday',
+    });
+
+    // The same day as a whole workday (Plan / Review): 540m - merged 225m of meetings, no focus taken off.
+    const fullDay = computeWeekdayRoom(veyraDb, today, now, undefined, 'fullDay');
+    expect(fullDay).toMatchObject({
+      roomMinutes: 240,
+      focusedTodayMinutes: 0,
+      freeTimeLeftMinutes: 315,
+      meetingMinutes: 225,
+      countsFromNow: false,
+    });
+  });
+
+  it('computeWeekdayRoom is 0 after the workday ends and uses the whole workday for other dates', () => {
+    const blk = createBlock(veyraDb, { title: 'Deep work' }, { now: '2026-11-25T07:00:00.000Z' });
+    logManualSession(veyraDb, {
+      blockId: blk.id,
+      startedAt: '2026-11-25T09:00:00.000Z',
+      endedAt: '2026-11-25T10:00:00.000Z',
+    });
+
+    const afterEnd = computeWeekdayRoom(veyraDb, '2026-11-25', '2026-11-25T18:30:00.000Z', [
+      { startAt: '2026-11-25T18:00:00.000Z', endAt: '2026-11-25T19:00:00.000Z' },
+    ]);
+    expect(afterEnd).toMatchObject({
+      roomMinutes: 0,
+      freeTimeLeftMinutes: 0,
+      meetingMinutes: 0,
+      focusedTodayMinutes: 60,
+      focusBudgetLeftMinutes: 180,
+      countsFromNow: true,
+    });
+
+    // Tomorrow: whole workday, focus done today does not count against it.
+    const tomorrow = computeWeekdayRoom(veyraDb, '2026-11-26', '2026-11-25T18:30:00.000Z', [
+      { startAt: '2026-11-26T12:00:00.000Z', endAt: '2026-11-26T13:00:00.000Z' },
+    ]);
+    expect(tomorrow).toMatchObject({
+      roomMinutes: 240,
+      freeTimeLeftMinutes: 480,
+      meetingMinutes: 60,
+      focusedTodayMinutes: 0,
+      countsFromNow: false,
+    });
+
+    // Custom workday 10:00–14:00 caps the room at the free time.
+    updateSettings(veyraDb, { workdayStart: '10:00', workdayEnd: '14:00' });
+    const shortDay = computeWeekdayRoom(veyraDb, '2026-11-26', '2026-11-25T18:30:00.000Z', [
+      { startAt: '2026-11-26T12:00:00.000Z', endAt: '2026-11-26T13:00:00.000Z' },
+    ]);
+    expect(shortDay).toMatchObject({
+      roomMinutes: 180,
+      freeTimeLeftMinutes: 180,
+      workdayStart: '10:00',
+      workdayEnd: '14:00',
+    });
+  });
+
+  it('computeWeekdayRoom counts a running focus session up to now', () => {
+    const blk = createBlock(veyraDb, { title: 'Running' }, { now: '2026-11-25T07:00:00.000Z' });
+    startFocus(veyraDb, blk.id, '2026-11-25T12:00:00.000Z');
+
+    const room = computeWeekdayRoom(veyraDb, '2026-11-25', '2026-11-25T13:30:00.000Z', []);
+    // 90m running so far -> budget 150m; free 13:30–18:00 = 270m -> room 150m
+    expect(room).toMatchObject({
+      focusedTodayMinutes: 90,
+      focusBudgetLeftMinutes: 150,
+      freeTimeLeftMinutes: 270,
+      roomMinutes: 150,
+    });
+  });
+
+  it('updateSettings validates workday hours', () => {
+    expect(() => updateSettings(veyraDb, { workdayStart: '9:00' })).toThrow();
+    expect(() => updateSettings(veyraDb, { workdayStart: '18:00', workdayEnd: '09:00' })).toThrow(
+      /must be before/,
+    );
+    const updated = updateSettings(veyraDb, { workdayStart: '08:30', workdayEnd: '17:30' });
+    expect(updated.workdayStart).toBe('08:30');
+    expect(updated.workdayEnd).toBe('17:30');
   });
 
   it('computeProjectSizeStatsMap snaps learned default size to 30/60/120 after 3 completed blocks and calculates sizeDriftPct', () => {
@@ -329,15 +472,15 @@ describe('Task 7: Capacity, Room, Learned Block Sizes, Suggested Order, 8-Week P
 
   it('computeTodayCapacity places fitLine at cumulative room boundary and computes overflowBlockCount and overflowMinutes', () => {
     const today = '2026-11-25';
-    const now = '2026-11-25T08:00:00.000Z';
+    const now = '2026-11-25T14:00:00.000Z';
 
-    // 120m of meetings -> fallback 240 - 120 = 120m room
+    // 14:00 now, workday ends 18:00, 120m of meetings still ahead -> 120m free < 240m budget
     upsertCalendarEvents(veyraDb, 'manual', [
       {
         externalId: 'm-2h',
         title: 'Workshop',
-        startAt: '2026-11-25T10:00:00.000Z',
-        endAt: '2026-11-25T12:00:00.000Z',
+        startAt: '2026-11-25T15:00:00.000Z',
+        endAt: '2026-11-25T17:00:00.000Z',
       },
     ]);
 

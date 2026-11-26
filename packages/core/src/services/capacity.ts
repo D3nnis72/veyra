@@ -2,11 +2,12 @@ import { and, eq, isNull } from 'drizzle-orm';
 import type { VeyraDb } from '../db.js';
 import { NotFoundError, ValidationError } from '../errors.js';
 import { generateOrderKey } from '../order-key.js';
-import { blocks, calendarEvents, focusSessions } from '../schema.js';
+import { blocks, calendarEvents, focusSessions, settings } from '../schema.js';
 import {
   addDaysToDateString,
   formatLocalDate,
   getLocalDayBoundsIso,
+  getLocalTimeIso,
   getWeekRange,
   getWeekdayToken,
 } from '../time.js';
@@ -14,6 +15,9 @@ import {
   type Block,
   type BlockSizeMinutes,
   type CalendarEvent,
+  DEFAULT_SETTINGS_ID,
+  DEFAULT_WORKDAY_END,
+  DEFAULT_WORKDAY_START,
   type DateOnly,
   type DayLookBackSummary,
   type FitLineSummary,
@@ -126,7 +130,38 @@ function snapToBlockSize(minutes: number): BlockSizeMinutes {
   return 120;
 }
 
-function computeMergedMeetingMinutes(
+/**
+ * `remaining`: for today, count from `max(now, workdayStart)` and take focus already done today
+ * off the budget (Today view, fit line). For any other date it behaves like `fullDay`.
+ * `fullDay`: count the whole workday with no focus taken off (Plan, Review, Day look back).
+ */
+export type WeekdayRoomMode = 'remaining' | 'fullDay';
+
+interface WorkdayHours {
+  workdayStart: string;
+  workdayEnd: string;
+}
+
+interface WeekdayRoomContext {
+  timezone: string;
+  nowMs: number;
+  workday: WorkdayHours;
+  mode: WeekdayRoomMode;
+}
+
+function getActiveWorkday(veyraDb: VeyraDb): WorkdayHours {
+  const row = veyraDb.db
+    .select({ workdayStart: settings.workdayStart, workdayEnd: settings.workdayEnd })
+    .from(settings)
+    .where(eq(settings.id, DEFAULT_SETTINGS_ID))
+    .get();
+  return {
+    workdayStart: row?.workdayStart ?? DEFAULT_WORKDAY_START,
+    workdayEnd: row?.workdayEnd ?? DEFAULT_WORKDAY_END,
+  };
+}
+
+function computeMergedMeetingMs(
   events: ReadonlyArray<Pick<CalendarEvent, 'startAt' | 'endAt'>>,
   dayStartMs: number,
   dayEndMs: number,
@@ -159,7 +194,7 @@ function computeMergedMeetingMinutes(
     }
   }
   totalMs += curEnd - curStart;
-  return msToRoundedMinutes(totalMs);
+  return totalMs;
 }
 
 function computeFocusMinutesForDate(
@@ -182,11 +217,11 @@ function computeFocusMinutesForDate(
 
 function computeWeekdayRoomWithPreloaded(
   dateStr: DateOnly,
-  timezone: string,
-  nowMs: number,
+  ctx: WeekdayRoomContext,
   allSessions: ReadonlyArray<Pick<FocusSession, 'startedAt' | 'endedAt'>>,
   eventsForRoom: ReadonlyArray<Pick<CalendarEvent, 'startAt' | 'endAt'>>,
 ): RoomTodaySummary {
+  const { timezone, nowMs, workday } = ctx;
   const activeWeekdayTotals: number[] = [];
   for (let weeksBack = 1; weeksBack <= 4; weeksBack++) {
     const priorDate = addDaysToDateString(dateStr, -7 * weeksBack);
@@ -201,41 +236,67 @@ function computeWeekdayRoomWithPreloaded(
     ? Math.round(median(activeWeekdayTotals))
     : DEFAULT_WEEKDAY_BASELINE_MINUTES;
 
-  const { startIso, endIso } = getLocalDayBoundsIso(dateStr, timezone);
-  const dayStartMs = Date.parse(startIso);
-  const dayEndMs = Date.parse(endIso);
-  const meetingMinutes = computeMergedMeetingMinutes(eventsForRoom, dayStartMs, dayEndMs);
-  const roomMinutes = Math.max(0, baselineFocusMinutes - meetingMinutes);
+  const countsFromNow =
+    ctx.mode === 'remaining' && formatLocalDate(new Date(nowMs), timezone) === dateStr;
+
+  const workdayStartMs = Date.parse(getLocalTimeIso(dateStr, workday.workdayStart, timezone));
+  const workdayEndMs = Date.parse(getLocalTimeIso(dateStr, workday.workdayEnd, timezone));
+  const rangeStartMs = countsFromNow ? Math.max(nowMs, workdayStartMs) : workdayStartMs;
+  const rangeEndMs = workdayEndMs;
+
+  let meetingMs = 0;
+  let freeMs = 0;
+  if (rangeEndMs > rangeStartMs) {
+    meetingMs = computeMergedMeetingMs(eventsForRoom, rangeStartMs, rangeEndMs);
+    freeMs = rangeEndMs - rangeStartMs - meetingMs;
+  }
+  const meetingMinutes = msToRoundedMinutes(meetingMs);
+  const freeTimeLeftMinutes = msToRoundedMinutes(freeMs);
+
+  const focusedTodayMinutes = countsFromNow
+    ? computeFocusMinutesForDate(allSessions, dateStr, timezone, nowMs)
+    : 0;
+  const focusBudgetLeftMinutes = Math.max(0, baselineFocusMinutes - focusedTodayMinutes);
+  const roomMinutes = Math.min(focusBudgetLeftMinutes, freeTimeLeftMinutes);
   const weekdayLabel = WEEKDAY_LABELS[getWeekdayToken(dateStr)];
 
   return {
     roomMinutes,
     baselineFocusMinutes,
+    focusedTodayMinutes,
+    focusBudgetLeftMinutes,
+    freeTimeLeftMinutes,
     meetingMinutes,
+    countsFromNow,
+    workdayStart: workday.workdayStart,
+    workdayEnd: workday.workdayEnd,
     hasLearnedBaseline,
     weekdayLabel,
   };
 }
 
 /**
- * Computes available focus room for a given local date:
- * - Inspects the 4 preceding same-weekday dates (-7d, -14d, -21d, -28d),
- *   excluding zero-focus days (PTO / inactive).
- * - Uses the median of active weekday totals once >= 2 active samples exist;
- *   otherwise falls back to 240m.
- * - Subtracts the union duration of non-deleted meetings clipped to the local day
- *   (merging overlapping meetings so double-booked calls are not subtracted twice),
- *   clamped at 0.
+ * Computes the focus room for a given local date as
+ * `min(focusBudgetLeft, freeTimeLeft)`:
+ * - Focus budget: median focus of the 4 preceding same weekdays (-7d … -28d, zero-focus days
+ *   excluded) once >= 2 active samples exist, otherwise 240m. In `remaining` mode on today,
+ *   focus already logged today (including a running session up to now) is taken off.
+ * - Free time: minutes between the range start and the configured `workdayEnd`, minus the
+ *   union of non-deleted meetings inside that range (overlapping meetings count once).
+ *   The range starts at `max(now, workdayStart)` in `remaining` mode on today, otherwise at
+ *   `workdayStart`. Past `workdayEnd` it is 0.
  */
 export function computeWeekdayRoom(
   veyraDb: VeyraDb,
   dateStr: DateOnly,
   now?: Date | string,
   eventsOverride?: ReadonlyArray<Pick<CalendarEvent, 'startAt' | 'endAt'>>,
+  mode: WeekdayRoomMode = 'remaining',
 ): RoomTodaySummary {
   const nowDate = resolveNow(now);
   const nowMs = nowDate.getTime();
   const timezone = getActiveTimezone(veyraDb);
+  const workday = getActiveWorkday(veyraDb);
 
   const allSessions = veyraDb.db
     .select({ startedAt: focusSessions.startedAt, endedAt: focusSessions.endedAt })
@@ -251,7 +312,12 @@ export function computeWeekdayRoom(
       .where(isNull(calendarEvents.deletedAt))
       .all();
 
-  return computeWeekdayRoomWithPreloaded(dateStr, timezone, nowMs, allSessions, events);
+  return computeWeekdayRoomWithPreloaded(
+    dateStr,
+    { timezone, nowMs, workday, mode },
+    allSessions,
+    events,
+  );
 }
 
 /**
@@ -466,6 +532,7 @@ function buildDayLookBack(
   allEvents: ReadonlyArray<Pick<CalendarEvent, 'startAt' | 'endAt'>>,
   timezone: string,
   nowMs: number,
+  workday: WorkdayHours,
   notFitBlocks: Array<{ id: string; title: string; destination: string }>,
 ): DayLookBackSummary {
   const { startIso, endIso } = getLocalDayBoundsIso(targetDate, timezone);
@@ -498,10 +565,10 @@ function buildDayLookBack(
   const focusedMinutes = msToRoundedMinutes(totalMs);
   const goalSharePct = totalMs > 0 ? Math.round((goalMs / totalMs) * 100) : 0;
   const movedGoalCount = completedBlocks.filter((b) => b.senseSignal === 'moved').length;
+  // Look back compares the day's focus with its whole-workday room, not what is left of it now.
   const roomMinutes = computeWeekdayRoomWithPreloaded(
     targetDate,
-    timezone,
-    nowMs,
+    { timezone, nowMs, workday, mode: 'fullDay' },
     allSessions,
     allEvents,
   ).roomMinutes;
@@ -520,7 +587,7 @@ function buildDayLookBack(
 
 /**
  * Computes Today's full capacity read model:
- * - `roomToday`: available focus room for `date`
+ * - `roomToday`: focus room still realistic for `date` from now on (`remaining` mode)
  * - `suggestedOrder`: deterministic 4-tier suggested order + motion hot spot demotion + chronic carryover flagging
  * - `fitLine`: splits `upNext` in its CURRENT display order at cumulative `effectiveSizeMinutes <= roomToday.roomMinutes`
  * - `dayLookBack`: today's look-back once `upNext` is cleared and `completedToday.length > 0`,
@@ -547,10 +614,10 @@ export function computeTodayCapacity(
     .where(isNull(calendarEvents.deletedAt))
     .all();
 
+  const workday = getActiveWorkday(veyraDb);
   const roomToday = computeWeekdayRoomWithPreloaded(
     date,
-    timezone,
-    nowMs,
+    { timezone, nowMs, workday, mode: 'remaining' },
     allSessions,
     todayEvents,
   );
@@ -737,6 +804,7 @@ export function computeTodayCapacity(
       allEvents,
       timezone,
       nowMs,
+      workday,
       droppedNoRoomToday,
     );
   } else {
@@ -803,6 +871,7 @@ export function computeTodayCapacity(
         allEvents,
         timezone,
         nowMs,
+        workday,
         notFitYesterday,
       );
     }
@@ -894,6 +963,7 @@ export function computePlanCapacity(
   const nowDate = resolveNow(now);
   const nowMs = nowDate.getTime();
   const timezone = getActiveTimezone(veyraDb);
+  const workday = getActiveWorkday(veyraDb);
 
   const projectById = new Map<string, ProjectWithStats>();
   for (const p of projects) {
@@ -957,10 +1027,10 @@ export function computePlanCapacity(
       );
     }
 
+    // Plan compares a day's planned blocks (done ones included) with its whole-workday room.
     const room = computeWeekdayRoomWithPreloaded(
       day.date,
-      timezone,
-      nowMs,
+      { timezone, nowMs, workday, mode: 'fullDay' },
       allSessions,
       allEvents,
     );

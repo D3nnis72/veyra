@@ -22,6 +22,7 @@ import {
   type ProjectWithStats,
   type RecurrenceRule,
   type RevisitHorizon,
+  type RoomTodaySummary,
   type RuleKept,
   type SenseSignal,
   type UpdateBlockInput,
@@ -29,6 +30,9 @@ import {
   type UpdateGoalInput,
   type UpdateProjectInput,
   type WeeklyReview,
+  BLOCK_SIZE_MAX_MINUTES,
+  BLOCK_SIZE_MIN_MINUTES,
+  BLOCK_SIZE_STEP_MINUTES,
   blockBucketSchema,
   blockSizeMinutesSchema,
   blockStatusSchema,
@@ -39,6 +43,7 @@ import {
   goalKindSchema,
   goalStatusSchema,
   normalizedCalendarEventSchema,
+  parseDurationMinutes,
   projectStatusSchema,
   recurrenceRuleSchema,
   revisitHorizonSchema,
@@ -199,19 +204,16 @@ export function parseBlockSizeOption(raw: string): BlockSizeMinutes | null {
     return null;
   }
 
-  let minutes: number | null = null;
-  if (cleaned === '30' || cleaned === '30m' || cleaned === '0.5h') {
-    minutes = 30;
-  } else if (cleaned === '60' || cleaned === '60m' || cleaned === '1h') {
-    minutes = 60;
-  } else if (cleaned === '120' || cleaned === '120m' || cleaned === '2h') {
-    minutes = 120;
-  }
-
-  const parsed = blockSizeMinutesSchema.safeParse(minutes);
+  const minutes = parseDurationMinutes(cleaned);
+  const rounded =
+    minutes === null
+      ? null
+      : Math.round(minutes / BLOCK_SIZE_STEP_MINUTES) * BLOCK_SIZE_STEP_MINUTES;
+  const parsed = blockSizeMinutesSchema.safeParse(rounded);
   if (!parsed.success) {
     throw new CliUsageError(
-      `Invalid --size '${raw}'. Expected 30, 60, 120, 30m, 1h, 2h, or auto.`,
+      `Invalid --size '${raw}'. Expected minutes or a duration like 45, 45m, 90m, 1h30m, 1.5h, 3h ` +
+        `(${BLOCK_SIZE_MIN_MINUTES}–${BLOCK_SIZE_MAX_MINUTES}m, rounded to ${BLOCK_SIZE_STEP_MINUTES}m), or auto.`,
     );
   }
   return parsed.data;
@@ -351,6 +353,16 @@ function formatDuration(minutes: number): string {
   return `${m}m`;
 }
 
+function formatRoomTodayExplanation(room: RoomTodaySummary): string {
+  const budget = room.hasLearnedBaseline
+    ? `your usual ${room.weekdayLabel} ${formatDuration(room.baselineFocusMinutes)}`
+    : `your ${formatDuration(room.baselineFocusMinutes)}`;
+  const freePart = room.countsFromNow
+    ? `${formatDuration(room.freeTimeLeftMinutes)} free until ${room.workdayEnd}`
+    : `${formatDuration(room.freeTimeLeftMinutes)} free ${room.workdayStart}–${room.workdayEnd}`;
+  return `${formatDuration(room.roomMinutes)} (${freePart}, ${formatDuration(room.focusBudgetLeftMinutes)} of ${budget} focus budget left)`;
+}
+
 function formatBlockLine(block: Block): string {
   const tags: string[] = [];
   if (block.isOps) tags.push('ops');
@@ -441,9 +453,7 @@ export function createProgram(ctx: ProgramContext): Command {
       emit<TodayResponse>(data, (d) => {
         const lines: string[] = [`Today (${d.date}, ${d.timezone})`];
         if (d.weeklyRule) lines.push(`Rule: ${d.weeklyRule}`);
-        lines.push(
-          `Room today: ${formatDuration(d.roomToday.roomMinutes)} (baseline ${formatDuration(d.roomToday.baselineFocusMinutes)} - ${formatDuration(d.roomToday.meetingMinutes)} meetings)`,
-        );
+        lines.push(`Room today: ${formatRoomTodayExplanation(d.roomToday)}`);
         if (d.focusStatus.activeBlock) {
           const mins = Math.floor(d.focusStatus.elapsedSeconds / 60);
           lines.push(
@@ -626,7 +636,7 @@ export function createProgram(ctx: ProgramContext): Command {
     .option('--end <timeOrIso>', 'Planned end time (HH:MM or ISO timestamp)')
     .option('--bucket <bucket>', 'Target bucket (inbox|scheduled|later)')
     .option('--due <YYYY-MM-DD>', 'Due date')
-    .option('--size <size>', 'Rough block size (30|60|120|30m|1h|2h|auto)')
+    .option('--size <size>', 'Block size: minutes or duration, 5–600m in 5m steps (e.g. 30m, 45m, 1h30m, 2h) or auto')
     .option('--revisit <horizon>', 'Revisit horizon (next-week|2w|next-month|next-quarter|YYYY-MM-DD)')
     .option('--repeat <rule>', 'Recurrence rule (weekdays|weekly|days:[mon,wed,fri]|mon,wed,fri)')
     .option('--notes <text>', 'Block notes')
@@ -740,7 +750,7 @@ export function createProgram(ctx: ProgramContext): Command {
     .option('--bucket <bucket>', 'Target bucket (inbox|scheduled|later)')
     .option('--date <YYYY-MM-DD>', 'Scheduled date')
     .option('--due <YYYY-MM-DD>', 'Due date (or "none" to clear)')
-    .option('--size <size>', 'Rough block size (30|60|120|30m|1h|2h|auto)')
+    .option('--size <size>', 'Block size: minutes or duration, 5–600m in 5m steps (e.g. 30m, 45m, 1h30m, 2h) or auto')
     .option('--revisit <horizon>', 'Revisit horizon (or "none" to clear)')
     .option('--repeat <rule>', 'Recurrence rule')
     .option('--no-repeat', 'Remove recurrence rule')

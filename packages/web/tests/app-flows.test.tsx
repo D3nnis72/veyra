@@ -181,6 +181,8 @@ const BASE_SETTINGS: PublicSettings = {
   globalCaptureShortcut: 'CommandOrControl+Shift+P',
   hotkeys: {},
   runInMenuBar: true,
+  workdayStart: '09:00',
+  workdayEnd: '18:00',
   updatedAt: '2026-11-23T09:15:00.000Z',
 };
 
@@ -205,7 +207,13 @@ const BASE_TODAY: TodayResponse = {
   roomToday: {
     roomMinutes: 240,
     baselineFocusMinutes: 240,
+    focusedTodayMinutes: 0,
+    focusBudgetLeftMinutes: 240,
+    freeTimeLeftMinutes: 465,
     meetingMinutes: 0,
+    countsFromNow: true,
+    workdayStart: '09:00',
+    workdayEnd: '18:00',
     hasLearnedBaseline: false,
     weekdayLabel: 'Monday',
   },

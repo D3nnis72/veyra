@@ -18,6 +18,7 @@ Veyra splits configuration into three clear layers so workspace behavior, server
 Edited in Full-Page `Settings` (`⌘,`) or via `PATCH /api/settings`:
 
 - `timezone`: IANA timezone string anchoring midnight rollover and weekly boundaries.
+- `workdayStart` / `workdayEnd` (`HH:mm` local time, defaults `09:00` / `18:00`, start must be before end): the workday window `Room today` counts free time in. API and SQLite only for now, no Settings UI field yet.
 - `calendarSyncMode`: `outlook_cli`, `ics`, or `manual`, paired with `outlookCliCommand`, `icsFeedUrl`, `calendarSyncIntervalMin` (default `15`), and `skipDeclinedAndAllDay` (default `true`).
 - `webhookUrl` and `webhookEvents`: target endpoint and enabled lifecycle hooks (`focus.started`, `focus.ended`, `block.completed`, `review.completed`).
 - `globalCaptureShortcut` (default `CommandOrControl+Shift+P`) and `runInMenuBar` (default `true`): synced to Electron's local preferences on save.

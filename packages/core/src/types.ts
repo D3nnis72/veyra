@@ -3,6 +3,13 @@ import { z } from 'zod';
 export const SYSTEM_OTHER_PROJECT_ID = '00000000-0000-4000-8000-000000000001';
 export const DEFAULT_SETTINGS_ID = 'default';
 export const DEFAULT_GLOBAL_CAPTURE_SHORTCUT = 'CommandOrControl+Shift+P';
+export const DEFAULT_WORKDAY_START = '09:00';
+export const DEFAULT_WORKDAY_END = '18:00';
+
+/** Local wall-clock time `HH:mm` (24h), e.g. "09:00". */
+export const localTimeOfDaySchema = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Expected a local time as HH:mm (00:00–23:59)');
 
 /**
  * Rebindable hotkeys. `quickCapture` is stored in `globalCaptureShortcut`, every other
@@ -172,9 +179,62 @@ export type BlockStatus = z.infer<typeof blockStatusSchema>;
 export const energySignalSchema = z.enum(['up', 'neutral', 'down']);
 export type EnergySignal = z.infer<typeof energySignalSchema>;
 
+/** Preset sizes offered as quick picks; any value accepted by `blockSizeMinutesSchema` is valid. */
 export const BLOCK_SIZE_OPTIONS = [30, 60, 120] as const;
-export const blockSizeMinutesSchema = z.union([z.literal(30), z.literal(60), z.literal(120)]);
+export const BLOCK_SIZE_MIN_MINUTES = 5;
+export const BLOCK_SIZE_MAX_MINUTES = 600;
+export const BLOCK_SIZE_STEP_MINUTES = 5;
+export const blockSizeMinutesSchema = z
+  .number()
+  .int()
+  .min(BLOCK_SIZE_MIN_MINUTES)
+  .max(BLOCK_SIZE_MAX_MINUTES)
+  .multipleOf(BLOCK_SIZE_STEP_MINUTES);
+/** Block size in minutes: integer, 5–600, multiple of 5. */
 export type BlockSizeMinutes = z.infer<typeof blockSizeMinutesSchema>;
+
+/**
+ * Parses a human duration into raw minutes (not rounded or range-checked).
+ * Accepts `45`, `45m`, `90 min`, `1h`, `1.5h`, `1,5h`, `1h30m`, `1h 30m`, `1h30`, `1:30`.
+ * Returns null when the text is not a duration.
+ */
+export function parseDurationMinutes(raw: string): number | null {
+  const cleaned = raw.trim().toLowerCase().replace(/,/g, '.');
+  if (!cleaned) return null;
+
+  const clock = /^(\d+):([0-5]\d)$/.exec(cleaned);
+  if (clock) {
+    return Number(clock[1]) * 60 + Number(clock[2]);
+  }
+
+  const match =
+    /^(?:(\d+(?:\.\d+)?)\s*h(?:ours?|rs?)?)?\s*(?:(\d+(?:\.\d+)?)\s*(?:m|mins?|minutes?)?)?$/.exec(
+      cleaned,
+    );
+  if (!match || (match[1] === undefined && match[2] === undefined)) {
+    return null;
+  }
+  const hours = match[1] !== undefined ? Number(match[1]) : 0;
+  const minutes = match[2] !== undefined ? Number(match[2]) : 0;
+  const total = hours * 60 + minutes;
+  return Number.isFinite(total) ? total : null;
+}
+
+/** Rounds to the nearest 5 minutes and clamps into the allowed block size range. */
+export function normalizeBlockSizeMinutes(minutes: number): BlockSizeMinutes {
+  const stepped = Math.round(minutes / BLOCK_SIZE_STEP_MINUTES) * BLOCK_SIZE_STEP_MINUTES;
+  return Math.min(BLOCK_SIZE_MAX_MINUTES, Math.max(BLOCK_SIZE_MIN_MINUTES, stepped));
+}
+
+/**
+ * Parses free-text block size input (see `parseDurationMinutes`), rounded to the
+ * nearest 5 minutes and clamped to 5–600. Returns null for unparseable or zero input.
+ */
+export function parseBlockSizeInput(raw: string): BlockSizeMinutes | null {
+  const minutes = parseDurationMinutes(raw);
+  if (minutes === null || minutes <= 0) return null;
+  return normalizeBlockSizeMinutes(minutes);
+}
 
 export const senseSignalSchema = z.enum(['moved', 'partly', 'motion']);
 export type SenseSignal = z.infer<typeof senseSignalSchema>;
@@ -388,6 +448,8 @@ export const settingsSchema = z.object({
   globalCaptureShortcut: z.string().min(1),
   runInMenuBar: z.boolean(),
   hotkeys: hotkeyOverridesSchema,
+  workdayStart: localTimeOfDaySchema,
+  workdayEnd: localTimeOfDaySchema,
   updatedAt: z.string(),
 });
 export type Settings = z.infer<typeof settingsSchema>;
@@ -721,6 +783,8 @@ export const updateSettingsInputSchema = z.object({
   globalCaptureShortcut: z.string().min(1).optional(),
   runInMenuBar: z.boolean().optional(),
   hotkeys: hotkeyOverridesSchema.optional(),
+  workdayStart: localTimeOfDaySchema.optional(),
+  workdayEnd: localTimeOfDaySchema.optional(),
 });
 export type UpdateSettingsInput = z.infer<typeof updateSettingsInputSchema>;
 
@@ -863,10 +927,28 @@ export interface ProjectWithStats extends Project {
   lastTouchedAt: string;
 }
 
+/**
+ * Room for a local day: `roomMinutes = min(focusBudgetLeftMinutes, freeTimeLeftMinutes)`.
+ * For today (`countsFromNow`) the range starts at `max(now, workdayStart)` and focus already
+ * done today is taken off the budget; for any other day the range is the whole workday and
+ * `focusedTodayMinutes` is 0.
+ */
 export interface RoomTodaySummary {
   roomMinutes: number;
+  /** Learned median of the last 4 same weekdays, or the 240m default. */
   baselineFocusMinutes: number;
+  /** Focus already logged on this local day, including a running session up to now. */
+  focusedTodayMinutes: number;
+  /** `max(0, baselineFocusMinutes - focusedTodayMinutes)`. */
+  focusBudgetLeftMinutes: number;
+  /** Workday minutes left in the counted range minus `meetingMinutes`. */
+  freeTimeLeftMinutes: number;
+  /** Merged meeting minutes inside the counted range (overlaps count once). */
   meetingMinutes: number;
+  /** True when the range starts at the current time (today), false for a whole workday. */
+  countsFromNow: boolean;
+  workdayStart: string;
+  workdayEnd: string;
   hasLearnedBaseline: boolean;
   weekdayLabel: string;
 }
