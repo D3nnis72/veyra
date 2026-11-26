@@ -36,6 +36,7 @@ import type {
   MacOsFocusShortcutsResponse,
   MoveBlockInput,
   NormalizedCalendarEvent,
+  NoteTagCount,
   NotionOAuthStartResponse,
   NotionSearchResponse,
   NotionTestConnectionResult,
@@ -100,6 +101,9 @@ export interface VeyraDesktopBridge {
   }) => Promise<{ failed: string[] } | undefined | void>;
   closeCaptureWindow: () => Promise<void>;
   closeCommandWindow?: () => Promise<void>;
+  closeTrayPopover?: () => Promise<void>;
+  resizeTrayPopover?: (height: number) => Promise<void>;
+  trayAction?: (action: 'show-window' | 'quick-capture' | 'quick-focus' | 'quit') => Promise<void>;
   focusAndDispatchAction?: (action: DesktopCommandAction) => Promise<void>;
   onCommandAction?: (listener: (action: DesktopCommandAction) => void) => () => void;
   openExternalUrl: (url: string) => Promise<void>;
@@ -452,6 +456,7 @@ export const queryKeys = {
   block: (id: string) => ['block', id] as const,
   focus: ['focus'] as const,
   notes: (filter?: ListDailyNotesFilter) => ['notes', filter ?? {}] as const,
+  noteTags: ['notes', 'tags'] as const,
   events: (start?: string, end?: string) => ['events', start ?? '', end ?? ''] as const,
   settings: ['settings'] as const,
   notionSearch: (q: string) => ['notion-search', q] as const,
@@ -710,8 +715,13 @@ export const apiClient = {
         weekStartDate: filter?.weekStartDate,
         projectId: filter?.projectId,
         goalId: filter?.goalId,
+        tag: filter?.tag,
       })}`,
     );
+  },
+
+  listNoteTags(): Promise<{ tags: NoteTagCount[] }> {
+    return request<{ tags: NoteTagCount[] }>('GET', '/api/notes/tags');
   },
 
   addNote(input: CreateDailyNoteInput): Promise<{ note: DailyNote }> {

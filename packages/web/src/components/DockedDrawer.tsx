@@ -29,7 +29,7 @@ export function DockedDrawer({
   useEffect(() => {
     if (!open || !dismissOnEscape) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && !e.defaultPrevented) {
         e.stopPropagation();
         onClose();
       }

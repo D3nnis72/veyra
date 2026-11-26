@@ -3,13 +3,19 @@ import type { DailyNote, ProjectWithStats } from '@veyra/core/types';
 import { CornerDownLeft, Flame, FolderKanban, NotebookPen, Trash2 } from 'lucide-react';
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../api/client';
-import { invalidateNotesRelated, useDailyNotesQuery, useProjectsQuery } from '../api/queries';
+import {
+  invalidateNotesRelated,
+  useDailyNotesQuery,
+  useNoteTagsQuery,
+  useProjectsQuery,
+} from '../api/queries';
 import { Button } from './Button';
 import { DockedDrawer } from './DockedDrawer';
+import { NoteTagChip, NoteTagSuggestions, useNoteTagAutocomplete } from './NoteTags';
 import { Pill } from './Pill';
 import { ProjectBadge } from './ProjectBadge';
 import { SelectPopover } from './SelectPopover';
-import { formatDateHeading, formatLocalTime, getTodayDateString } from './icons';
+import { formatDateHeading, formatLocalTime, formatShortDate, getTodayDateString } from './icons';
 
 export interface DailyNotesDrawerProps {
   open: boolean;
@@ -27,9 +33,22 @@ export function DailyNotesDrawer({ open, date, onClose }: DailyNotesDrawerProps)
   const [isOps, setIsOps] = useState(false);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState('');
+  /** Active tag filter: shows every note with this tag across all dates instead of one day. */
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
 
-  const notesQuery = useDailyNotesQuery({ date: effectiveDate }, open);
+  const notesQuery = useDailyNotesQuery(
+    tagFilter ? { tag: tagFilter } : { date: effectiveDate },
+    open,
+  );
+  const tagsQuery = useNoteTagsQuery(open);
   const projectsQuery = useProjectsQuery({ includeArchived: false });
+  const tagAutocomplete = useNoteTagAutocomplete(draft, setDraft, inputRef, tagsQuery.data?.tags);
+  const allTags = tagsQuery.data?.tags ?? [];
+
+  const toggleTagFilter = (tag: string) => {
+    setTagFilter((current) => (current === tag ? null : tag));
+    setEditingNoteId(null);
+  };
 
   const projectsById = useMemo(() => {
     const map = new Map<string, ProjectWithStats>();
@@ -49,6 +68,7 @@ export function DailyNotesDrawer({ open, date, onClose }: DailyNotesDrawerProps)
       window.setTimeout(() => inputRef.current?.focus(), 60);
     } else {
       setEditingNoteId(null);
+      setTagFilter(null);
     }
   }, [open]);
 
@@ -56,9 +76,11 @@ export function DailyNotesDrawer({ open, date, onClose }: DailyNotesDrawerProps)
     mutationFn: () =>
       apiClient.addNote({
         content: draft.trim(),
-        date: effectiveDate,
+        // In the tag view a new note lands today and carries the active tag.
+        date: tagFilter ? getTodayDateString() : effectiveDate,
         projectId: selectedProjectId,
         isOps,
+        ...(tagFilter ? { tags: [tagFilter] } : {}),
       }),
     onSuccess: () => {
       setDraft('');
@@ -102,23 +124,31 @@ export function DailyNotesDrawer({ open, date, onClose }: DailyNotesDrawerProps)
     updateMutation.mutate({ id: note.id, content: trimmed });
   };
 
-  const notes = notesQuery.data?.notes ?? [];
+  // Day view reads like a log (oldest first); the tag view is a worklist (newest first).
+  const notes = useMemo(() => {
+    const list = notesQuery.data?.notes ?? [];
+    return tagFilter ? [...list].reverse() : list;
+  }, [notesQuery.data, tagFilter]);
 
   return (
     <DockedDrawer
       open={open}
       onClose={onClose}
       width={520}
-      ariaLabel="Daily Notes"
+      ariaLabel="Notes"
       title={
         <div className="flex items-center gap-2">
           <NotebookPen size={16} className="text-[#AEB8FF] shrink-0" />
           <span className="font-display text-[16px] font-semibold text-[#EDEDED]">
-            Daily Notes
+            Notes
           </span>
         </div>
       }
-      subtitle={formatDateHeading(effectiveDate)}
+      subtitle={
+        tagFilter
+          ? `#${tagFilter} · all dates · ${notes.length} ${notes.length === 1 ? 'note' : 'notes'}`
+          : formatDateHeading(effectiveDate)
+      }
       headerActions={
         <Pill tone="accent" title="Global shortcut opens floating capture anywhere">
           ⌘⇧P Global
@@ -126,13 +156,28 @@ export function DailyNotesDrawer({ open, date, onClose }: DailyNotesDrawerProps)
       }
       footer={
         <form onSubmit={handleAdd} className="space-y-2.5">
+          <NoteTagSuggestions autocomplete={tagAutocomplete} />
           <div className="flex items-center gap-2">
             <input
               ref={inputRef}
               type="text"
+              aria-label="New note"
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder="Jot down a thought, blocker, or win… (Enter to save)"
+              onChange={(e) => {
+                setDraft(e.target.value);
+                tagAutocomplete.syncCaret(e.target);
+              }}
+              onSelect={(e) => tagAutocomplete.syncCaret(e.currentTarget)}
+              onKeyDown={(e) => {
+                if (tagAutocomplete.handleKey(e)) {
+                  e.nativeEvent.stopPropagation();
+                }
+              }}
+              placeholder={
+                tagFilter
+                  ? `Add a note to #${tagFilter}… (Enter to save)`
+                  : 'Jot down a thought, blocker, or win… #tag (Enter to save)'
+              }
               className="flex-1 h-9 px-3 rounded-[8px] bg-[#262626] border border-[#3C3C3C] text-[13px] text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none focus:border-[#5566F2]"
             />
             <Button
@@ -196,11 +241,40 @@ export function DailyNotesDrawer({ open, date, onClose }: DailyNotesDrawerProps)
         </form>
       }
     >
+      {allTags.length > 0 ? (
+        <div
+          role="group"
+          aria-label="Filter notes by tag"
+          className="flex items-center flex-wrap gap-1.5 pb-4 mb-1 border-b border-[#2A2A2A]"
+        >
+          {allTags.map(({ tag, count }) => (
+            <NoteTagChip
+              key={tag}
+              tag={tag}
+              count={count}
+              active={tagFilter === tag}
+              title={tagFilter === tag ? 'Show today again' : `All notes with #${tag}`}
+              onClick={() => toggleTagFilter(tag)}
+            />
+          ))}
+          {tagFilter ? (
+            <button
+              type="button"
+              onClick={() => setTagFilter(null)}
+              className="ml-1 text-[12px] font-medium text-[#9A9A9A] hover:text-[#EDEDED]"
+            >
+              Clear filter
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {notesQuery.isLoading ? (
         <div className="py-10 text-center text-[13px] text-[#6E6E6E]">Loading notes…</div>
       ) : notes.length === 0 ? (
         <div className="py-12 px-4 text-center space-y-2">
-          <div className="text-[14px] font-medium text-[#C4C4C4]">No notes captured yet</div>
+          <div className="text-[14px] font-medium text-[#C4C4C4]">
+            {tagFilter ? `No notes with #${tagFilter}` : 'No notes captured yet'}
+          </div>
           <p className="text-[12.5px] text-[#6E6E6E] max-w-[320px] mx-auto">
             Capture timestamped bullets here or from anywhere on macOS with{' '}
             <span className="text-[#9A9A9A] font-medium">⌘⇧P</span>. They show up in your Weekly
@@ -215,8 +289,19 @@ export function DailyNotesDrawer({ open, date, onClose }: DailyNotesDrawerProps)
 
             return (
               <li key={note.id} className="group py-3 first:pt-1 flex items-start gap-3">
-                <span className="mt-0.5 text-[11.5px] font-medium text-[#6E6E6E] tabular-nums w-11 shrink-0">
-                  {formatLocalTime(note.createdAt)}
+                <span
+                  className={`mt-0.5 text-[11.5px] font-medium text-[#6E6E6E] tabular-nums shrink-0 ${
+                    tagFilter ? 'w-[72px]' : 'w-11'
+                  }`}
+                >
+                  {tagFilter ? (
+                    <>
+                      <span className="block text-[#9A9A9A]">{formatShortDate(note.date)}</span>
+                      <span className="block">{formatLocalTime(note.createdAt)}</span>
+                    </>
+                  ) : (
+                    formatLocalTime(note.createdAt)
+                  )}
                 </span>
 
                 <div className="flex-1 min-w-0 space-y-1.5">
@@ -248,7 +333,7 @@ export function DailyNotesDrawer({ open, date, onClose }: DailyNotesDrawerProps)
                     </button>
                   )}
 
-                  {(project || note.isOps) ? (
+                  {(project || note.isOps || (note.tags?.length ?? 0) > 0) ? (
                     <div className="flex items-center flex-wrap gap-1.5">
                       {project ? (
                         <span className="inline-flex items-center gap-1.5 h-[22px] pl-1 pr-2 rounded-[6px] bg-[#262626] border border-[#3C3C3C] text-[11.5px] text-[#C4C4C4]">
@@ -266,6 +351,15 @@ export function DailyNotesDrawer({ open, date, onClose }: DailyNotesDrawerProps)
                           Ops
                         </Pill>
                       ) : null}
+                      {(note.tags ?? []).map((tag) => (
+                        <NoteTagChip
+                          key={tag}
+                          tag={tag}
+                          active={tagFilter === tag}
+                          title={`All notes with #${tag}`}
+                          onClick={() => toggleTagFilter(tag)}
+                        />
+                      ))}
                     </div>
                   ) : null}
                 </div>

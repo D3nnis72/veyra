@@ -39,7 +39,7 @@ Exact route handlers live in `packages/server/src/app.ts`:
 - **Goals & Projects:** `GET/POST /api/goals` (`?activeOnly=1` excludes `achieved` and `archived`), `GET/PATCH/DELETE /api/goals/:id`, `POST /api/goals/:id/{close,reorder}`, `GET/POST /api/projects`, `GET/PATCH/DELETE /api/projects/:id`
 - **Blocks:** `GET/POST /api/blocks`, `GET/PATCH/DELETE /api/blocks/:id`, `POST /api/blocks/:id/{move,reorder,park,drop,reopen}`
 - **Focus & Sessions:** `GET /api/focus`, `POST /api/focus/{start,resume,pause,stop,cancel,complete}`, `POST /api/sessions`, `PATCH /api/sessions/:id/trim`, `POST /api/sessions/:id/split`, `DELETE /api/sessions/:id`
-- **Daily Notes:** `GET/POST /api/notes`, `PATCH/DELETE /api/notes/:id`
+- **Notes & Tags:** `GET/POST /api/notes` (supports `?tag=<tag>` across all dates; `#tags` in content merge with explicit `tags`), `GET /api/notes/tags` (counts per active tag), `PATCH/DELETE /api/notes/:id`
 - **Calendar Events:** `GET /api/events`, `POST /api/events/{upsert,sync,auto-match}`, `PATCH /api/events/:id`
 - **Settings & Activity:** `GET/PATCH /api/settings`, `POST /api/settings/test-hook`, `GET /api/activity`
   - `Settings.notionToken` (or `VEYRA_NOTION_TOKEN` env fallback) and OAuth secrets stay server-side and are stripped from `GET/PATCH /api/settings`, which expose `notionConfigured` and `notionTokenSource` instead.

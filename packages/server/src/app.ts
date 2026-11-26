@@ -75,6 +75,7 @@ import {
   listBlocks,
   listCalendarEvents,
   listDailyNotes,
+  listNoteTags,
   listGoals,
   listProjects,
   listSessions,
@@ -1485,8 +1486,13 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
       weekStartDate: c.req.query('weekStartDate') ?? c.req.query('weekStart'),
       projectId: c.req.query('projectId'),
       goalId: c.req.query('goalId'),
+      tag: c.req.query('tag'),
     });
     return c.json({ notes });
+  });
+
+  app.get('/api/notes/tags', (c) => {
+    return c.json({ tags: listNoteTags(db) });
   });
 
   app.post('/api/notes', async (c) => {

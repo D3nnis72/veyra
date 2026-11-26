@@ -101,6 +101,15 @@ export function useDailyNotesQuery(filter?: ListDailyNotesFilter, enabled = true
   });
 }
 
+export function useNoteTagsQuery(enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.noteTags,
+    queryFn: () => apiClient.listNoteTags(),
+    enabled,
+    staleTime: 30_000,
+  });
+}
+
 export function usePlanQuery(weekStart?: string) {
   return useQuery({
     queryKey: queryKeys.plan(weekStart),

@@ -149,6 +149,7 @@ const BASE_DAILY_NOTES: DailyNote[] = [
     projectId: PROJ_1_ID,
     goalId: GOAL_1_ID,
     isOps: false,
+    tags: [],
     createdAt: '2026-11-23T08:15:00.000Z',
     updatedAt: '2026-11-23T08:15:00.000Z',
     deletedAt: null,
@@ -565,6 +566,9 @@ describe('Veyra Web App Flows', () => {
         };
         return jsonResponse({ block: blockDetailState });
       }
+      if (path === '/api/notes/tags' && method === 'GET') {
+        return jsonResponse({ tags: [] });
+      }
       if (path === '/api/notes' && method === 'GET') {
         return jsonResponse({ notes: BASE_DAILY_NOTES });
       }
@@ -607,10 +611,10 @@ describe('Veyra Web App Flows', () => {
     const blockDialog = await screen.findByRole('dialog', { name: 'Block detail' });
     expect(within(blockDialog).getByText(/Sessions · 2h 30m total/i)).toBeInTheDocument();
 
-    // Close block drawer and click + Note to open DailyNotesDrawer
+    // Close block drawer and click + Note to open Notes drawer
     await user.click(within(blockDialog).getByRole('button', { name: 'Close drawer' }));
     await user.click(screen.getByRole('button', { name: /\+ Note/i }));
-    const notesDialog = await screen.findByRole('dialog', { name: /Daily Notes/i });
+    const notesDialog = await screen.findByRole('dialog', { name: /^Notes$/i });
     expect(
       within(notesDialog).getByText(/Keep morning meetings out of deep build block/i),
     ).toBeInTheDocument();

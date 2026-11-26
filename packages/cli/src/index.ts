@@ -51,6 +51,8 @@ export {
   extractWebhookSummaryInput,
   formatAutoSummaryHuman,
   formatAutoSummaryPrompt,
+  computeSideWork,
+  formatSideWorkInline,
   resolveSummaryWindow,
   runAutoSummary,
   runSummarizerCommand,
@@ -61,11 +63,23 @@ export {
   type AutoSummaryWindow,
   type CollectedContextSection,
   type ContextCollector,
+  type ContextProjectActivity,
   type ContextCollectorInput,
   type RunAutoSummaryOptions,
   type SummarizerExecutionResult,
   type SummarizerRunner,
 } from './auto-summary.js';
+export {
+  DEFAULT_T3_DB_PATH,
+  aggregateT3ProjectActivity,
+  createT3CodeCollector,
+  formatT3ContextSection,
+  queryT3Activity,
+  type T3Activity,
+  type T3CodeCollectorOptions,
+  type T3MessageSample,
+  type T3ThreadActivity,
+} from './collectors/t3-code.js';
 export {
   DEFAULT_HOOK_ACCEPTED_PATHS,
   DEFAULT_HOOK_HOST,

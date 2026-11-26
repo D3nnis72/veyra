@@ -2,6 +2,7 @@ import { integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core
 import type {
   ActivityActor,
   BlockBucket,
+  BlockSideWorkEntry,
   BlockSizeMinutes,
   BlockStatus,
   CalendarEventSource,
@@ -89,6 +90,7 @@ export const blocks = sqliteTable('blocks', {
   outcomeNote: text('outcome_note'),
   resumeNote: text('resume_note'),
   autoSummary: text('auto_summary'),
+  sideWork: text('side_work', { mode: 'json' }).$type<BlockSideWorkEntry[]>(),
   recurrenceRule: text('recurrence_rule'),
   seriesId: text('series_id'),
   notes: text('notes').notNull().default(''),
@@ -145,6 +147,7 @@ export const dailyNotes = sqliteTable('daily_notes', {
   projectId: text('project_id').references(() => projects.id, { onDelete: 'set null' }),
   goalId: text('goal_id').references(() => goals.id, { onDelete: 'set null' }),
   isOps: integer('is_ops', { mode: 'boolean' }).notNull().default(false),
+  tags: text('tags', { mode: 'json' }).$type<string[]>().notNull().default([]),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
   deletedAt: text('deleted_at'),

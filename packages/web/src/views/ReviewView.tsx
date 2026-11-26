@@ -41,6 +41,7 @@ import { invalidateBlockRelated, useReviewQuery } from '../api/queries';
 import { useAppShell } from '../app/AppShellContext';
 import { Button } from '../components/Button';
 import { GoalChip } from '../components/GoalChip';
+import { NoteTagChip } from '../components/NoteTags';
 import { Pill } from '../components/Pill';
 import { ProjectBadge } from '../components/ProjectBadge';
 import {
@@ -1040,8 +1041,8 @@ export function ReviewView() {
               </div>
             </section>
 
-            {/* Collapsible Daily Notes This Week */}
-            <section className="veyra-card space-y-3" aria-label="Daily Notes This Week">
+            {/* Collapsible Notes This Week */}
+            <section className="veyra-card space-y-3" aria-label="Notes This Week">
               <div className="flex items-center justify-between gap-2">
                 <button
                   type="button"
@@ -1051,7 +1052,7 @@ export function ReviewView() {
                 >
                   {dailyNotesExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                   <NotebookPen size={12} className="text-[#9A9A9A]" />
-                  <span>Daily notes this week</span>
+                  <span>Notes this week</span>
                   <span className="text-[11px] font-medium text-[#6E6E6E] tabular-nums">
                     ({data?.dailyNotes.length ?? 0})
                   </span>
@@ -1067,7 +1068,7 @@ export function ReviewView() {
 
               {(data?.dailyNotes.length ?? 0) === 0 ? (
                 <div className="text-[12.5px] text-[#6E6E6E]">
-                  No daily notes captured this week. Press ⌘⇧P anytime to jot a quick bullet.
+                  No notes captured this week. Press ⌘⇧P anytime to jot a quick bullet.
                 </div>
               ) : !dailyNotesExpanded ? (
                 <div className="text-[12.5px] text-[#9A9A9A] truncate">
@@ -1092,6 +1093,9 @@ export function ReviewView() {
                           <span>{formatLocalTime(note.createdAt)}</span>
                           {proj ? <span className="text-[#9A9A9A]">· {proj.name}</span> : null}
                           {note.isOps ? <Pill tone="ops">Ops</Pill> : null}
+                          {(note.tags ?? []).map((tag) => (
+                            <NoteTagChip key={tag} tag={tag} />
+                          ))}
                         </div>
                       </li>
                     );

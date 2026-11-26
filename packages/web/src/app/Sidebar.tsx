@@ -463,7 +463,7 @@ export function Sidebar() {
         </div>
       ) : null}
 
-      {/* Quiet Footer: Daily Notes + Settings ⌘, */}
+      {/* Quiet Footer: Notes + Settings ⌘, */}
       <div className="shrink-0 px-3.5 py-3 border-t border-white/[0.06] space-y-1">
         <button
           type="button"
@@ -472,7 +472,7 @@ export function Sidebar() {
         >
           <span className="flex items-center gap-2.5">
             <NotebookPen size={14} className="text-[#6E6E6E]" />
-            <span>Daily Notes</span>
+            <span>Notes</span>
           </span>
           <span className="text-[11px] text-[#6E6E6E]">⌘⇧P</span>
         </button>

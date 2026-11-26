@@ -29,6 +29,7 @@ import {
   type LogSessionInput,
   type MoveBlockInput,
   type NormalizedCalendarEvent,
+  type NoteTagCount,
   type ParkBlockInput,
   type PlanProjectTimeItem,
   type Project,
@@ -543,10 +544,15 @@ export class VeyraClient {
     weekStart?: string;
     projectId?: string;
     goalId?: string;
+    tag?: string;
   }): Promise<{ notes: DailyNote[] }> {
     return this.request<{ notes: DailyNote[] }>('GET', '/api/notes', {
       query: params,
     });
+  }
+
+  listNoteTags(): Promise<{ tags: NoteTagCount[] }> {
+    return this.request<{ tags: NoteTagCount[] }>('GET', '/api/notes/tags');
   }
 
   addNote(input: CreateDailyNoteInput): Promise<{ note: DailyNote }> {

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
-import { and, asc, desc, eq, gte, isNotNull, isNull, lte } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, isNotNull, isNull, lte, sql } from 'drizzle-orm';
 import type { VeyraDb } from '../db.js';
-import { NotFoundError, parseWithZod } from '../errors.js';
+import { NotFoundError, ValidationError, parseWithZod } from '../errors.js';
 import {
   blocks,
   calendarEvents,
@@ -31,6 +31,7 @@ import {
   type Goal,
   type GoalReviewItem,
   type ListDailyNotesFilter,
+  type NoteTagCount,
   type OpsRadarItem,
   type PlanningFinding,
   type ProgressFeedItem,
@@ -49,6 +50,9 @@ import {
   completeWeeklyReviewInputSchema,
   createDailyNoteInputSchema,
   dateOnlySchema,
+  mergeNoteTags,
+  normalizeNoteTag,
+  parseNoteTagsFromContent,
   ruleKeptSchema,
   updateDailyNoteInputSchema,
 } from '../types.js';
@@ -99,8 +103,22 @@ function getActiveDailyNoteOrThrow(veyraDb: VeyraDb, id: string): DailyNote {
 }
 
 // ---------------------------------------------------------------------------
-// Daily Notes
+// Notes (stored as daily notes, tagged)
 // ---------------------------------------------------------------------------
+
+/** Normalizes explicit tags from API/CLI input; an entry that cannot become a tag is a 400. */
+function normalizeExplicitTags(raw: readonly string[] | undefined): string[] {
+  if (!raw) return [];
+  return raw.map((entry) => {
+    const tag = normalizeNoteTag(entry);
+    if (!tag) {
+      throw new ValidationError(
+        `Invalid tag '${entry}': use a letter first, then letters, digits, '-', '_' or '/' (max 40 chars)`,
+      );
+    }
+    return tag;
+  });
+}
 
 export function addDailyNote(
   veyraDb: VeyraDb,
@@ -129,6 +147,7 @@ export function addDailyNote(
     projectId: parsed.projectId ?? null,
     goalId: parsed.goalId ?? null,
     isOps: parsed.isOps,
+    tags: mergeNoteTags(parsed.content, normalizeExplicitTags(parsed.tags)),
     createdAt: nowIso,
     updatedAt: nowIso,
     deletedAt: null,
@@ -136,7 +155,7 @@ export function addDailyNote(
 
   veyraDb.sqlite.transaction(() => {
     veyraDb.db.insert(dailyNotes).values(note).run();
-    recordActivity(veyraDb, actor, 'daily_note.created', `Added daily note for ${date}`, nowIso);
+    recordActivity(veyraDb, actor, 'daily_note.created', `Added note for ${date}`, nowIso);
   })();
 
   return note;
@@ -163,6 +182,15 @@ export function listDailyNotes(
   }
   if (filters?.goalId) {
     conditions.push(eq(dailyNotes.goalId, filters.goalId));
+  }
+  if (filters?.tag !== undefined) {
+    const tag = normalizeNoteTag(filters.tag);
+    if (!tag) {
+      throw new ValidationError(`Invalid tag '${filters.tag}'`);
+    }
+    conditions.push(
+      sql`EXISTS (SELECT 1 FROM json_each(${dailyNotes.tags}) WHERE json_each.value = ${tag})`,
+    );
   }
 
   return veyraDb.db
@@ -191,9 +219,19 @@ export function updateDailyNote(
     ensureActiveGoalExists(veyraDb, parsed.goalId);
   }
 
+  // Explicit tags = existing tags that were not parsed from the old content.
+  // `tags` in the input replaces that explicit set; `#tags` follow the (new) content.
+  const nextContent = parsed.content ?? existing.content;
+  const oldContentTags = new Set(parseNoteTagsFromContent(existing.content));
+  const explicitTags =
+    parsed.tags !== undefined
+      ? normalizeExplicitTags(parsed.tags)
+      : existing.tags.filter((tag) => !oldContentTags.has(tag));
+
   const updated: DailyNote = {
     ...existing,
-    content: parsed.content ?? existing.content,
+    content: nextContent,
+    tags: mergeNoteTags(nextContent, explicitTags),
     date: parsed.date ?? existing.date,
     projectId: parsed.projectId !== undefined ? parsed.projectId : existing.projectId,
     goalId: parsed.goalId !== undefined ? parsed.goalId : existing.goalId,
@@ -210,6 +248,7 @@ export function updateDailyNote(
         projectId: updated.projectId,
         goalId: updated.goalId,
         isOps: updated.isOps,
+        tags: updated.tags,
         updatedAt: updated.updatedAt,
       })
       .where(eq(dailyNotes.id, id))
@@ -218,12 +257,25 @@ export function updateDailyNote(
       veyraDb,
       actor,
       'daily_note.updated',
-      `Updated daily note for ${updated.date}`,
+      `Updated note for ${updated.date}`,
       nowIso,
     );
   })();
 
   return updated;
+}
+
+/** All tags on active notes with how many notes carry each, most used first. */
+export function listNoteTags(veyraDb: VeyraDb): NoteTagCount[] {
+  return veyraDb.sqlite
+    .prepare(
+      `SELECT je.value AS tag, COUNT(*) AS count
+         FROM daily_notes dn, json_each(dn.tags) je
+        WHERE dn.deleted_at IS NULL
+        GROUP BY je.value
+        ORDER BY count DESC, tag ASC`,
+    )
+    .all() as NoteTagCount[];
 }
 
 export function deleteDailyNote(
@@ -251,7 +303,7 @@ export function deleteDailyNote(
       veyraDb,
       actor,
       'daily_note.deleted',
-      `Deleted daily note for ${existing.date}`,
+      `Deleted note for ${existing.date}`,
       nowIso,
     );
   })();

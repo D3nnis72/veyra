@@ -24,7 +24,7 @@ export const HOTKEY_META: Record<HotkeyId, HotkeyMeta> = {
     id: 'quickCapture',
     scope: 'global',
     label: 'Quick Capture',
-    description: 'Opens the floating capture bar for Daily Note or Inbox from any macOS app',
+    description: 'Opens the floating capture bar for a Note or Inbox from any macOS app',
   },
   quickFocus: {
     id: 'quickFocus',

@@ -222,6 +222,7 @@ export function runDailyRolloverAndRecurrence(
         outcomeNote: null,
         resumeNote: null,
         autoSummary: null,
+        sideWork: null,
         recurrenceRule: latest.recurrenceRule,
         seriesId,
         notes: latest.notes,

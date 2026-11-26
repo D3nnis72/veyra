@@ -99,28 +99,32 @@ Run Veyra's built-in webhook receiver and post-block auto-summary runner to reac
 veyra hook listen --port 4174 \
   --auto-summary \
   --summarizer-cmd "claude -p" \
+  --t3 \
   --on-review-complete "./sync-weekly-review.sh" \
   --workspace ~/code/my-repo \
   --min-minutes 5 \
   --json
 
 # Run on demand for a single block (use --dry-run to inspect context & prompt without writing)
-veyra hook summarize <blockId> --cmd "claude -p" --workspace ~/code/my-repo --json
-veyra hook summarize <blockId> --from 2026-11-23T09:00:00Z --to 2026-11-23T09:45:00Z --dry-run --json
+veyra hook summarize <blockId> --t3 --cmd "claude -p" --workspace ~/code/my-repo --json
+veyra hook summarize <blockId> --t3 --from 2026-11-23T09:00:00Z --to 2026-11-23T09:45:00Z --dry-run --json
 ```
 
-- `--auto-summary` runs automatically on `focus.ended` and `block.completed` (deduplicating paired completion events), skips trivial sessions under `--min-minutes` (default `5`), gathers block notes/outcome/resume notes plus opt-in git commits (`--workspace <dir>`, repeatable) and custom transcript/chat collectors (`--context-cmd <cmd>`, repeatable), prompts for a 1–2 sentence progress summary — highlighting recurring failure/request patterns and automation candidates when `block.isOps` is true — and writes back to `PATCH /api/blocks/:id` (`autoSummary`).
+- `--auto-summary` runs automatically on `focus.ended` and `block.completed` (deduplicating paired completion events), skips trivial sessions under `--min-minutes` (default `5`), gathers block notes/outcome/resume notes plus opt-in git commits (`--workspace <dir>`, repeatable), built-in read-only T3 Code threads (`--t3` / `--t3-db <path>`), and custom transcript/chat collectors (`--context-cmd <cmd>`, repeatable). It computes deterministic `sideWork` per other active project (mapped by name to Veyra projects, display-only), prompts for a 1–2 sentence progress summary of the block only — highlighting recurring failure/request patterns and automation candidates when `block.isOps` is true — and writes `autoSummary` and `sideWork` back to `PATCH /api/blocks/:id`.
 - `--on-review-complete <cmd>` runs automatically when a Weekly Review is completed (`review.completed`), receiving the persisted snapshot JSON on stdin plus `VEYRA_WEEK_START`, `VEYRA_WEEK_NUMBER`, and `VEYRA_RULE_FOR_NEXT_WEEK` env vars so T3 Code picks up next week's rule, goal outcomes, and project weekly times on Monday with zero copy-paste.
 - You can also combine or replace `--auto-summary` with shell handlers (`--on-focus-start`, `--on-focus-end`, `--on-complete`, `--on-review-complete`, `--on-any`), which receive the full JSON payload on stdin plus structured env vars (`VEYRA_EVENT`, `VEYRA_BLOCK_ID`, `VEYRA_BLOCK_TITLE`, `VEYRA_BLOCK_IS_OPS`, `VEYRA_PROJECT_ID`, `VEYRA_GOAL_ID`, `VEYRA_SESSION_START`, `VEYRA_SESSION_END`, `VEYRA_TOTAL_BLOCK_MINUTES`, `VEYRA_WEEK_START`, `VEYRA_WEEK_NUMBER`, `VEYRA_RULE_FOR_NEXT_WEEK`, `VEYRA_PAYLOAD`).
 - Pass `--secret <secret>` (or set `VEYRA_WEBHOOK_SECRET` on both server and listener) to require HMAC-SHA256 verification via `X-Veyra-Signature-256`.
 - `--json` streams newline-delimited JSON (NDJSON) events (`listening`, `event`, `handler_result`, `auto_summary_result`, `rejected`, `stopped`).
 
-## 5. Daily Notes & Weekly Review
+## 5. Notes & Weekly Review
 
-Capture observations throughout the week:
+Capture observations and `#tagged` notes (such as `#veyra` feedback) throughout the week:
 ```bash
 veyra note add "Teams muted until 11:30 worked great" --json
+veyra note add "#veyra drag handle feels sticky" --tag ux --json
 veyra notes --week 2026-11-23 --json
+veyra notes --tag veyra --json
+veyra notes --tags --json
 ```
 
 Run the 4-chapter weekly review (`--week` accepts either an ISO week number `1–53` or a `YYYY-MM-DD` date):

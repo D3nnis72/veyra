@@ -1450,7 +1450,7 @@ const FIXED_NAVIGATION_HOTKEYS: Record<string, HotkeyRow> = {
 const FIXED_CAPTURE_HOTKEYS: Record<string, HotkeyRow> = {
   tabs: {
     label: 'Switch Capture Tabs',
-    description: 'Cycle Daily Note, Inbox, and Focus Now without leaving the input',
+    description: 'Cycle Note, Inbox, and Focus Now without leaving the input',
     binding: { chords: [['Tab'], ['⇧', 'Tab']], separator: 'or' },
   },
   createAndFocus: {

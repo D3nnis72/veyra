@@ -18,6 +18,7 @@ import {
   type GoalWithStats,
   type MoveBlockInput,
   type NormalizedCalendarEvent,
+  type NoteTagCount,
   type Project,
   type ProjectWithStats,
   type RecurrenceRule,
@@ -71,6 +72,7 @@ import {
   formatAutoSummaryHuman,
   runAutoSummary,
 } from './auto-summary.js';
+import { DEFAULT_T3_DB_PATH } from './collectors/t3-code.js';
 import {
   DEFAULT_HOOK_HOST,
   DEFAULT_HOOK_PORT,
@@ -617,6 +619,11 @@ export function createProgram(ctx: ProgramContext): Command {
         ];
         if (b.notes) lines.push(`Notes: ${b.notes}`);
         if (b.autoSummary) lines.push(`Summary: ${b.autoSummary}`);
+        if (b.sideWork && b.sideWork.length > 0) {
+          lines.push(
+            `Also during: ${b.sideWork.map((e) => `${e.projectName} (${e.messageCount})`).join(', ')}`,
+          );
+        }
         return lines.join('\n');
       });
     });
@@ -1474,11 +1481,19 @@ export function createProgram(ctx: ProgramContext): Command {
       [],
     )
     .option(
+      '--t3',
+      'Add T3 Code threads from the focus window (read-only) to --auto-summary and record other projects as side work',
+    )
+    .option(
+      '--t3-db <path>',
+      `T3 Code database for --t3 (implies --t3; default ${DEFAULT_T3_DB_PATH}; skipped when missing)`,
+    )
+    .option(
       '--min-minutes <minutes>',
       'Minimum session duration in minutes to run --auto-summary',
       String(DEFAULT_AUTO_SUMMARY_MIN_MINUTES),
     )
-    .option('--dry-run', 'Run --auto-summary without writing autoSummary back to Veyra')
+    .option('--dry-run', 'Run --auto-summary without writing autoSummary or sideWork back to Veyra')
     .option(
       '--secret <secret>',
       'HMAC-SHA256 signing secret (defaults to VEYRA_WEBHOOK_SECRET env var)',
@@ -1502,6 +1517,8 @@ export function createProgram(ctx: ProgramContext): Command {
         summarizerCmd?: string;
         workspace: string[];
         contextCmd: string[];
+        t3?: boolean;
+        t3Db?: string;
         minMinutes: string;
         dryRun?: boolean;
         secret?: string;
@@ -1554,6 +1571,7 @@ export function createProgram(ctx: ProgramContext): Command {
                   summarizerCmd,
                   workspaceDirs: opts.workspace,
                   contextCmds: opts.contextCmd,
+                  ...(opts.t3 || opts.t3Db ? { t3: { dbPath: opts.t3Db } } : {}),
                   minMinutes,
                   timeoutMs,
                   dryRun: Boolean(opts.dryRun),
@@ -1621,6 +1639,14 @@ export function createProgram(ctx: ProgramContext): Command {
       [],
     )
     .option(
+      '--t3',
+      'Add T3 Code threads from the window (read-only) to the prompt and record other projects as side work',
+    )
+    .option(
+      '--t3-db <path>',
+      `T3 Code database for --t3 (implies --t3; default ${DEFAULT_T3_DB_PATH}; skipped when missing)`,
+    )
+    .option(
       '--min-minutes <minutes>',
       'Minimum session duration in minutes before skipping summary (pass 0 to disable threshold)',
       String(DEFAULT_AUTO_SUMMARY_MIN_MINUTES),
@@ -1632,7 +1658,7 @@ export function createProgram(ctx: ProgramContext): Command {
     )
     .option(
       '--dry-run',
-      'Collect context and print prompt/summary without writing autoSummary back to Veyra',
+      'Collect context and print prompt/summary without writing autoSummary or sideWork back to Veyra',
     )
     .action(
       async (
@@ -1644,6 +1670,8 @@ export function createProgram(ctx: ProgramContext): Command {
           summarizerCmd?: string;
           workspace: string[];
           contextCmd: string[];
+          t3?: boolean;
+          t3Db?: string;
           minMinutes: string;
           timeout: string;
           dryRun?: boolean;
@@ -1680,6 +1708,7 @@ export function createProgram(ctx: ProgramContext): Command {
           summarizerCmd,
           workspaceDirs: opts.workspace,
           contextCmds: opts.contextCmd,
+          ...(opts.t3 || opts.t3Db ? { t3: { dbPath: opts.t3Db } } : {}),
           minMinutes,
           timeoutMs,
           dryRun: Boolean(opts.dryRun),
@@ -1767,18 +1796,32 @@ export function createProgram(ctx: ProgramContext): Command {
   // Notes, Weekly Review & Calendar Events Commands
   // -------------------------------------------------------------------------
 
-  const noteCmd = program.command('note').description('Capture daily reflection notes');
+  const noteCmd = program
+    .command('note')
+    .description('Capture notes; #tags in the text and --tag become note tags');
+  const formatNoteLine = (n: DailyNote): string =>
+    `- ${n.date} [${n.id}] ${n.content}${
+      n.tags.length > 0 ? ` (${n.tags.map((t) => `#${t}`).join(' ')})` : ''
+    }`;
+  const emitNoteTags = async (): Promise<void> => {
+    const data = await ctx.getClient().listNoteTags();
+    emit<{ tags: NoteTagCount[] }>(data, (d) => {
+      if (d.tags.length === 0) return 'No tags yet.';
+      return d.tags.map((t) => `#${t.tag} (${t.count})`).join('\n');
+    });
+  };
   noteCmd
     .command('add <content>')
-    .description('Add a daily note')
+    .description('Add a note (#tags in the content are stored as tags)')
     .option('--date <YYYY-MM-DD>', 'Note date (defaults to today in server timezone)')
     .option('--project <idOrName>', 'Tag with project UUID or name')
     .option('--goal <idOrName>', 'Tag with goal UUID or name')
     .option('--ops', 'Tag note as operational')
+    .option('--tag <tag>', 'Add a tag (repeatable), merged with #tags in the content', collectRepeatable, [])
     .action(
       async (
         content: string,
-        opts: { date?: string; project?: string; goal?: string; ops?: boolean },
+        opts: { date?: string; project?: string; goal?: string; ops?: boolean; tag: string[] },
       ) => {
         const client = ctx.getClient();
         const projectId = opts.project ? await client.resolveProjectId(opts.project) : undefined;
@@ -1790,20 +1833,38 @@ export function createProgram(ctx: ProgramContext): Command {
           ...(projectId ? { projectId } : {}),
           ...(goalId ? { goalId } : {}),
           ...(opts.ops ? { isOps: true } : {}),
+          ...(opts.tag.length > 0 ? { tags: opts.tag } : {}),
         });
-        emit<DailyNote>(note, (n) => `Added note ${n.id} (${n.date}): ${n.content}`);
+        emit<DailyNote>(note, (n) => `Added note ${formatNoteLine(n).slice(2)}`);
       },
     );
+  noteCmd
+    .command('tags')
+    .description('List all note tags with how many notes carry each')
+    .action(emitNoteTags);
 
   program
     .command('notes')
-    .description('List daily notes for a week or date')
+    .description('List notes for a week or date, or every note with a tag')
     .option('--week <YYYY-MM-DD>', 'Any date within the target week')
     .option('--date <YYYY-MM-DD>', 'Filter by specific date')
     .option('--project <idOrName>', 'Filter by project UUID or name')
     .option('--goal <idOrName>', 'Filter by goal UUID or name')
+    .option('--tag <tag>', 'Notes with this tag across all dates (combine with --date/--week to narrow)')
+    .option('--tags', 'List all tags with note counts instead of notes')
     .action(
-      async (opts: { week?: string; date?: string; project?: string; goal?: string }) => {
+      async (opts: {
+        week?: string;
+        date?: string;
+        project?: string;
+        goal?: string;
+        tag?: string;
+        tags?: boolean;
+      }) => {
+        if (opts.tags) {
+          await emitNoteTags();
+          return;
+        }
         const client = ctx.getClient();
         const projectId = opts.project ? await client.resolveProjectId(opts.project) : undefined;
         const goalId = opts.goal ? await client.resolveGoalId(opts.goal) : undefined;
@@ -1812,10 +1873,11 @@ export function createProgram(ctx: ProgramContext): Command {
           weekStart: opts.week ? validateDateOnly(opts.week, '--week') : undefined,
           projectId,
           goalId,
+          tag: opts.tag,
         });
         emit<{ notes: DailyNote[] }>(data, (d) => {
           if (d.notes.length === 0) return 'No notes found.';
-          return d.notes.map((n) => `- ${n.date} [${n.id}] ${n.content}`).join('\n');
+          return d.notes.map(formatNoteLine).join('\n');
         });
       },
     );

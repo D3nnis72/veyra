@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+export * from './note-tags.js';
+
 export const SYSTEM_OTHER_PROJECT_ID = '00000000-0000-4000-8000-000000000001';
 export const DEFAULT_SETTINGS_ID = 'default';
 export const DEFAULT_GLOBAL_CAPTURE_SHORTCUT = 'CommandOrControl+Shift+P';
@@ -282,6 +284,24 @@ export const externalLinkSchema = z.object({
 });
 export type ExternalLink = z.infer<typeof externalLinkSchema>;
 
+/**
+ * Other projects worked on during a focus block (e.g. T3 Code threads in another
+ * project), computed deterministically by the post-block auto-summary run.
+ * Display only: time stays on the focused block and is not attributed to these projects.
+ */
+export const blockSideWorkThreadSchema = z.object({
+  title: z.string(),
+  messageCount: z.number().int().min(0),
+});
+export const blockSideWorkEntrySchema = z.object({
+  projectId: z.string().uuid().nullable(),
+  projectName: z.string().min(1),
+  messageCount: z.number().int().min(0),
+  threads: z.array(blockSideWorkThreadSchema).max(50),
+});
+export const blockSideWorkSchema = z.array(blockSideWorkEntrySchema).max(50);
+export type BlockSideWorkEntry = z.infer<typeof blockSideWorkEntrySchema>;
+
 // ---------------------------------------------------------------------------
 // Core Entities (verbatim spec shapes)
 // ---------------------------------------------------------------------------
@@ -356,6 +376,8 @@ export const blockSchema = z.object({
   outcomeNote: z.string().nullable(),
   resumeNote: z.string().nullable(),
   autoSummary: z.string().nullable(),
+  /** Optional in the type so older fixtures stay valid; the API always returns it (null when unset). */
+  sideWork: blockSideWorkSchema.nullable().optional(),
   recurrenceRule: recurrenceRuleSchema.nullable(),
   seriesId: z.string().nullable(),
   notes: z.string(),
@@ -401,6 +423,8 @@ export const dailyNoteSchema = z.object({
   projectId: z.string().uuid().nullable(),
   goalId: z.string().uuid().nullable(),
   isOps: z.boolean(),
+  /** Normalized tags: `#tags` parsed from `content` plus explicitly added ones. */
+  tags: z.array(z.string()),
   createdAt: z.string(),
   updatedAt: z.string(),
   deletedAt: z.string().nullable(),
@@ -653,6 +677,7 @@ export const updateBlockInputSchema = z.object({
   outcomeNote: z.string().nullable().optional(),
   resumeNote: z.string().nullable().optional(),
   autoSummary: z.string().nullable().optional(),
+  sideWork: blockSideWorkSchema.nullable().optional(),
   recurrenceRule: recurrenceRuleSchema.nullable().optional(),
   notes: z.string().optional(),
   externalLinks: z.array(externalLinkSchema).optional(),
@@ -736,6 +761,8 @@ export const createDailyNoteInputSchema = z.object({
   projectId: z.string().uuid().nullable().optional().default(null),
   goalId: z.string().uuid().nullable().optional().default(null),
   isOps: z.boolean().optional().default(false),
+  /** Extra tags, merged with `#tags` parsed from `content`. */
+  tags: z.array(z.string()).optional(),
 });
 export type CreateDailyNoteInput = z.input<typeof createDailyNoteInputSchema>;
 
@@ -745,6 +772,8 @@ export const updateDailyNoteInputSchema = z.object({
   projectId: z.string().uuid().nullable().optional(),
   goalId: z.string().uuid().nullable().optional(),
   isOps: z.boolean().optional(),
+  /** Replaces the explicit tags; `#tags` in `content` are always kept. */
+  tags: z.array(z.string()).optional(),
 });
 export type UpdateDailyNoteInput = z.infer<typeof updateDailyNoteInputSchema>;
 
@@ -827,6 +856,8 @@ export interface ListDailyNotesFilter {
   weekStartDate?: string;
   projectId?: string;
   goalId?: string;
+  /** Notes carrying this tag, across all dates unless `date`/`weekStartDate` narrow it. */
+  tag?: string;
 }
 
 export interface ListActivityFilter {

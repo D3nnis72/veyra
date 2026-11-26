@@ -4,12 +4,14 @@ import http from 'node:http';
 import { z } from 'zod';
 import {
   DEFAULT_AUTO_SUMMARY_MIN_MINUTES,
+  formatSideWorkInline,
   runAutoSummary,
   type AutoSummaryClient,
   type AutoSummaryResult,
   type ContextCollector,
   type SummarizerRunner,
 } from './auto-summary.js';
+import type { T3CodeCollectorOptions } from './collectors/t3-code.js';
 
 export const DEFAULT_HOOK_PORT = 4174;
 export const DEFAULT_HOOK_HOST = '127.0.0.1';
@@ -51,6 +53,8 @@ export interface HookListenerAutoSummaryOptions {
   summarizerCmd?: string;
   workspaceDirs?: string[];
   contextCmds?: string[];
+  /** Enables the built-in read-only T3 Code collector (`--t3`). */
+  t3?: T3CodeCollectorOptions;
   collectors?: ContextCollector[];
   minMinutes?: number;
   timeoutMs?: number;
@@ -429,7 +433,8 @@ export function formatHookLogHuman(record: HookLogRecord): string {
       if (res.status === 'dry_run') {
         return `[${record.timestamp}] ✓ ${record.event}${opsBadge} auto-summary dry-run (${res.durationMs}ms)${res.summary ? ` — ${res.summary}` : ''}`;
       }
-      return `[${record.timestamp}] ✓ ${record.event}${opsBadge} auto-summary saved (${res.durationMs}ms) — ${res.summary ?? ''}`;
+      const sideWork = formatSideWorkInline(res.sideWork);
+      return `[${record.timestamp}] ✓ ${record.event}${opsBadge} auto-summary saved (${res.durationMs}ms) — ${res.summary ?? ''}${sideWork ? ` · Also during: ${sideWork}` : ''}`;
     }
     case 'rejected':
       return `Rejected webhook request (HTTP ${record.statusCode}): ${record.reason}`;
@@ -642,6 +647,7 @@ export function startHookListener(options: HookListenerOptions = {}): Promise<Ho
           summarizerCmd: autoSummary.summarizerCmd,
           workspaceDirs: autoSummary.workspaceDirs,
           contextCmds: autoSummary.contextCmds,
+          t3: autoSummary.t3,
           collectors: autoSummary.collectors,
           minMinutes: autoSummary.minMinutes ?? DEFAULT_AUTO_SUMMARY_MIN_MINUTES,
           timeoutMs: autoSummary.timeoutMs ?? timeoutMs,

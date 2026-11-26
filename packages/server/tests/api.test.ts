@@ -1226,3 +1226,62 @@ describe('@veyra/server REST API', () => {
     );
   });
 });
+
+describe('@veyra/server tagged notes', () => {
+  it('stores #tags and explicit tags, filters GET /api/notes?tag= across dates and counts GET /api/notes/tags', async () => {
+    const { baseUrl } = await startTestVeyraServer();
+    const json = { 'Content-Type': 'application/json' };
+
+    const createRes = await fetch(`${baseUrl}/api/notes`, {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({ content: '#veyra drag handle feels sticky', date: '2026-10-01', tags: ['UX'] }),
+    });
+    expect(createRes.status).toBe(201);
+    const { note } = (await createRes.json()) as {
+      note: { id: string; content: string; tags: string[] };
+    };
+    expect(note.content).toBe('#veyra drag handle feels sticky');
+    expect(note.tags).toEqual(['veyra', 'ux']);
+
+    await fetch(`${baseUrl}/api/notes`, {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({ content: 'Untagged thought', date: '2026-11-23' }),
+    });
+    const later = await fetch(`${baseUrl}/api/notes`, {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({ content: 'Focus timer #Veyra', date: '2026-11-24' }),
+    });
+    const laterNote = ((await later.json()) as { note: { id: string } }).note;
+
+    const badRes = await fetch(`${baseUrl}/api/notes`, {
+      method: 'POST',
+      headers: json,
+      body: JSON.stringify({ content: 'x', tags: ['not valid'] }),
+    });
+    expect(badRes.status).toBe(400);
+
+    const byTag = (await (await fetch(`${baseUrl}/api/notes?tag=veyra`)).json()) as {
+      notes: Array<{ id: string }>;
+    };
+    expect(byTag.notes.map((n) => n.id)).toEqual([note.id, laterNote.id]);
+
+    const patchRes = await fetch(`${baseUrl}/api/notes/${note.id}`, {
+      method: 'PATCH',
+      headers: json,
+      body: JSON.stringify({ content: 'drag handle fixed', tags: ['done'] }),
+    });
+    expect(((await patchRes.json()) as { note: { tags: string[] } }).note.tags).toEqual(['done']);
+
+    const tagsRes = await fetch(`${baseUrl}/api/notes/tags`);
+    expect(tagsRes.status).toBe(200);
+    expect(await tagsRes.json()).toEqual({
+      tags: [
+        { tag: 'done', count: 1 },
+        { tag: 'veyra', count: 1 },
+      ],
+    });
+  });
+});

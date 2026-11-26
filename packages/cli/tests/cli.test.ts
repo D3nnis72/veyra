@@ -213,6 +213,45 @@ describe('@veyra/cli integration', () => {
     expect(review.dailyNotes.some((n) => n.content === 'Teams muted until 11:30 worked great')).toBe(true);
   });
 
+  it('note add --tag stores tags, notes --tag lists across dates, notes --tags and note tags count them', async () => {
+    const first = await execCli(
+      ['note', 'add', '#veyra drag handle feels sticky', '--date', '2026-10-01', '--tag', 'UX', '--tag', 'bug', '--json'],
+      baseEnv(),
+    );
+    expect(first.exitCode).toBe(0);
+    const note = JSON.parse(first.stdout) as { id: string; content: string; tags: string[] };
+    expect(note.content).toBe('#veyra drag handle feels sticky');
+    expect(note.tags).toEqual(['veyra', 'ux', 'bug']);
+
+    await execCli(['note', 'add', 'Today without tags', '--json'], baseEnv());
+    const second = await execCli(['note', 'add', 'Room bar #veyra', '--json'], baseEnv());
+    const secondNote = JSON.parse(second.stdout) as { id: string };
+
+    const byTag = await execCli(['notes', '--tag', '#Veyra', '--json'], baseEnv());
+    expect(byTag.exitCode).toBe(0);
+    const byTagPayload = JSON.parse(byTag.stdout) as { notes: Array<{ id: string; tags: string[] }> };
+    expect(byTagPayload.notes.map((n) => n.id)).toEqual([note.id, secondNote.id]);
+
+    const human = await execCli(['notes', '--tag', 'veyra'], baseEnv());
+    expect(human.stdout).toContain('2026-10-01');
+    expect(human.stdout).toContain('(#veyra #ux #bug)');
+
+    const tagsRes = await execCli(['notes', '--tags', '--json'], baseEnv());
+    expect(tagsRes.exitCode).toBe(0);
+    expect(JSON.parse(tagsRes.stdout)).toEqual({
+      tags: [
+        { tag: 'veyra', count: 2 },
+        { tag: 'bug', count: 1 },
+        { tag: 'ux', count: 1 },
+      ],
+    });
+    const noteTags = await execCli(['note', 'tags'], baseEnv());
+    expect(noteTags.stdout).toContain('#veyra (2)');
+
+    const bad = await execCli(['note', 'add', 'x', '--tag', 'not valid', '--json'], baseEnv());
+    expect(bad.exitCode).not.toBe(0);
+  });
+
   it('invokes /api/events/sync and supports events upsert & assign', async () => {
     const syncRes = await execCli(['events', 'sync', '--json'], baseEnv());
     expect(syncRes.exitCode).toBe(0);

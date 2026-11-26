@@ -9,6 +9,7 @@ import {
   DEFAULT_PROJECT_COLOR,
   DEFAULT_SETTINGS_ID,
   SYSTEM_OTHER_PROJECT_ID,
+  parseNoteTagsFromContent,
 } from './types.js';
 
 export interface VeyraDb {
@@ -86,6 +87,7 @@ CREATE TABLE IF NOT EXISTS blocks (
   outcome_note TEXT,
   resume_note TEXT,
   auto_summary TEXT,
+  side_work TEXT,
   recurrence_rule TEXT,
   series_id TEXT,
   notes TEXT NOT NULL DEFAULT '',
@@ -128,6 +130,7 @@ CREATE TABLE IF NOT EXISTS daily_notes (
   project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
   goal_id TEXT REFERENCES goals(id) ON DELETE SET NULL,
   is_ops INTEGER NOT NULL DEFAULT 0,
+  tags TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   deleted_at TEXT
@@ -281,6 +284,16 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{ table: string; column: string; ddl: stri
     ddl: 'ALTER TABLE blocks ADD COLUMN drop_reason TEXT',
   },
   {
+    table: 'blocks',
+    column: 'side_work',
+    ddl: 'ALTER TABLE blocks ADD COLUMN side_work TEXT',
+  },
+  {
+    table: 'daily_notes',
+    column: 'tags',
+    ddl: "ALTER TABLE daily_notes ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'",
+  },
+  {
     table: 'weekly_reviews',
     column: 'previous_rule_kept',
     ddl: 'ALTER TABLE weekly_reviews ADD COLUMN previous_rule_kept TEXT',
@@ -357,7 +370,23 @@ function applyAdditiveColumnMigrations(sqlite: Database.Database): void {
     const cols = sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
     if (!cols.some((c) => c.name === column)) {
       sqlite.exec(ddl);
+      if (table === 'daily_notes' && column === 'tags') {
+        backfillNoteTagsFromContent(sqlite);
+      }
     }
+  }
+}
+
+/** One-time backfill when `daily_notes.tags` is added: existing `#tags` in content become tags. */
+function backfillNoteTagsFromContent(sqlite: Database.Database): void {
+  const rows = sqlite.prepare('SELECT id, content FROM daily_notes').all() as Array<{
+    id: string;
+    content: string;
+  }>;
+  const update = sqlite.prepare('UPDATE daily_notes SET tags = ? WHERE id = ?');
+  for (const row of rows) {
+    const tags = parseNoteTagsFromContent(row.content);
+    if (tags.length > 0) update.run(JSON.stringify(tags), row.id);
   }
 }
 

@@ -109,6 +109,7 @@ vi.mock('../src/api/client', async (orig) => {
 
 vi.mock('../src/api/queries', () => ({
   useProjectsQuery: () => ({ data: { projects: PROJECTS } }),
+  useNoteTagsQuery: () => ({ data: { tags: [] } }),
   useSettingsQuery: () => ({ data: undefined }),
   useNotionSearchQuery: () => ({ data: { configured: false, results: [] }, isLoading: false }),
   invalidateBlockRelated: vi.fn(),

@@ -70,6 +70,7 @@ export {
   getWeeklyReview,
   getWeeklyReviewRecord,
   listDailyNotes,
+  listNoteTags,
   reopenWeeklyReview,
   setPreviousRuleKept,
   setWeeklyRule,

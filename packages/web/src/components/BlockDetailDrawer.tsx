@@ -48,6 +48,7 @@ import { LinkPickerPopover } from './LinkPickerPopover';
 import { goalChipStyle } from './goalTint';
 import { Pill } from './Pill';
 import { ProjectBadge } from './ProjectBadge';
+import { SideWorkSection } from './SideWorkSection';
 import {
   addDaysDateString,
   formatDuration,
@@ -1105,6 +1106,9 @@ export function BlockDetailDrawer({ blockId, onClose, onStartFocus }: BlockDetai
             onSave={(next) => updateMutation.mutate({ autoSummary: next })}
             saving={updateMutation.isPending}
           />
+
+          {/* Other projects worked on during the block window (written with the auto-summary) */}
+          <SideWorkSection sideWork={block.sideWork} projects={projects} />
 
           {/* Open Borderless Freeform NOTES & AI CONTEXT Canvas (zero nested box!) */}
           <div className="space-y-3 pt-4 border-t border-[#2A2A2A]">

@@ -6,10 +6,12 @@ import { apiClient } from '../api/client';
 import {
   invalidateBlockRelated,
   invalidateNotesRelated,
+  useNoteTagsQuery,
   useProjectsQuery,
 } from '../api/queries';
 import { Button } from '../components/Button';
 import { inferLinkSource, inferLinkTitle } from '../components/LinkChip';
+import { NoteTagSuggestions, useNoteTagAutocomplete } from '../components/NoteTags';
 import { ProjectBadge } from '../components/ProjectBadge';
 import { getTodayDateString } from '../components/icons';
 import { AppShellContext } from './AppShellContext';
@@ -81,6 +83,13 @@ export function QuickCaptureOverlay({
 
   const primaryInputRef = useRef<HTMLInputElement>(null);
   const projectSearchRef = useRef<HTMLInputElement>(null);
+  const noteTagsQuery = useNoteTagsQuery(open && tab === 'daily-note');
+  const tagAutocomplete = useNoteTagAutocomplete(
+    noteContent,
+    setNoteContent,
+    primaryInputRef,
+    noteTagsQuery.data?.tags,
+  );
 
   // Dedupe: keep non-system projects first, then system "Other" once at the end
   const orderedProjects = useMemo(() => {
@@ -268,7 +277,7 @@ export function QuickCaptureOverlay({
   };
 
   // Full keyboard navigation inside Quick Capture:
-  // - Tab / Shift+Tab: cycle tabs (Daily Note -> Park into Inbox -> Focus Now)
+  // - Tab / Shift+Tab: cycle tabs (Note -> Park into Inbox -> Focus Now)
   // - Ctrl+P: open searchable project picker (rebindable); when open, arrows/Ctrl+P navigate and Enter picks
   // - Alt+O: toggle Ops (rebindable)
   // - Cmd+Enter: create & start focus immediately (on Inbox or Focus tab)
@@ -276,6 +285,17 @@ export function QuickCaptureOverlay({
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
+      // `#` tag suggestions take Tab/Enter/arrows/Esc first while the note input shows them.
+      if (
+        tab === 'daily-note' &&
+        !projectPickerOpen &&
+        e.target === primaryInputRef.current &&
+        tagAutocomplete.handleKey(e)
+      ) {
+        e.stopImmediatePropagation();
+        return;
+      }
+
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
@@ -365,6 +385,7 @@ export function QuickCaptureOverlay({
     isOps,
     isPending,
     hotkeys,
+    tagAutocomplete,
   ]);
 
   const projectHotkeyLabel = formatHotkeyLabel(hotkeys.cycleProject) || '⌃P';
@@ -398,7 +419,7 @@ export function QuickCaptureOverlay({
             ].join(' ')}
           >
             <NotebookPen size={12} />
-            Daily Note
+            Note
           </button>
           <button
             type="button"
@@ -438,14 +459,26 @@ export function QuickCaptureOverlay({
       {/* Borderless Spotlight-style Inputs */}
       <div className="space-y-1.5 py-0.5">
         {tab === 'daily-note' ? (
-          <input
-            ref={primaryInputRef}
-            type="text"
-            value={noteContent}
-            onChange={(e) => setNoteContent(e.target.value)}
-            placeholder="Capture a quick note, win, or blocker…"
-            className="w-full bg-transparent border-0 px-0.5 py-1 font-display text-[17px] font-semibold text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none"
-          />
+          <div className="relative">
+            <input
+              ref={primaryInputRef}
+              type="text"
+              aria-label="Note"
+              value={noteContent}
+              onChange={(e) => {
+                setNoteContent(e.target.value);
+                tagAutocomplete.syncCaret(e.target);
+              }}
+              onSelect={(e) => tagAutocomplete.syncCaret(e.currentTarget)}
+              placeholder="Capture a quick note, win, or blocker… #tag to file it"
+              className="w-full bg-transparent border-0 px-0.5 py-1 font-display text-[17px] font-semibold text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none"
+            />
+            {/* Overlays the footer instead of growing the fixed 580×204 capture window */}
+            <NoteTagSuggestions
+              autocomplete={tagAutocomplete}
+              className="absolute left-0 right-0 top-full z-10 mt-1 py-1 bg-[#1C1C1C]"
+            />
+          </div>
         ) : (
           <>
             <input

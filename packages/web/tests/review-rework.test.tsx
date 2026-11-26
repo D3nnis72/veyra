@@ -220,6 +220,7 @@ const TEST_NOTES: DailyNote[] = [
     projectId: PROJ_UNDER_ID,
     goalId: GOAL_PERSONAL_ID,
     isOps: false,
+    tags: [],
     createdAt: '2026-11-24T11:00:00.000Z',
     updatedAt: '2026-11-24T11:00:00.000Z',
     deletedAt: null,
@@ -231,6 +232,7 @@ const TEST_NOTES: DailyNote[] = [
     projectId: PROJ_OVER_ID,
     goalId: GOAL_COMPANY_ID,
     isOps: true,
+    tags: [],
     createdAt: '2026-11-26T16:30:00.000Z',
     updatedAt: '2026-11-26T16:30:00.000Z',
     deletedAt: null,
@@ -649,14 +651,14 @@ describe('4-chapter ReviewView & Settings review.completed toggle', () => {
     }
 
     // Daily notes collapsed by default (shows count + latest preview, hides earlier note until expanded)
-    const dailyNotesSection = screen.getByRole('region', { name: /Daily Notes This Week/i });
+    const dailyNotesSection = screen.getByRole('region', { name: /Notes This Week/i });
     expect(
       within(dailyNotesSection).queryByText('Morning deep block before Slack doubled output.'),
     ).not.toBeInTheDocument();
 
     // Expand Daily notes inline
     const toggleNotesBtn = within(dailyNotesSection).getByRole('button', {
-      name: /Daily notes this week/i,
+      name: /Notes this week/i,
     });
     expect(toggleNotesBtn).toHaveAttribute('aria-expanded', 'false');
     await user.click(toggleNotesBtn);

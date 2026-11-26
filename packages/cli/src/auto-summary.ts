@@ -2,7 +2,8 @@ import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import type { Block, BlockDetail, FocusSession } from '@veyra/core/types';
+import type { Block, BlockDetail, BlockSideWorkEntry, FocusSession } from '@veyra/core/types';
+import { createT3CodeCollector, type T3CodeCollectorOptions } from './collectors/t3-code.js';
 import type { HookWebhookPayload } from './hook-listener.js';
 
 const execFileAsync = promisify(execFile);
@@ -36,10 +37,24 @@ export interface AutoSummaryBlockContext {
   externalLinks: Array<{ title: string; url: string; source?: string }>;
 }
 
+/** Per-project activity a collector observed in the window (e.g. T3 Code threads per project). */
+export interface ContextProjectActivity {
+  /** Project name as the source system calls it (matched to Veyra projects by name). */
+  projectName: string;
+  messageCount: number;
+  threads: Array<{ title: string; messageCount: number }>;
+}
+
 export interface CollectedContextSection {
   source: string;
   label: string;
   content: string;
+  /**
+   * Structured per-project breakdown, used to compute the block's `sideWork`
+   * deterministically (never by the LLM). A collector that ran but saw no activity
+   * returns an empty array, which clears stale side work.
+   */
+  projectActivity?: ContextProjectActivity[];
 }
 
 export interface ContextCollectorInput {
@@ -57,7 +72,10 @@ export interface ContextCollector {
 
 export interface AutoSummaryClient {
   getBlock(id: string): Promise<{ block: BlockDetail }>;
-  updateBlock(id: string, input: { autoSummary: string | null }): Promise<{ block: Block }>;
+  updateBlock(
+    id: string,
+    input: { autoSummary: string | null; sideWork?: BlockSideWorkEntry[] | null },
+  ): Promise<{ block: Block }>;
   listProjects?: (params?: {
     includeArchived?: boolean;
   }) => Promise<{ projects: Array<{ id: string; name: string }> }>;
@@ -89,6 +107,8 @@ export interface RunAutoSummaryOptions {
   summarizerCmd?: string;
   workspaceDirs?: string[];
   contextCmds?: string[];
+  /** Enables the built-in read-only T3 Code collector (`--t3`). */
+  t3?: T3CodeCollectorOptions;
   collectors?: ContextCollector[];
   minMinutes?: number;
   timeoutMs?: number;
@@ -112,6 +132,11 @@ export interface AutoSummaryResult {
   warnings: string[];
   prompt?: string;
   summary: string | null;
+  /**
+   * Other projects worked on during the window, excluding the block's own project.
+   * null when no collector reports per-project activity (side work is then left untouched).
+   */
+  sideWork: BlockSideWorkEntry[] | null;
   written: boolean;
   durationMs: number;
   error?: string;
@@ -526,6 +551,9 @@ export function createCommandContextCollector(command: string, index = 0): Conte
 // Prompt Formatting & Summarizer Execution
 // ---------------------------------------------------------------------------
 
+const SIDE_WORK_INSTRUCTION =
+  "Keep the summary about this block only. Activity in other projects during the same window is shown to the user separately as side work; do not summarize or mention it.";
+
 export function formatAutoSummaryPrompt(
   block: AutoSummaryBlockContext,
   window: AutoSummaryWindow | null,
@@ -539,11 +567,13 @@ export function formatAutoSummaryPrompt(
         '1. States what operational issue or request was actually handled.',
         '2. Identifies the recurring request or failure pattern and notes whether it is a candidate to automate, productize, or delegate.',
         'Base your answer strictly on the facts below. Do not invent work that is not evidenced. Output plain text only with no markdown headings, bullets, or "Summary:" prefix.',
+        SIDE_WORK_INSTRUCTION,
       ]
     : [
         'You are writing a post-block summary for Veyra, a personal work cockpit focused on progress over motion.',
         'Write an honest, concrete 1-2 sentence plain-text summary of what actually moved forward during this focus block (what was built, decided, unblocked, or discovered).',
         'Base your answer strictly on the facts below. Do not invent work that is not evidenced. Output plain text only with no markdown headings, bullets, or "Summary:" prefix.',
+        SIDE_WORK_INSTRUCTION,
       ];
 
   const factLines: string[] = [
@@ -618,6 +648,61 @@ export function runSummarizerCommand(
 // Main Auto-Summary Pipeline
 // ---------------------------------------------------------------------------
 
+/**
+ * Turns per-project activity reported by collectors into the block's `sideWork`:
+ * maps source project names to Veyra projects case-insensitively, merges entries
+ * that land on the same project, and drops the block's own project. Unmapped
+ * projects keep `projectId: null` and their source name. Returns null when no
+ * collector reported per-project activity.
+ */
+export function computeSideWork(params: {
+  activity: ContextProjectActivity[] | null;
+  blockProjectId: string | null | undefined;
+  blockProjectName?: string | null;
+  projects: Array<{ id: string; name: string }>;
+}): BlockSideWorkEntry[] | null {
+  if (!params.activity) return null;
+  const norm = (name: string) => name.trim().toLowerCase();
+  const projectsByName = new Map<string, { id: string; name: string }>();
+  for (const project of params.projects) {
+    const key = norm(project.name);
+    if (key && !projectsByName.has(key)) projectsByName.set(key, project);
+  }
+  const ownName = params.blockProjectName ? norm(params.blockProjectName) : null;
+
+  const merged = new Map<string, BlockSideWorkEntry>();
+  for (const entry of params.activity) {
+    if (!entry.projectName.trim() || entry.messageCount <= 0) continue;
+    const mapped = projectsByName.get(norm(entry.projectName)) ?? null;
+    if (mapped && params.blockProjectId && mapped.id === params.blockProjectId) continue;
+    if (!mapped && ownName && norm(entry.projectName) === ownName) continue;
+
+    const key = mapped ? `id:${mapped.id}` : `name:${norm(entry.projectName)}`;
+    const target = merged.get(key) ?? {
+      projectId: mapped?.id ?? null,
+      projectName: mapped?.name ?? entry.projectName.trim(),
+      messageCount: 0,
+      threads: [],
+    };
+    target.messageCount += entry.messageCount;
+    target.threads.push(...entry.threads.filter((t) => t.messageCount > 0));
+    merged.set(key, target);
+  }
+
+  const result = Array.from(merged.values());
+  for (const entry of result) {
+    entry.threads.sort((a, b) => b.messageCount - a.messageCount);
+    entry.threads = entry.threads.slice(0, 50);
+  }
+  result.sort((a, b) => b.messageCount - a.messageCount);
+  return result.slice(0, 50);
+}
+
+export function formatSideWorkInline(sideWork: BlockSideWorkEntry[] | null): string | null {
+  if (!sideWork || sideWork.length === 0) return null;
+  return sideWork.map((entry) => `${entry.projectName} (${entry.messageCount})`).join(', ');
+}
+
 export async function runAutoSummary(options: RunAutoSummaryOptions): Promise<AutoSummaryResult> {
   const startedAt = Date.now();
   const env = options.env ?? process.env;
@@ -626,30 +711,52 @@ export async function runAutoSummary(options: RunAutoSummaryOptions): Promise<Au
   const dryRun = Boolean(options.dryRun);
   const warnings: string[] = [];
 
+  // Fields shared by every outcome; later stages fill them in as the run progresses.
+  const state: Omit<AutoSummaryResult, 'status' | 'durationMs' | 'written'> = {
+    blockId: '',
+    blockTitle: '',
+    isOps: false,
+    window: null,
+    durationMinutes: 0,
+    minMinutes,
+    contextSources: [],
+    contextSections: [],
+    warnings,
+    summary: null,
+    sideWork: null,
+  };
+  const finish = (
+    status: AutoSummaryResult['status'],
+    extra: Partial<AutoSummaryResult> = {},
+  ): AutoSummaryResult => ({
+    ...state,
+    status,
+    written: false,
+    ...extra,
+    durationMs: Date.now() - startedAt,
+  });
+
   const extracted = options.payload ? extractWebhookSummaryInput(options.payload) : null;
   const blockId = options.blockId ?? extracted?.blockId ?? null;
 
   if (!blockId) {
-    return {
-      status: 'failed',
-      blockId: '',
-      blockTitle: '',
-      isOps: false,
-      window: null,
-      durationMinutes: 0,
-      minMinutes,
-      contextSources: [],
-      contextSections: [],
-      warnings,
-      summary: null,
-      written: false,
-      durationMs: Date.now() - startedAt,
-      error: 'Missing blockId in options and webhook payload.',
-    };
+    return finish('failed', { error: 'Missing blockId in options and webhook payload.' });
   }
+  state.blockId = blockId;
 
   let blockDetail: BlockDetail | null = null;
-  let projectName: string | null = null;
+  let projects: Array<{ id: string; name: string }> | null = null;
+  const loadProjects = async (): Promise<Array<{ id: string; name: string }>> => {
+    if (projects) return projects;
+    if (!options.client?.listProjects) return [];
+    try {
+      projects = (await options.client.listProjects({ includeArchived: true })).projects;
+    } catch {
+      // Non-fatal: project names are optional context
+      projects = [];
+    }
+    return projects;
+  };
 
   // Fetch full block detail from the Veyra API whenever a client is available
   // (mandatory when invoked without a rich payload, e.g. `veyra hook summarize <id>` or `focus.ended` switch).
@@ -657,34 +764,11 @@ export async function runAutoSummary(options: RunAutoSummaryOptions): Promise<Au
     try {
       const detailRes = await options.client.getBlock(blockId);
       blockDetail = detailRes.block;
-
-      if (blockDetail.projectId && options.client.listProjects) {
-        try {
-          const { projects } = await options.client.listProjects({ includeArchived: true });
-          const matched = projects.find((p) => p.id === blockDetail?.projectId);
-          projectName = matched?.name ?? null;
-        } catch {
-          // Non-fatal: project name is optional context
-        }
-      }
     } catch (err) {
       if (!extracted?.block?.title) {
-        return {
-          status: 'failed',
-          blockId,
-          blockTitle: '',
-          isOps: false,
-          window: null,
-          durationMinutes: 0,
-          minMinutes,
-          contextSources: [],
-          contextSections: [],
-          warnings,
-          summary: null,
-          written: false,
-          durationMs: Date.now() - startedAt,
+        return finish('failed', {
           error: `Failed to fetch block ${blockId}: ${err instanceof Error ? err.message : String(err)}`,
-        };
+        });
       }
       warnings.push(
         `Could not fetch full block detail from Veyra API (${err instanceof Error ? err.message : String(err)}); using webhook payload fields.`,
@@ -692,8 +776,14 @@ export async function runAutoSummary(options: RunAutoSummaryOptions): Promise<Au
     }
   }
 
-  const blockTitle = blockDetail?.title ?? extracted?.block?.title ?? `Block ${blockId.slice(0, 8)}`;
-  const isOps = blockDetail?.isOps ?? extracted?.block?.isOps ?? false;
+  const blockProjectId = blockDetail?.projectId ?? extracted?.block?.projectId ?? null;
+  const projectName = blockProjectId
+    ? ((await loadProjects()).find((p) => p.id === blockProjectId)?.name ?? null)
+    : null;
+
+  state.blockTitle = blockDetail?.title ?? extracted?.block?.title ?? `Block ${blockId.slice(0, 8)}`;
+  state.isOps = blockDetail?.isOps ?? extracted?.block?.isOps ?? false;
+  const { blockTitle, isOps } = state;
 
   let summaryWindow: AutoSummaryWindow | null = null;
   try {
@@ -704,47 +794,19 @@ export async function runAutoSummary(options: RunAutoSummaryOptions): Promise<Au
       blockDetail,
     });
   } catch (err) {
-    return {
-      status: 'failed',
-      blockId,
-      blockTitle,
-      isOps,
-      window: null,
-      durationMinutes: 0,
-      minMinutes,
-      contextSources: [],
-      contextSections: [],
-      warnings,
-      summary: null,
-      written: false,
-      durationMs: Date.now() - startedAt,
-      error: err instanceof Error ? err.message : String(err),
-    };
+    return finish('failed', { error: err instanceof Error ? err.message : String(err) });
   }
+  state.window = summaryWindow;
 
   const durationMinutes =
     summaryWindow?.durationMinutes ??
     extracted?.totalBlockMinutes ??
     blockDetail?.totalFocusMinutes ??
     0;
+  state.durationMinutes = durationMinutes;
 
   if (minMinutes > 0 && durationMinutes < minMinutes) {
-    return {
-      status: 'skipped',
-      blockId,
-      blockTitle,
-      isOps,
-      window: summaryWindow,
-      durationMinutes,
-      minMinutes,
-      skipReason: 'below_min_minutes',
-      contextSources: [],
-      contextSections: [],
-      warnings,
-      summary: null,
-      written: false,
-      durationMs: Date.now() - startedAt,
-    };
+    return finish('skipped', { skipReason: 'below_min_minutes' });
   }
 
   // Gather session notes overlapping the window (or from the payload session)
@@ -773,7 +835,7 @@ export async function runAutoSummary(options: RunAutoSummaryOptions): Promise<Au
     title: blockTitle,
     isOps,
     status: blockDetail?.status ?? extracted?.block?.status,
-    projectId: blockDetail?.projectId ?? extracted?.block?.projectId ?? null,
+    projectId: blockProjectId,
     projectName,
     goalId: blockDetail?.goalId ?? extracted?.block?.goalId ?? null,
     notes: blockDetail?.notes ?? extracted?.block?.notes ?? '',
@@ -789,6 +851,9 @@ export async function runAutoSummary(options: RunAutoSummaryOptions): Promise<Au
   if (options.workspaceDirs && options.workspaceDirs.length > 0) {
     collectors.push(createGitWorkspaceCollector(options.workspaceDirs));
   }
+  if (options.t3) {
+    collectors.push(createT3CodeCollector(options.t3));
+  }
   if (options.contextCmds && options.contextCmds.length > 0) {
     options.contextCmds.forEach((cmd, idx) => {
       if (cmd.trim()) {
@@ -801,6 +866,7 @@ export async function runAutoSummary(options: RunAutoSummaryOptions): Promise<Au
   }
 
   const contextSections: CollectedContextSection[] = [];
+  let projectActivity: ContextProjectActivity[] | null = null;
   for (const collector of collectors) {
     try {
       const section = await collector.collect({
@@ -810,6 +876,9 @@ export async function runAutoSummary(options: RunAutoSummaryOptions): Promise<Au
         env,
         timeoutMs,
       });
+      if (section?.projectActivity) {
+        projectActivity = [...(projectActivity ?? []), ...section.projectActivity];
+      }
       if (section && section.content.trim()) {
         contextSections.push(section);
       }
@@ -818,48 +887,28 @@ export async function runAutoSummary(options: RunAutoSummaryOptions): Promise<Au
     }
   }
 
-  const contextSources = contextSections.map((s) => s.source);
+  const sideWork = computeSideWork({
+    activity: projectActivity,
+    blockProjectId,
+    blockProjectName: projectName,
+    projects: projectActivity && projectActivity.length > 0 ? await loadProjects() : [],
+  });
+
   const prompt = formatAutoSummaryPrompt(blockContext, summaryWindow, contextSections);
+  state.contextSources = contextSections.map((s) => s.source);
+  state.contextSections = contextSections;
+  state.prompt = prompt;
+  state.sideWork = sideWork;
 
   const summarizerCmd = options.summarizerCmd?.trim() || env.VEYRA_SUMMARIZER_CMD?.trim() || '';
   if (!summarizerCmd) {
     if (dryRun) {
-      return {
-        status: 'dry_run',
-        blockId,
-        blockTitle,
-        isOps,
-        window: summaryWindow,
-        durationMinutes,
-        minMinutes,
-        contextSources,
-        contextSections,
-        warnings,
-        prompt,
-        summary: null,
-        written: false,
-        durationMs: Date.now() - startedAt,
-      };
+      return finish('dry_run');
     }
-
-    return {
-      status: 'failed',
-      blockId,
-      blockTitle,
-      isOps,
-      window: summaryWindow,
-      durationMinutes,
-      minMinutes,
-      contextSources,
-      contextSections,
-      warnings,
-      prompt,
-      summary: null,
-      written: false,
-      durationMs: Date.now() - startedAt,
+    return finish('failed', {
       error:
         'No summarizer command configured. Pass --cmd / --summarizer-cmd (e.g. "claude -p") or set VEYRA_SUMMARIZER_CMD.',
-    };
+    });
   }
 
   const summarizerEnv: NodeJS.ProcessEnv = {
@@ -881,128 +930,43 @@ export async function runAutoSummary(options: RunAutoSummaryOptions): Promise<Au
       execResult.error ||
       execResult.stderr ||
       `Summarizer exited with code ${execResult.exitCode ?? execResult.signal ?? 'unknown'}`;
-    return {
-      status: 'failed',
-      blockId,
-      blockTitle,
-      isOps,
-      window: summaryWindow,
-      durationMinutes,
-      minMinutes,
-      contextSources,
-      contextSections,
-      warnings,
-      prompt,
-      summary: null,
-      written: false,
-      durationMs: Date.now() - startedAt,
-      error: detail,
-    };
+    return finish('failed', { error: detail });
   }
 
   const summary = sanitizeSummaryOutput(execResult.stdout);
   if (!summary) {
-    return {
-      status: 'failed',
-      blockId,
-      blockTitle,
-      isOps,
-      window: summaryWindow,
-      durationMinutes,
-      minMinutes,
-      contextSources,
-      contextSections,
-      warnings,
-      prompt,
-      summary: null,
-      written: false,
-      durationMs: Date.now() - startedAt,
-      error: 'Summarizer command returned empty output.',
-    };
+    return finish('failed', { error: 'Summarizer command returned empty output.' });
   }
+  state.summary = summary;
 
   if (dryRun) {
-    return {
-      status: 'dry_run',
-      blockId,
-      blockTitle,
-      isOps,
-      window: summaryWindow,
-      durationMinutes,
-      minMinutes,
-      contextSources,
-      contextSections,
-      warnings,
-      prompt,
-      summary,
-      written: false,
-      durationMs: Date.now() - startedAt,
-    };
+    return finish('dry_run');
   }
 
   if (!options.client) {
-    return {
-      status: 'failed',
-      blockId,
-      blockTitle,
-      isOps,
-      window: summaryWindow,
-      durationMinutes,
-      minMinutes,
-      contextSources,
-      contextSections,
-      warnings,
-      prompt,
-      summary,
-      written: false,
-      durationMs: Date.now() - startedAt,
-      error: 'No Veyra API client provided to persist autoSummary.',
-    };
+    return finish('failed', { error: 'No Veyra API client provided to persist autoSummary.' });
   }
 
   try {
-    await options.client.updateBlock(blockId, { autoSummary: summary });
+    // sideWork is written together with the summary, but only when a collector
+    // reported per-project activity; otherwise earlier side work stays untouched.
+    await options.client.updateBlock(blockId, {
+      autoSummary: summary,
+      ...(sideWork !== null ? { sideWork } : {}),
+    });
   } catch (err) {
-    return {
-      status: 'failed',
-      blockId,
-      blockTitle,
-      isOps,
-      window: summaryWindow,
-      durationMinutes,
-      minMinutes,
-      contextSources,
-      contextSections,
-      warnings,
-      prompt,
-      summary,
-      written: false,
-      durationMs: Date.now() - startedAt,
+    return finish('failed', {
       error: `Failed to write autoSummary to block ${blockId}: ${err instanceof Error ? err.message : String(err)}`,
-    };
+    });
   }
 
-  return {
-    status: 'summarized',
-    blockId,
-    blockTitle,
-    isOps,
-    window: summaryWindow,
-    durationMinutes,
-    minMinutes,
-    contextSources,
-    contextSections,
-    warnings,
-    prompt,
-    summary,
-    written: true,
-    durationMs: Date.now() - startedAt,
-  };
+  return finish('summarized', { written: true });
 }
 
 export function formatAutoSummaryHuman(result: AutoSummaryResult): string {
   const shortId = result.blockId ? result.blockId.slice(0, 8) : 'unknown';
   const opsBadge = result.isOps ? ' [Ops]' : '';
+  const sideWorkLine = formatSideWorkInline(result.sideWork);
 
   if (result.status === 'skipped') {
     return `Skipped auto-summary for "${result.blockTitle}" (${shortId})${opsBadge}: duration ${result.durationMinutes}m is below --min-minutes ${result.minMinutes}m.`;
@@ -1018,7 +982,11 @@ export function formatAutoSummaryHuman(result: AutoSummaryResult): string {
     ];
     if (result.summary) {
       lines.push(`Generated summary (not written): ${result.summary}`);
-    } else if (result.prompt) {
+    }
+    if (sideWorkLine) {
+      lines.push(`Also during (not written): ${sideWorkLine}`);
+    }
+    if (!result.summary && result.prompt) {
       lines.push('--- Prompt ---', result.prompt);
     }
     if (result.warnings.length > 0) {
@@ -1030,6 +998,9 @@ export function formatAutoSummaryHuman(result: AutoSummaryResult): string {
   const lines = [
     `Updated auto-summary on "${result.blockTitle}" (${shortId})${opsBadge}: ${result.summary ?? ''}`,
   ];
+  if (sideWorkLine) {
+    lines.push(`Also during: ${sideWorkLine}`);
+  }
   if (result.warnings.length > 0) {
     lines.push(`Warnings: ${result.warnings.join('; ')}`);
   }
