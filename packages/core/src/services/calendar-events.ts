@@ -1,16 +1,22 @@
 import crypto from 'node:crypto';
-import { and, asc, desc, eq, isNotNull, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, isNotNull, isNull, ne } from 'drizzle-orm';
 import type { VeyraDb } from '../db.js';
 import { NotFoundError, ValidationError, parseWithZod } from '../errors.js';
-import { calendarEvents, goals, projects } from '../schema.js';
+import { generateOrderKey } from '../order-key.js';
+import { blocks, focusSessions, goals, projects } from '../schema.js';
+import { formatLocalDate } from '../time.js';
 import {
   type AutoMatchCalendarEventsResult,
+  type Block,
   type CalendarEvent,
   type CalendarEventSource,
   type NormalizedCalendarEvent,
+  SYSTEM_OTHER_PROJECT_ID,
+  type Settings,
   type UpdateCalendarEventInput,
   type UpsertCalendarEventsResult,
   calendarEventSourceSchema,
+  normalizeBlockSizeMinutes,
   normalizedCalendarEventSchema,
   updateCalendarEventInputSchema,
 } from '../types.js';
@@ -23,6 +29,55 @@ import {
 import { getSettings } from './settings.js';
 
 export type { AutoMatchCalendarEventsResult, UpsertCalendarEventsResult };
+
+// ---------------------------------------------------------------------------
+// Helpers: Block <-> CalendarEvent projection & sync filter
+// ---------------------------------------------------------------------------
+
+/** Projects a calendar-synced `Block` row into the `CalendarEvent` read shape. */
+export function blockToCalendarEvent(block: Block): CalendarEvent {
+  return {
+    id: block.id,
+    externalId: block.externalEventId ?? block.id,
+    title: block.title,
+    startAt: block.plannedStartAt ?? block.updatedAt,
+    endAt: block.plannedEndAt ?? block.updatedAt,
+    meetingUrl: block.meetingUrl ?? null,
+    source: block.calendarSource ?? 'manual',
+    projectId: block.projectId === SYSTEM_OTHER_PROJECT_ID ? null : block.projectId,
+    goalId: block.goalId,
+    isOps: block.isOps,
+    notes: block.notes,
+    externalLinks: block.externalLinks,
+    status: block.status,
+    updatedAt: block.updatedAt,
+    deletedAt: block.deletedAt,
+  };
+}
+
+/**
+ * Returns true when an incoming synced event should be skipped (and removed if previously
+ * synced without tracked focus time) under the current settings.
+ *
+ * When `skipDeclinedAndAllDay` is enabled:
+ * - all-day, declined, and cancelled events are excluded;
+ * - events that carry a `responseStatus` are only kept when `'accepted'` or `'organizer'`.
+ */
+export function isCalendarEventExcluded(
+  ev: NormalizedCalendarEvent,
+  settings: Pick<Settings, 'skipDeclinedAndAllDay'>,
+): boolean {
+  if (!settings.skipDeclinedAndAllDay) {
+    return false;
+  }
+  if (ev.isAllDay || ev.isDeclined || ev.isCancelled) {
+    return true;
+  }
+  if (ev.responseStatus !== undefined && ev.responseStatus !== null) {
+    return ev.responseStatus !== 'accepted' && ev.responseStatus !== 'organizer';
+  }
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // Meeting -> Project auto-matching
@@ -63,7 +118,7 @@ function keywordMatches(normalizedTitle: string, keyword: string): boolean {
 
 /**
  * Builds a deterministic two-stage matcher from the current DB state.
- * Stage 1: inherit the assignment of an existing meeting with the same normalized title.
+ * Stage 1: inherit the assignment of an existing synced meeting block with the same normalized title.
  * Stage 2: active, non-system Projects matched by `matchKeywords` (or by name when the
  * Project has no keywords and its name has >= 3 chars); longest keyword wins, ties keep
  * the first Project in name order.
@@ -81,14 +136,20 @@ function buildMeetingMatcher(veyraDb: VeyraDb): MeetingMatcher {
   const learned = new Map<string, MeetingAssignment>();
   const assignedRows = veyraDb.db
     .select({
-      title: calendarEvents.title,
-      projectId: calendarEvents.projectId,
-      goalId: calendarEvents.goalId,
-      isOps: calendarEvents.isOps,
+      title: blocks.title,
+      projectId: blocks.projectId,
+      goalId: blocks.goalId,
+      isOps: blocks.isOps,
     })
-    .from(calendarEvents)
-    .where(and(isNull(calendarEvents.deletedAt), isNotNull(calendarEvents.projectId)))
-    .orderBy(desc(calendarEvents.updatedAt))
+    .from(blocks)
+    .where(
+      and(
+        isNull(blocks.deletedAt),
+        isNotNull(blocks.calendarSource),
+        ne(blocks.projectId, SYSTEM_OTHER_PROJECT_ID),
+      ),
+    )
+    .orderBy(desc(blocks.updatedAt))
     .all();
   for (const row of assignedRows) {
     if (!row.projectId || !liveProjectIds.has(row.projectId)) continue;
@@ -147,25 +208,25 @@ function buildMeetingMatcher(veyraDb: VeyraDb): MeetingMatcher {
 
 function applyAssignment(
   veyraDb: VeyraDb,
-  eventId: string,
+  blockId: string,
   assignment: MeetingAssignment,
   nowIso: string,
 ): void {
   veyraDb.db
-    .update(calendarEvents)
+    .update(blocks)
     .set({
       projectId: assignment.projectId,
       goalId: assignment.goalId,
       isOps: assignment.isOps,
       updatedAt: nowIso,
     })
-    .where(and(eq(calendarEvents.id, eventId), isNull(calendarEvents.projectId)))
+    .where(and(eq(blocks.id, blockId), eq(blocks.projectId, SYSTEM_OTHER_PROJECT_ID)))
     .run();
 }
 
 /**
- * Retro-matches every non-deleted, still-unassigned calendar event against learned
- * titles and Project keywords. Never touches events that already carry a `projectId`.
+ * Retro-matches every non-deleted, still-unassigned calendar block against learned
+ * titles and Project keywords. Never touches calendar blocks already assigned to a real Project.
  */
 export function autoMatchUnassignedCalendarEvents(
   veyraDb: VeyraDb,
@@ -179,10 +240,16 @@ export function autoMatchUnassignedCalendarEvents(
   veyraDb.sqlite.transaction(() => {
     const matcher = buildMeetingMatcher(veyraDb);
     const unassigned = veyraDb.db
-      .select({ id: calendarEvents.id, title: calendarEvents.title })
-      .from(calendarEvents)
-      .where(and(isNull(calendarEvents.deletedAt), isNull(calendarEvents.projectId)))
-      .orderBy(asc(calendarEvents.startAt))
+      .select({ id: blocks.id, title: blocks.title })
+      .from(blocks)
+      .where(
+        and(
+          isNull(blocks.deletedAt),
+          isNotNull(blocks.calendarSource),
+          eq(blocks.projectId, SYSTEM_OTHER_PROJECT_ID),
+        ),
+      )
+      .orderBy(asc(blocks.plannedStartAt))
       .all();
 
     for (const row of unassigned) {
@@ -207,8 +274,10 @@ export function autoMatchUnassignedCalendarEvents(
 }
 
 /**
- * Upserts normalized calendar events by `(source, externalId)`, preserving user-owned
- * metadata (`projectId`, `goalId`, `isOps`, `notes`, `externalLinks`) across re-syncs.
+ * Upserts normalized calendar events directly into `blocks` keyed by
+ * `(calendarSource, externalEventId)`, preserving user-owned metadata
+ * (`projectId`, `goalId`, `isOps`, `notes`, `externalLinks`, `status`,
+ * `outcomeNote`, `energySignal`, `senseSignal`, `autoSummary`, `sideWork`) across re-syncs.
  */
 export function upsertCalendarEvents(
   veyraDb: VeyraDb,
@@ -231,36 +300,45 @@ export function upsertCalendarEvents(
 
   veyraDb.sqlite.transaction(() => {
     const matcher = buildMeetingMatcher(veyraDb);
-    const tryAutoMatch = (event: CalendarEvent): CalendarEvent => {
-      if (event.projectId !== null) return event;
-      const assignment = matcher.match(event.title);
-      if (!assignment) return event;
-      applyAssignment(veyraDb, event.id, assignment, nowIso);
+    const tryAutoMatch = (block: Block): Block => {
+      if (block.projectId !== SYSTEM_OTHER_PROJECT_ID) return block;
+      const assignment = matcher.match(block.title);
+      if (!assignment) return block;
+      applyAssignment(veyraDb, block.id, assignment, nowIso);
       autoMatchedCount++;
-      return { ...event, ...assignment };
+      return { ...block, ...assignment };
     };
 
     for (const ev of parsedEvents) {
-      if (currentSettings.skipDeclinedAndAllDay && (ev.isAllDay || ev.isDeclined)) {
+      if (isCalendarEventExcluded(ev, currentSettings)) {
         const existingActive = veyraDb.db
-          .select({ id: calendarEvents.id })
-          .from(calendarEvents)
+          .select({ id: blocks.id, status: blocks.status })
+          .from(blocks)
           .where(
             and(
-              eq(calendarEvents.source, validSource),
-              eq(calendarEvents.externalId, ev.externalId),
-              isNull(calendarEvents.deletedAt),
+              eq(blocks.calendarSource, validSource),
+              eq(blocks.externalEventId, ev.externalId),
+              isNull(blocks.deletedAt),
             ),
           )
           .get();
 
-        if (existingActive) {
-          veyraDb.db
-            .update(calendarEvents)
-            .set({ deletedAt: nowIso, updatedAt: nowIso })
-            .where(eq(calendarEvents.id, existingActive.id))
-            .run();
-          deletedCount++;
+        if (existingActive && existingActive.status !== 'done') {
+          const hasSession = veyraDb.db
+            .select({ id: focusSessions.id })
+            .from(focusSessions)
+            .where(and(eq(focusSessions.blockId, existingActive.id), isNull(focusSessions.deletedAt)))
+            .limit(1)
+            .get();
+
+          if (!hasSession) {
+            veyraDb.db
+              .update(blocks)
+              .set({ deletedAt: nowIso, updatedAt: nowIso })
+              .where(eq(blocks.id, existingActive.id))
+              .run();
+            deletedCount++;
+          }
         }
 
         skippedCount++;
@@ -277,64 +355,89 @@ export function upsertCalendarEvents(
 
       const normalizedStart = new Date(startMs).toISOString();
       const normalizedEnd = new Date(endMs).toISOString();
+      const scheduledDate = formatLocalDate(new Date(startMs), currentSettings.timezone);
+      const sizeMinutes = normalizeBlockSizeMinutes(Math.round((endMs - startMs) / 60_000));
 
       const existing = veyraDb.db
         .select()
-        .from(calendarEvents)
+        .from(blocks)
         .where(
           and(
-            eq(calendarEvents.source, validSource),
-            eq(calendarEvents.externalId, ev.externalId),
+            eq(blocks.calendarSource, validSource),
+            eq(blocks.externalEventId, ev.externalId),
           ),
         )
         .get();
 
       if (existing) {
-        const updated: CalendarEvent = {
+        const updated: Block = {
           ...existing,
           title: ev.title,
-          startAt: normalizedStart,
-          endAt: normalizedEnd,
+          bucket: 'scheduled',
+          scheduledDate,
+          plannedStartAt: normalizedStart,
+          plannedEndAt: normalizedEnd,
+          sizeMinutes,
           meetingUrl: ev.meetingUrl ?? null,
           updatedAt: nowIso,
           deletedAt: null,
         };
 
         veyraDb.db
-          .update(calendarEvents)
+          .update(blocks)
           .set({
             title: updated.title,
-            startAt: updated.startAt,
-            endAt: updated.endAt,
+            bucket: updated.bucket,
+            scheduledDate: updated.scheduledDate,
+            plannedStartAt: updated.plannedStartAt,
+            plannedEndAt: updated.plannedEndAt,
+            sizeMinutes: updated.sizeMinutes,
             meetingUrl: updated.meetingUrl,
             updatedAt: updated.updatedAt,
             deletedAt: null,
           })
-          .where(eq(calendarEvents.id, existing.id))
+          .where(eq(blocks.id, existing.id))
           .run();
 
-        upserted.push(tryAutoMatch(updated));
+        upserted.push(blockToCalendarEvent(tryAutoMatch(updated)));
         updatedCount++;
       } else {
-        const created: CalendarEvent = {
+        const created: Block = {
           id: crypto.randomUUID(),
-          externalId: ev.externalId,
-          title: ev.title,
-          startAt: normalizedStart,
-          endAt: normalizedEnd,
-          meetingUrl: ev.meetingUrl ?? null,
-          source: validSource,
-          projectId: null,
+          projectId: SYSTEM_OTHER_PROJECT_ID,
           goalId: null,
+          title: ev.title,
           isOps: false,
+          bucket: 'scheduled',
+          scheduledDate,
+          plannedStartAt: normalizedStart,
+          plannedEndAt: normalizedEnd,
+          dueDate: null,
+          revisitAt: null,
+          orderKey: generateOrderKey(),
+          status: 'todo',
+          carryoverCount: 0,
+          sizeMinutes,
+          energySignal: null,
+          senseSignal: null,
+          dropReason: null,
+          outcomeNote: null,
+          resumeNote: null,
+          autoSummary: null,
+          sideWork: null,
+          recurrenceRule: null,
+          seriesId: null,
           notes: '',
           externalLinks: [],
+          calendarSource: validSource,
+          externalEventId: ev.externalId,
+          meetingUrl: ev.meetingUrl ?? null,
           updatedAt: nowIso,
           deletedAt: null,
         };
 
-        veyraDb.db.insert(calendarEvents).values(created).run();
-        upserted.push(tryAutoMatch(created));
+        veyraDb.db.insert(blocks).values(created).run();
+        upserted.push(blockToCalendarEvent(tryAutoMatch(created)));
         createdCount++;
       }
     }
@@ -358,13 +461,13 @@ export function upsertCalendarEvents(
 export function getCalendarEvent(veyraDb: VeyraDb, id: string): CalendarEvent {
   const row = veyraDb.db
     .select()
-    .from(calendarEvents)
-    .where(and(eq(calendarEvents.id, id), isNull(calendarEvents.deletedAt)))
+    .from(blocks)
+    .where(and(eq(blocks.id, id), isNotNull(blocks.calendarSource), isNull(blocks.deletedAt)))
     .get();
   if (!row) {
     throw new NotFoundError(`CalendarEvent '${id}' not found`);
   }
-  return row;
+  return blockToCalendarEvent(row);
 }
 
 export function updateCalendarEvent(
@@ -373,7 +476,15 @@ export function updateCalendarEvent(
   input: UpdateCalendarEventInput,
   options?: ServiceMutationOptions,
 ): CalendarEvent {
-  const existing = getCalendarEvent(veyraDb, id);
+  const existingRow = veyraDb.db
+    .select()
+    .from(blocks)
+    .where(and(eq(blocks.id, id), isNotNull(blocks.calendarSource), isNull(blocks.deletedAt)))
+    .get();
+  if (!existingRow) {
+    throw new NotFoundError(`CalendarEvent '${id}' not found`);
+  }
+
   const parsed = parseWithZod(updateCalendarEventInputSchema, input);
   const nowIso = resolveNow(options?.now).toISOString();
   const actor = resolveActor(options?.actor);
@@ -400,19 +511,26 @@ export function updateCalendarEvent(
     }
   }
 
-  const updated: CalendarEvent = {
-    ...existing,
-    projectId: parsed.projectId !== undefined ? parsed.projectId : existing.projectId,
-    goalId: parsed.goalId !== undefined ? parsed.goalId : existing.goalId,
-    isOps: parsed.isOps ?? existing.isOps,
-    notes: parsed.notes ?? existing.notes,
-    externalLinks: parsed.externalLinks ?? existing.externalLinks,
+  const nextProjectId =
+    parsed.projectId === undefined
+      ? existingRow.projectId
+      : parsed.projectId === null
+        ? SYSTEM_OTHER_PROJECT_ID
+        : parsed.projectId;
+
+  const updated: Block = {
+    ...existingRow,
+    projectId: nextProjectId,
+    goalId: parsed.goalId !== undefined ? parsed.goalId : existingRow.goalId,
+    isOps: parsed.isOps ?? existingRow.isOps,
+    notes: parsed.notes ?? existingRow.notes,
+    externalLinks: parsed.externalLinks ?? existingRow.externalLinks,
     updatedAt: nowIso,
   };
 
   veyraDb.sqlite.transaction(() => {
     veyraDb.db
-      .update(calendarEvents)
+      .update(blocks)
       .set({
         projectId: updated.projectId,
         goalId: updated.goalId,
@@ -421,7 +539,7 @@ export function updateCalendarEvent(
         externalLinks: updated.externalLinks,
         updatedAt: updated.updatedAt,
       })
-      .where(eq(calendarEvents.id, id))
+      .where(eq(blocks.id, id))
       .run();
 
     recordActivity(
@@ -433,7 +551,7 @@ export function updateCalendarEvent(
     );
   })();
 
-  return updated;
+  return blockToCalendarEvent(updated);
 }
 
 export function listCalendarEvents(
@@ -449,14 +567,23 @@ export function listCalendarEvents(
 
   const rows = veyraDb.db
     .select()
-    .from(calendarEvents)
-    .where(isNull(calendarEvents.deletedAt))
-    .orderBy(asc(calendarEvents.startAt))
+    .from(blocks)
+    .where(
+      and(
+        isNull(blocks.deletedAt),
+        isNotNull(blocks.calendarSource),
+        isNotNull(blocks.plannedStartAt),
+        isNotNull(blocks.plannedEndAt),
+      ),
+    )
+    .orderBy(asc(blocks.plannedStartAt))
     .all();
 
-  return rows.filter((ev) => {
-    const evStart = Date.parse(ev.startAt);
-    const evEnd = Date.parse(ev.endAt);
-    return evStart < endMs && evEnd > startMs;
-  });
+  return rows
+    .filter((blk) => {
+      const evStart = Date.parse(blk.plannedStartAt!);
+      const evEnd = Date.parse(blk.plannedEndAt!);
+      return evStart < endMs && evEnd > startMs;
+    })
+    .map(blockToCalendarEvent);
 }

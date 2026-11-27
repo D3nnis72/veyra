@@ -195,26 +195,47 @@ export function useBlockContextMenu(): EntityMenuHandle<Block> {
 
 export function useMeetingContextMenu(): EntityMenuHandle<CalendarEvent> {
   const queryClient = useQueryClient();
-  const { openMeetingDrawer, openCreateBlock } = useAppShell();
+  const { openBlockDrawer, openCreateBlock, startFocusAndNavigate } = useAppShell();
   const state = useContextMenuState<CalendarEvent>();
 
-  const opsMutation = useMutation({
-    mutationFn: (event: CalendarEvent) => apiClient.updateEvent(event.id, { isOps: !event.isOps }),
+  const action = useMutation({
+    mutationFn: async (fn: () => Promise<unknown>) => fn(),
     onSettled: () => {
-      for (const key of ['calendar', 'today', 'plan', 'events', 'review']) {
+      invalidateBlockRelated(queryClient);
+      for (const key of ['events', 'review']) {
         void queryClient.invalidateQueries({ queryKey: [key] });
       }
     },
   });
 
   const event = state.payload;
+  const isTodo = (event?.status ?? 'todo') === 'todo';
   const items: Array<ContextMenuEntry | null | false> = event
     ? [
+        isTodo
+          ? {
+              id: 'start',
+              label: 'Start Focus',
+              icon: <Play size={ICON} className="text-[#AEB8FF]" />,
+              onSelect: () => void startFocusAndNavigate(event.id),
+            }
+          : {
+              id: 'reopen',
+              label: 'Reopen Block',
+              icon: <RotateCcw size={ICON} className="text-[#AEB8FF]" />,
+              onSelect: () => action.mutate(() => apiClient.reopenBlock(event.id)),
+            },
         {
           id: 'notes',
-          label: 'Open Meeting Notes',
+          label: 'Open Block Details',
           icon: <NotebookPen size={ICON} />,
-          onSelect: () => openMeetingDrawer(event.id),
+          onSelect: () => openBlockDrawer(event.id),
+        },
+        isTodo && {
+          id: 'complete',
+          label: 'Mark Complete',
+          icon: <CheckCircle2 size={ICON} className="text-[#7BE0A0]" />,
+          onSelect: () => action.mutate(() => apiClient.completeFocus({ blockId: event.id })),
         },
         Boolean(event.meetingUrl) && {
           id: 'join',
@@ -239,7 +260,8 @@ export function useMeetingContextMenu(): EntityMenuHandle<CalendarEvent> {
           id: 'ops',
           label: event.isOps ? 'Unmark Ops' : 'Toggle Ops',
           icon: <Briefcase size={ICON} className={event.isOps ? 'text-[#E8B417]' : undefined} />,
-          onSelect: () => opsMutation.mutate(event),
+          onSelect: () =>
+            action.mutate(() => apiClient.updateBlock(event.id, { isOps: !event.isOps })),
         },
       ]
     : [];

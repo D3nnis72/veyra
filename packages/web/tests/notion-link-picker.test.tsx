@@ -17,7 +17,6 @@ import { AppShellContext, type AppShellContextValue } from '../src/app/AppShellC
 import { CreateBlockModal } from '../src/app/CreateBlockModal';
 import { BlockDetailDrawer } from '../src/components/BlockDetailDrawer';
 import { looksLikeUrl, normalizeUrlInput } from '../src/components/LinkPickerPopover';
-import { MeetingDetailDrawer } from '../src/views/MeetingDetailDrawer';
 import { SettingsView } from '../src/views/SettingsView';
 
 const GOAL_1_ID = '11111111-1111-4111-8111-111111111111';
@@ -111,6 +110,7 @@ function makeSettingsResponse(
     icsFeedUrl: null,
     calendarSyncIntervalMin: 15,
     skipDeclinedAndAllDay: true,
+    meetingAutoFocusEnabled: true,
     lastCalendarSyncAt: null,
     webhookUrl: null,
     webhookEvents: [],
@@ -213,7 +213,7 @@ describe('Inline Notion Link Picker UI & Settings', () => {
   let notionConfigured: boolean;
   let notionTokenSource: 'settings' | 'env' | null;
   let blockState: BlockDetail;
-  let eventState: CalendarEvent;
+  let calendarBlockState: BlockDetail;
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -250,21 +250,39 @@ describe('Inline Notion Link Picker UI & Settings', () => {
       sessions: [],
       totalFocusMinutes: 0,
     };
-    eventState = {
+    calendarBlockState = {
       id: EVENT_1_ID,
-      externalId: 'mtg-1',
-      title: 'Customer Architecture Review',
-      startAt: '2026-11-24T14:00:00.000Z',
-      endAt: '2026-11-24T15:00:00.000Z',
-      meetingUrl: 'https://teams.microsoft.com/l/meetup-join/test',
-      source: 'manual',
       projectId: PROJ_1_ID,
       goalId: GOAL_1_ID,
+      title: 'Customer Architecture Review',
       isOps: false,
+      bucket: 'scheduled',
+      scheduledDate: '2026-11-24',
+      plannedStartAt: '2026-11-24T14:00:00.000Z',
+      plannedEndAt: '2026-11-24T15:00:00.000Z',
+      dueDate: null,
+      revisitAt: null,
+      orderKey: 'a1',
+      status: 'todo',
+      carryoverCount: 0,
+      sizeMinutes: 60,
+      energySignal: null,
+      senseSignal: null,
+      dropReason: null,
+      outcomeNote: null,
+      resumeNote: null,
+      autoSummary: null,
+      recurrenceRule: null,
+      seriesId: null,
       notes: '',
       externalLinks: [],
+      calendarSource: 'outlook_cli',
+      externalEventId: 'mtg-1',
+      meetingUrl: 'https://teams.microsoft.com/l/meetup-join/test',
       updatedAt: '2026-11-24T09:00:00.000Z',
       deletedAt: null,
+      sessions: [],
+      totalFocusMinutes: 0,
     };
 
     fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -345,17 +363,17 @@ describe('Inline Notion Link Picker UI & Settings', () => {
           201,
         );
       }
-      if (pathname === '/api/events' && method === 'GET') {
-        return jsonResponse({ events: [eventState] });
+      if (pathname === `/api/blocks/${EVENT_1_ID}` && method === 'GET') {
+        return jsonResponse({ block: calendarBlockState });
       }
-      if (pathname === `/api/events/${EVENT_1_ID}` && method === 'PATCH') {
+      if (pathname === `/api/blocks/${EVENT_1_ID}` && method === 'PATCH') {
         const body = JSON.parse(String(init?.body ?? '{}')) as { externalLinks?: ExternalLink[] };
-        eventState = {
-          ...eventState,
+        calendarBlockState = {
+          ...calendarBlockState,
           ...(body.externalLinks ? { externalLinks: body.externalLinks } : {}),
           updatedAt: new Date().toISOString(),
         };
-        return jsonResponse({ event: eventState });
+        return jsonResponse({ block: calendarBlockState });
       }
 
       return jsonResponse({ error: { code: 'NOT_FOUND', message: `${method} ${pathname}` } }, 404);
@@ -449,7 +467,7 @@ describe('Inline Notion Link Picker UI & Settings', () => {
     ]);
   });
 
-  it('MeetingDetailDrawer attaches a searched Notion page in one click', async () => {
+  it('BlockDetailDrawer on a calendar-synced meeting block shows Teams link and attaches a searched Notion page in one click', async () => {
     const user = userEvent.setup();
     const qc = createTestQueryClient();
     const shell = createMockAppShell();
@@ -457,12 +475,15 @@ describe('Inline Notion Link Picker UI & Settings', () => {
     render(
       <QueryClientProvider client={qc}>
         <AppShellContext.Provider value={shell}>
-          <MeetingDetailDrawer eventId={EVENT_1_ID} onClose={vi.fn()} />
+          <BlockDetailDrawer blockId={EVENT_1_ID} onClose={vi.fn()} />
         </AppShellContext.Provider>
       </QueryClientProvider>,
     );
 
-    const dialog = await screen.findByRole('dialog', { name: 'Meeting detail' });
+    const dialog = await screen.findByRole('dialog', { name: 'Block detail' });
+    expect(
+      await within(dialog).findByRole('button', { name: /Open in Teams/i }),
+    ).toBeInTheDocument();
     await user.click(await within(dialog).findByRole('button', { name: /Add link/i }));
     const option = await within(dialog).findByRole('option', { name: /Q4 Product Roadmap/i });
     await user.click(option);
@@ -470,7 +491,7 @@ describe('Inline Notion Link Picker UI & Settings', () => {
     await waitFor(() => {
       expect(within(dialog).getByText('Q4 Product Roadmap')).toBeInTheDocument();
     });
-    expect(eventState.externalLinks).toEqual([
+    expect(calendarBlockState.externalLinks).toEqual([
       {
         url: 'https://www.notion.so/Q4-Product-Roadmap-111',
         title: 'Q4 Product Roadmap',

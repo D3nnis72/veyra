@@ -338,9 +338,13 @@ describe('TodayView prioritization, capacity, exits, Tell someone, Drop reason &
       </QueryClientProvider>,
     );
 
-    // Room today line beneath date
+    // Room today line beneath date (with clickable working-until button)
+    const roomLine = await screen.findByTestId('room-today-line');
+    expect(roomLine).toHaveTextContent(
+      /Room today ≈ 3h 40m · 5h free.*until 18:00.*3h 40m of your usual Monday 5h 10m focus budget left/i,
+    );
     expect(
-      await screen.findByText(/Room today ≈ 3h 40m · 5h free until 18:00, 3h 40m of your usual Monday 5h 10m focus budget left/i),
+      screen.getByRole('button', { name: /Set working end time for today/i }),
     ).toBeInTheDocument();
 
     // Rule hint in UP NEXT header
@@ -877,8 +881,12 @@ describe('FocusView quiet goal context & Inline Complete sense question', () => 
       </QueryClientProvider>,
     );
 
+    // Focus actions: Continue later (primary), Complete (secondary), Cancel (no redundant Stop)
+    expect(screen.getByRole('button', { name: /Continue later/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Stop$/i })).not.toBeInTheDocument();
+
     // Open Inline Complete panel
-    await user.click(screen.getByRole('button', { name: /Complete Block/i }));
+    await user.click(screen.getByRole('button', { name: /^Complete$/i }));
 
     const energyHeading = screen.getByText(/HOW DID THIS BLOCK FEEL\?/i);
     const senseHeading = screen.getByText(/DID THIS BLOCK MAKE SENSE FOR ITS GOAL\?/i);
@@ -922,5 +930,76 @@ describe('FocusView quiet goal context & Inline Complete sense question', () => 
         outcomeNote: 'Shipped Today capacity & Fit Line UI',
       });
     });
+  });
+
+  it('FocusView lets you cut a forgotten pause out of the running session', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 10, 27, 12, 0, 0));
+    try {
+      const user = userEvent.setup();
+      const qc = createTestQueryClient();
+      let gapPayload: Record<string, unknown> | null = null;
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = typeof input === 'string' ? input : input.toString();
+          const method = (init?.method ?? 'GET').toUpperCase();
+          if (url.includes('/api/focus/gap') && method === 'POST') {
+            gapPayload = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+            return jsonResponse({
+              closedSession: { ...ACTIVE_SESSION, endedAt: gapPayload.gapStartAt },
+              startedSession: { ...ACTIVE_SESSION, id: 'new', startedAt: gapPayload.gapEndAt },
+              block: BLOCK_B,
+              focusStatus: {
+                activeSession: { ...ACTIVE_SESSION, id: 'new', startedAt: gapPayload.gapEndAt },
+                activeBlock: BLOCK_B,
+                elapsedSeconds: 0,
+                focusedTodayMinutes: 40,
+              },
+            });
+          }
+          if (url.includes('/api/today')) return jsonResponse(createTodayPayload());
+          return jsonResponse({});
+        }),
+      );
+
+      const shell = createMockShell({
+        route: 'focus',
+        liveElapsedSeconds: 35 * 60,
+        focusStatus: {
+          activeSession: ACTIVE_SESSION,
+          activeBlock: BLOCK_B,
+          elapsedSeconds: 35 * 60,
+          focusedTodayMinutes: 80,
+        },
+      });
+
+      render(
+        <QueryClientProvider client={qc}>
+          <AppShellContext.Provider value={shell}>
+            <FocusView />
+          </AppShellContext.Provider>
+        </QueryClientProvider>,
+      );
+
+      await user.click(screen.getByRole('button', { name: /Remove a pause you forgot to log/i }));
+      expect(screen.getByText(/Forgot to log a pause\?/i)).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: '30m' }));
+      expect(screen.getByLabelText('Pause started at')).toHaveValue('11:30');
+      expect(screen.getByLabelText('Pause ended at')).toHaveValue('12:00');
+
+      await user.click(screen.getByRole('button', { name: /Remove pause/i }));
+
+      await waitFor(() => {
+        expect(gapPayload).toEqual({
+          gapStartAt: new Date(2026, 10, 27, 11, 30).toISOString(),
+          gapEndAt: new Date(2026, 10, 27, 12, 0).toISOString(),
+        });
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

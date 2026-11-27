@@ -167,6 +167,7 @@ const BASE_SETTINGS: PublicSettings = {
   icsFeedUrl: null,
   calendarSyncIntervalMin: 15,
   skipDeclinedAndAllDay: true,
+  meetingAutoFocusEnabled: true,
   lastCalendarSyncAt: '2026-11-23T09:15:00.000Z',
   webhookUrl: null,
   webhookEvents: ['focus.started', 'focus.ended', 'block.completed'],
@@ -1162,7 +1163,13 @@ describe('Veyra Web App Flows', () => {
     // Press Ctrl+O (Quick Focus): should jump straight to Focus view instead of opening Quick Capture
     fireEvent.keyDown(window, { key: 'o', code: 'KeyO', ctrlKey: true });
 
-    expect(await screen.findByRole('button', { name: /Complete Block/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Continue later/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Complete$/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Stop$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('dialog', { name: 'Quick Capture' })).not.toBeInTheDocument();
+
+    // Pressing Ctrl+O again while already in Focus leaves Focus (or hides the window in Electron)
+    fireEvent.keyDown(window, { key: 'o', code: 'KeyO', ctrlKey: true });
+    expect(await screen.findByRole('button', { name: 'Cancel focus session' })).toBeInTheDocument();
   });
 });

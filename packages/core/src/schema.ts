@@ -98,6 +98,9 @@ export const blocks = sqliteTable('blocks', {
     .$type<ExternalLink[]>()
     .notNull()
     .default([]),
+  calendarSource: text('calendar_source').$type<CalendarEventSource>(),
+  externalEventId: text('external_event_id'),
+  meetingUrl: text('meeting_url'),
   updatedAt: text('updated_at').notNull(),
   deletedAt: text('deleted_at'),
 });
@@ -187,6 +190,9 @@ export const settings = sqliteTable('settings', {
   skipDeclinedAndAllDay: integer('skip_declined_and_all_day', { mode: 'boolean' })
     .notNull()
     .default(true),
+  meetingAutoFocusEnabled: integer('meeting_auto_focus_enabled', { mode: 'boolean' })
+    .notNull()
+    .default(true),
   lastCalendarSyncAt: text('last_calendar_sync_at'),
   webhookUrl: text('webhook_url'),
   webhookEvents: text('webhook_events', { mode: 'json' })
@@ -213,6 +219,8 @@ export const settings = sqliteTable('settings', {
     .default({}),
   workdayStart: text('workday_start').notNull().default('09:00'),
   workdayEnd: text('workday_end').notNull().default('18:00'),
+  workdayEndOverrideDate: text('workday_end_override_date'),
+  workdayEndOverrideTime: text('workday_end_override_time'),
   updatedAt: text('updated_at').notNull(),
 });
 

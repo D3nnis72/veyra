@@ -929,7 +929,7 @@ function computeProjectsWithStats(
 
   for (const blk of allBlocks) {
     blockToProject.set(blk.id, blk.projectId);
-    if (blk.status === 'todo') {
+    if (blk.status === 'todo' && !blk.calendarSource) {
       const list = openBlocksByProject.get(blk.projectId) ?? [];
       list.push(blk);
       openBlocksByProject.set(blk.projectId, list);

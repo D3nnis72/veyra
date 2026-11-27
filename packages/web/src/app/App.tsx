@@ -22,17 +22,19 @@ import {
 } from './AppShellContext';
 import { CommandPalette } from './CommandPalette';
 import { CreateBlockModal } from './CreateBlockModal';
+import { FocusLauncher } from './FocusLauncher';
 import { matchesAnyAccelerator, useHotkeys } from './hotkeys';
 import { OnboardingFlow } from './OnboardingFlow';
+import { AwayReturnPrompt } from './AwayReturnPrompt';
 import { QuickCaptureOverlay, type QuickCaptureTab } from './QuickCaptureOverlay';
 import { Sidebar } from './Sidebar';
+import { TrayPopover } from './TrayPopover';
 import { CalendarView } from '../views/CalendarView';
 import { CloseGoalSheet } from '../views/CloseGoalSheet';
 import { FocusView } from '../views/FocusView';
 import { GoalDetailDrawer } from '../views/GoalDetailDrawer';
 import { GoalFormDrawer } from '../views/GoalFormDrawer';
 import { GoalsView } from '../views/GoalsView';
-import { MeetingDetailDrawer } from '../views/MeetingDetailDrawer';
 import { PlanView } from '../views/PlanView';
 import { ProjectDetailView } from '../views/ProjectDetailView';
 import { ProjectModal } from '../views/ProjectModal';
@@ -59,7 +61,7 @@ export interface AppProps {
   views?: AppViewsRegistry;
 }
 
-function isStandaloneRoute(name: 'capture' | 'command'): boolean {
+function isStandaloneRoute(name: 'capture' | 'command' | 'focus-launcher' | 'tray'): boolean {
   if (typeof window === 'undefined') return false;
   return (
     window.location.pathname === `/${name}` ||
@@ -92,6 +94,12 @@ export function App({ views }: AppProps) {
   if (isStandaloneRoute('command')) {
     return <CommandPalette open standalone />;
   }
+  if (isStandaloneRoute('focus-launcher')) {
+    return <FocusLauncher open standalone />;
+  }
+  if (isStandaloneRoute('tray')) {
+    return <TrayPopover />;
+  }
 
   return <MainAppShell views={views} />;
 }
@@ -113,6 +121,7 @@ function MainAppShell({ views }: AppProps) {
   const [activeDrawer, setActiveDrawer] = useState<ActiveDrawer>(null);
 
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [focusLauncherOpen, setFocusLauncherOpen] = useState(false);
   const [quickCaptureState, setQuickCaptureState] = useState<{
     open: boolean;
     tab: QuickCaptureTab;
@@ -220,7 +229,7 @@ function MainAppShell({ views }: AppProps) {
   }, []);
 
   const openMeetingDrawer = useCallback((eventId: string) => {
-    setActiveDrawer({ kind: 'meeting', eventId });
+    setActiveDrawer({ kind: 'block', blockId: eventId });
   }, []);
 
   const openSessionDrawer = useCallback((sessionId: string) => {
@@ -289,6 +298,13 @@ function MainAppShell({ views }: AppProps) {
         case 'start-focus':
           void startFocusAndNavigate(action.blockId).catch(() => {});
           return;
+        case 'open-focus-complete':
+          setActiveDrawer(null);
+          navigate('focus');
+          window.setTimeout(() => {
+            window.dispatchEvent(new Event('veyra:focus-open-complete'));
+          }, 50);
+          return;
         case 'open-block':
           openBlockDrawer(action.blockId);
           return;
@@ -313,6 +329,10 @@ function MainAppShell({ views }: AppProps) {
     openQuickCapture,
   ]);
 
+  useEffect(() => {
+    window.veyraDesktop?.reportRoute?.(route);
+  }, [route]);
+
   // In-window keyboard shortcuts. The rebindable ones come from Settings → Shortcuts
   // (defaults: ⌘K palette, ⌘N new block, ⌘S save, ⌘, settings, ⌘⇧P capture, ⌘⇧O / ⌃O Focus Now).
   // ⌘1-6 and Esc stay fixed.
@@ -324,21 +344,27 @@ function MainAppShell({ views }: AppProps) {
         e.preventDefault();
         setCommandPaletteOpen(false);
         setCreateBlockState({ open: false });
+        setQuickCaptureState((prev) => ({ ...prev, open: false }));
         if (focusStatus?.activeSession && focusStatus?.activeBlock) {
-          setQuickCaptureState((prev) => ({ ...prev, open: false }));
-          navigate('focus');
+          setFocusLauncherOpen(false);
+          if (route === 'focus') {
+            if (window.veyraDesktop?.hideMainWindow) {
+              void window.veyraDesktop.hideMainWindow();
+            } else {
+              navigate(previousRoute === 'focus' ? 'today' : previousRoute);
+            }
+          } else {
+            navigate('focus');
+          }
           return;
         }
-        setQuickCaptureState((prev) =>
-          prev.open && prev.tab === 'focus'
-            ? { open: false, tab: 'focus' }
-            : { open: true, tab: 'focus' },
-        );
+        setFocusLauncherOpen((prev) => !prev);
         return;
       }
 
       if (matchesAnyAccelerator(e, hotkeys.commandPalette)) {
         e.preventDefault();
+        setFocusLauncherOpen(false);
         setQuickCaptureState((prev) => ({ ...prev, open: false }));
         setCreateBlockState({ open: false });
         setCommandPaletteOpen((prev) => !prev);
@@ -348,6 +374,7 @@ function MainAppShell({ views }: AppProps) {
       if (matchesAnyAccelerator(e, hotkeys.quickCapture)) {
         e.preventDefault();
         setCommandPaletteOpen(false);
+        setFocusLauncherOpen(false);
         setCreateBlockState({ open: false });
         setQuickCaptureState((prev) =>
           prev.open && prev.tab === 'daily-note'
@@ -361,7 +388,7 @@ function MainAppShell({ views }: AppProps) {
         e.preventDefault();
         setCommandPaletteOpen(false);
         setQuickCaptureState((prev) => ({ ...prev, open: false }));
-        setCreateBlockState({ open: true });
+        setCreateBlockState((prev) => ({ open: !prev.open }));
         return;
       }
 
@@ -420,6 +447,8 @@ function MainAppShell({ views }: AppProps) {
     createBlockState.open,
     activeDrawer,
     focusStatus,
+    route,
+    previousRoute,
     navigate,
     hotkeys,
   ]);
@@ -547,6 +576,16 @@ function MainAppShell({ views }: AppProps) {
           blockId={activeDrawer?.kind === 'block' ? activeDrawer.blockId : null}
           onClose={closeDrawer}
           onStartFocus={(id) => void startFocusAndNavigate(id)}
+          onCreateFollowUp={(blk) => {
+            closeDrawer();
+            openCreateBlock({
+              title: `Follow-up: ${blk.title}`,
+              projectId: blk.projectId,
+              goalId: blk.goalId,
+              isOps: blk.isOps,
+              bucket: 'scheduled',
+            });
+          }}
         />
 
         <GoalDetailDrawer
@@ -567,11 +606,6 @@ function MainAppShell({ views }: AppProps) {
         <DailyNotesDrawer
           open={activeDrawer?.kind === 'daily-notes'}
           date={activeDrawer?.kind === 'daily-notes' ? activeDrawer.date : undefined}
-          onClose={closeDrawer}
-        />
-
-        <MeetingDetailDrawer
-          eventId={activeDrawer?.kind === 'meeting' ? activeDrawer.eventId : null}
           onClose={closeDrawer}
         />
 
@@ -602,9 +636,21 @@ function MainAppShell({ views }: AppProps) {
           onClose={() => setCommandPaletteOpen(false)}
         />
 
+        <AwayReturnPrompt onSessionEnded={() => navigate('today')} />
+
+        <FocusLauncher
+          open={focusLauncherOpen}
+          onClose={() => setFocusLauncherOpen(false)}
+        />
+
         <QuickCaptureOverlay
           open={quickCaptureState.open}
           initialTab={quickCaptureState.tab}
+          onTabChange={(nextTab) =>
+            setQuickCaptureState((prev) =>
+              prev.open && prev.tab !== nextTab ? { ...prev, tab: nextTab } : prev,
+            )
+          }
           onClose={() => setQuickCaptureState((prev) => ({ ...prev, open: false }))}
         />
 

@@ -35,8 +35,10 @@ export {
 } from './blocks.js';
 export { runDailyRolloverAndRecurrence } from './rollover.js';
 export {
+  type AdjustFocusStartResult,
   type CloseFocusResult,
   type CompleteBlockResult,
+  type RemoveFocusGapResult,
   type SplitSessionResult,
   type StartFocusResult,
   completeBlock,
@@ -46,11 +48,13 @@ export {
   listSessions,
   logManualSession,
   pauseFocus,
+  removeActiveFocusGap,
   resumeFocus,
   splitSession,
   startFocus,
   stopFocus,
   trimSession,
+  updateActiveFocusStartTime,
 } from './focus-sessions.js';
 export {
   type AutoMatchCalendarEventsResult,

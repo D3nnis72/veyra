@@ -25,6 +25,7 @@ export interface QuickCaptureOverlayProps {
   open: boolean;
   standalone?: boolean;
   initialTab?: QuickCaptureTab;
+  onTabChange?: (tab: QuickCaptureTab) => void;
   onClose?: () => void;
 }
 
@@ -59,6 +60,7 @@ export function QuickCaptureOverlay({
   open,
   standalone = false,
   initialTab = 'daily-note',
+  onTabChange,
   onClose,
 }: QuickCaptureOverlayProps) {
   const shell = useContext(AppShellContext);
@@ -176,8 +178,12 @@ export function QuickCaptureOverlay({
 
   useEffect(() => {
     if (!open) return;
+    onTabChange?.(tab);
+    if (standalone) {
+      window.veyraDesktop?.reportCaptureTab?.(tab);
+    }
     window.setTimeout(() => primaryInputRef.current?.focus(), 20);
-  }, [tab, open]);
+  }, [tab, open, standalone, onTabChange]);
 
   // Listen for Electron global shortcut tab selection (⌘⇧P -> daily-note, ⌃O -> focus)
   useEffect(() => {

@@ -1,4 +1,4 @@
-import type { Block, FocusSession, FocusStatus, SseEventPayload } from '@veyra/core';
+import type { Block, CalendarEvent, FocusSession, FocusStatus, SseEventPayload } from '@veyra/core';
 
 export const MAX_MENUBAR_TITLE_CHARS = 20;
 export const MAX_MENU_ITEM_TITLE_CHARS = 36;
@@ -29,6 +29,9 @@ export interface MenuBarFocusState {
   anchorElapsedSeconds: number;
   syncedAtMs: number | null;
   upNext: MenuBarBlockSummary[];
+  todayEvents?: CalendarEvent[];
+  meetingAutoFocusEnabled?: boolean;
+  hasTodaySynced?: boolean;
 }
 
 export const EMPTY_MENUBAR_FOCUS_STATE: MenuBarFocusState = {
@@ -38,6 +41,9 @@ export const EMPTY_MENUBAR_FOCUS_STATE: MenuBarFocusState = {
   anchorElapsedSeconds: 0,
   syncedAtMs: null,
   upNext: [],
+  todayEvents: [],
+  meetingAutoFocusEnabled: true,
+  hasTodaySynced: false,
 };
 
 export interface MenuBarServerTarget {
@@ -244,8 +250,7 @@ export function buildTrayMenuDescriptors(
     items.push(
       { type: 'normal', label: `${title} · ${elapsed}`, enabled: false },
       { type: 'normal', label: 'Open Focus', enabled: true, action: { type: 'open-focus' } },
-      { type: 'normal', label: 'Pause Session', enabled: true, action: { type: 'pause-session' } },
-      { type: 'normal', label: 'Stop Session', enabled: true, action: { type: 'stop-session' } },
+      { type: 'normal', label: 'Pause (Continue Later)', enabled: true, action: { type: 'pause-session' } },
       {
         type: 'normal',
         label: 'Complete Block',
@@ -315,6 +320,16 @@ export function shouldRefreshTrayForEvent(payload: SseEventPayload | null): bool
   if (entity === 'project' || type.startsWith('project.')) {
     return true;
   }
+  if (
+    entity === 'calendar_event' ||
+    type.startsWith('events.') ||
+    type.startsWith('calendar_event.')
+  ) {
+    return true;
+  }
+  if (entity === 'settings' || type.startsWith('settings.')) {
+    return true;
+  }
   return false;
 }
 
@@ -356,6 +371,8 @@ interface TodayApiSubset {
   focusStatus?: FocusStatus;
   upNext?: Array<Pick<Block, 'id' | 'title'>>;
   projects?: MenuBarProjectSummary[];
+  todayEvents?: CalendarEvent[];
+  meetingAutoFocusEnabled?: boolean;
 }
 
 interface FocusMutationApiResponse {
@@ -513,6 +530,16 @@ export class MenuBarFocusController {
         if (Array.isArray(todayResult.value.projects)) {
           nextState = applyTodayProjects(nextState, todayResult.value.projects);
         }
+        if (Array.isArray(todayResult.value.todayEvents)) {
+          nextState = { ...nextState, todayEvents: todayResult.value.todayEvents };
+        }
+        if (typeof todayResult.value.meetingAutoFocusEnabled === 'boolean') {
+          nextState = {
+            ...nextState,
+            meetingAutoFocusEnabled: todayResult.value.meetingAutoFocusEnabled,
+          };
+        }
+        nextState = { ...nextState, hasTodaySynced: true };
         anySucceeded = true;
       } else {
         this.onError?.('GET /api/today', todayResult.reason);
@@ -785,3 +812,40 @@ export class MenuBarFocusController {
     }
   }
 }
+
+export interface RectBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Anchors the tray popover horizontally centered under `trayBounds` and just below
+ * the menu bar, clamped cleanly inside `workArea` with a small screen-edge margin.
+ */
+export function computeTrayPopoverBounds(
+  trayBounds: RectBounds,
+  workArea: RectBounds,
+  popoverWidth: number,
+  popoverHeight: number,
+  margin = 8,
+): RectBounds {
+  const centeredX = Math.round(trayBounds.x + trayBounds.width / 2 - popoverWidth / 2);
+  const minX = workArea.x + margin;
+  const maxX = Math.max(minX, workArea.x + workArea.width - popoverWidth - margin);
+  const x = Math.min(maxX, Math.max(minX, centeredX));
+
+  const belowTrayY = Math.round(trayBounds.y + trayBounds.height + 6);
+  const minY = workArea.y + 4;
+  const maxY = Math.max(minY, workArea.y + workArea.height - popoverHeight - margin);
+  const y = Math.min(maxY, Math.max(minY, belowTrayY));
+
+  return {
+    x,
+    y,
+    width: popoverWidth,
+    height: popoverHeight,
+  };
+}
+

@@ -215,7 +215,7 @@ export function PlanView() {
 
   const draggedBlock = activeDragBlockId ? allBlocksById.get(activeDragBlockId) : undefined;
   const selectedBlockId = activeDrawer?.kind === 'block' ? activeDrawer.blockId : null;
-  const selectedEventId = activeDrawer?.kind === 'meeting' ? activeDrawer.eventId : null;
+  const selectedEventId = selectedBlockId;
 
   return (
     <div className="h-full flex flex-col bg-[#131313]">

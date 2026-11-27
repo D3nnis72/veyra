@@ -35,7 +35,7 @@ function meeting(externalId: string, title: string, day = 24, hour = 10): Normal
 
 function byExternalId(veyraDb: VeyraDb, externalId: string) {
   const row = veyraDb.sqlite
-    .prepare('SELECT id FROM calendar_events WHERE external_id = ?')
+    .prepare('SELECT id FROM blocks WHERE external_event_id = ?')
     .get(externalId) as { id: string };
   return getCalendarEvent(veyraDb, row.id);
 }

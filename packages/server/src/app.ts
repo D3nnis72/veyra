@@ -71,6 +71,7 @@ import {
   getWeeklyReview,
   goalKindSchema,
   goalStatusSchema,
+  isoTimestampSchema,
   listActivity,
   listBlocks,
   listCalendarEvents,
@@ -86,6 +87,7 @@ import {
   openVeyraDb,
   parkBlock,
   pauseFocus,
+  removeActiveFocusGap,
   projectStatusSchema,
   reopenBlock,
   reopenWeeklyReview,
@@ -103,6 +105,7 @@ import {
   stopFocus,
   toPublicSettings,
   trimSession,
+  updateActiveFocusStartTime,
   updateBlock,
   updateCalendarEvent,
   updateDailyNote,
@@ -173,6 +176,7 @@ export interface TodayResponse {
   completedToday: Block[];
   upcomingEvents: CalendarEvent[];
   todayEvents: CalendarEvent[];
+  meetingAutoFocusEnabled?: boolean;
   dailyNotesCount: number;
   projects: ProjectWithStats[];
   goals: GoalWithStats[];
@@ -263,10 +267,22 @@ export interface MacOsFocusTestResponse {
 
 const focusStartBodySchema = z.object({
   blockId: z.string().uuid(),
+  startedAt: isoTimestampSchema.optional(),
+});
+
+const focusStartTimeBodySchema = z.object({
+  startedAt: isoTimestampSchema,
 });
 
 const focusPauseBodySchema = z.object({
   note: z.string().nullable().optional(),
+  /** End the session earlier than now, for example when you walked away. */
+  endedAt: isoTimestampSchema.optional(),
+});
+
+const focusGapBodySchema = z.object({
+  gapStartAt: isoTimestampSchema,
+  gapEndAt: isoTimestampSchema.optional(),
 });
 
 const focusCompleteBodySchema = z.object({
@@ -707,16 +723,17 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
     const nextWeekRule = ruleInfo.nextWeekRule?.ruleForNextWeek ?? null;
 
     const focusStatus = getFocusStatus(db, now);
+    const activeBlockId = focusStatus.activeBlock?.id ?? null;
     const upNext = listBlocks(db, {
       bucket: 'scheduled',
       scheduledDate: date,
       status: 'todo',
-    });
+    }).filter((blk) => blk.id !== activeBlockId);
 
     const todaySessions = listSessions(db, { startIso, endIso });
     const sessionBlockIdsToday = new Set(todaySessions.map((s) => s.blockId));
 
-    const completedToday = listBlocks(db, { status: 'done' })
+    const completedToday = listBlocks(db, { status: 'done', includeCalendar: true })
       .filter((blk) => {
         if (blk.scheduledDate === date) return true;
         const updatedMs = Date.parse(blk.updatedAt);
@@ -752,6 +769,7 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
       completedToday,
       upcomingEvents,
       todayEvents,
+      meetingAutoFocusEnabled: settings.meetingAutoFocusEnabled,
       dailyNotesCount: notesToday.length,
       projects,
       goals,
@@ -863,7 +881,7 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
     const rangeStartMs = Date.parse(rangeStartIso);
     const rangeEndMs = Date.parse(rangeEndIso);
 
-    const allBlocks = listBlocks(db);
+    const allBlocks = listBlocks(db, { includeCalendar: true });
     const blockById = new Map<string, Block>();
     for (const blk of allBlocks) {
       blockById.set(blk.id, blk);
@@ -884,7 +902,12 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
 
     const plannedBlocks = allBlocks
       .filter((blk) => {
-        if (blk.status === 'dropped' || !blk.plannedStartAt || !blk.plannedEndAt) {
+        if (
+          blk.status === 'dropped' ||
+          blk.calendarSource ||
+          !blk.plannedStartAt ||
+          !blk.plannedEndAt
+        ) {
           return false;
         }
         const pStart = Date.parse(blk.plannedStartAt);
@@ -1041,7 +1064,7 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
     const id = c.req.param('id');
     const project = getProject(db, id, now);
     const openBlocks = listBlocks(db, { projectId: id, status: 'todo' });
-    const completedBlocks = listBlocks(db, { projectId: id, status: 'done' });
+    const completedBlocks = listBlocks(db, { projectId: id, status: 'done', includeCalendar: true });
     const payload: ProjectDetailResponse = { project, openBlocks, completedBlocks };
     return c.json(payload);
   });
@@ -1104,6 +1127,7 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
       dueBefore: c.req.query('dueBefore'),
       includeDropped: parseOptionalBool(c.req.query('includeDropped')),
       includeDone: parseOptionalBool(c.req.query('includeDone')),
+      includeCalendar: parseOptionalBool(c.req.query('includeCalendar')),
     });
     return c.json({ blocks: blocksList });
   });
@@ -1214,6 +1238,24 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
     return c.json(getFocusStatus(db, now));
   });
 
+  app.patch('/api/focus/start-time', async (c) => {
+    const now = getNow(c);
+    const actor = getActor(c);
+    const raw = await readJsonBody(c);
+    const parsed = focusStartTimeBodySchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new ValidationError('startedAt (ISO-8601 timestamp with offset) is required');
+    }
+
+    const result = updateActiveFocusStartTime(db, parsed.data.startedAt, now, { actor });
+    emitSse('focus.updated', 'focus_session', result.session.id, now);
+
+    return c.json({
+      ...result,
+      focusStatus: getFocusStatus(db, now),
+    });
+  });
+
   app.post('/api/focus/start', async (c) => {
     const now = getNow(c);
     const actor = getActor(c);
@@ -1223,7 +1265,10 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
       throw new ValidationError('blockId (UUID) is required');
     }
 
-    const result = startFocus(db, parsed.data.blockId, now, { actor });
+    const result = startFocus(db, parsed.data.blockId, now, {
+      actor,
+      startedAt: parsed.data.startedAt,
+    });
     emitSse('focus.started', 'focus_session', result.startedSession.id, now);
 
     if (result.closedSession) {
@@ -1307,7 +1352,7 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
       throw new ValidationError('Invalid pause focus payload');
     }
 
-    const result = pauseFocus(db, { note: parsed.data.note }, now, { actor });
+    const result = pauseFocus(db, { note: parsed.data.note, endedAt: parsed.data.endedAt }, now, { actor });
     emitSse('focus.paused', 'focus_session', result.closedSession.id, now);
 
     void webhooks.emit(
@@ -1320,6 +1365,24 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
       { now },
     );
     void macosFocus.onFocusEnded({ now });
+
+    return c.json({
+      ...result,
+      focusStatus: getFocusStatus(db, now),
+    });
+  });
+
+  app.post('/api/focus/gap', async (c) => {
+    const now = getNow(c);
+    const actor = getActor(c);
+    const raw = await readJsonBody(c);
+    const parsed = focusGapBodySchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new ValidationError('gapStartAt (ISO timestamp) is required');
+    }
+
+    const result = removeActiveFocusGap(db, parsed.data, now, { actor });
+    emitSse('session.gap_removed', 'focus_session', result.startedSession.id, now);
 
     return c.json({
       ...result,
@@ -1608,7 +1671,7 @@ export function createVeyraServer(options: CreateVeyraServerOptions): VeyraServe
     const weekSessions = listSessions(db, { startIso: weekStartIso, endIso: weekEndIso });
     if (weekSessions.length > 0) {
       const weekSessionBlockIds = new Set(weekSessions.map((s) => s.blockId));
-      for (const blk of listBlocks(db)) {
+      for (const blk of listBlocks(db, { includeCalendar: true })) {
         if (blk.goalId && weekSessionBlockIds.has(blk.id)) {
           referencedGoalIds.add(blk.goalId);
         }

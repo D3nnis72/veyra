@@ -627,12 +627,12 @@ export function CalendarView() {
                       );
                     }
 
-                    // Meeting item
+                    // Meeting item (unified calendar-synced block)
                     const ev = item.event;
                     const project = ev.projectId ? projectsById.get(ev.projectId) : undefined;
                     const accent = project ? getProjectAccentStyle(project.color) : null;
                     const isSelected =
-                      activeDrawer?.kind === 'meeting' && activeDrawer.eventId === ev.id;
+                      activeDrawer?.kind === 'block' && activeDrawer.blockId === ev.id;
                     const ringColor = accent?.hex ?? '#5566F2';
 
                     return (
@@ -663,11 +663,21 @@ export function CalendarView() {
                             style={{ backgroundColor: project.color }}
                           />
                         ) : null}
-                        <div className="flex items-start gap-1.5 min-w-0">
-                          <Video size={11} className="text-[#9A9A9A] shrink-0 mt-0.5" />
-                          <span className="text-[11.5px] font-medium text-[#EDEDED] leading-tight truncate">
-                            {ev.title}
-                          </span>
+                        <div className="flex items-start justify-between gap-1.5 min-w-0">
+                          <div className="flex items-start gap-1.5 min-w-0">
+                            <Video size={11} className="text-[#9A9A9A] shrink-0 mt-0.5" />
+                            <span className="text-[11.5px] font-medium text-[#EDEDED] leading-tight truncate">
+                              {ev.title}
+                            </span>
+                          </div>
+                          {ev.status === 'done' ? (
+                            <span
+                              className="shrink-0 mt-0.5 inline-flex items-center text-[#7BE0A0]"
+                              title="Completed"
+                            >
+                              <Check size={11} strokeWidth={2.75} />
+                            </span>
+                          ) : null}
                         </div>
                         {showMeta ? (
                           <div className="flex items-center gap-1.5 min-w-0 text-[10.5px] text-[#9A9A9A] tabular-nums pl-4">

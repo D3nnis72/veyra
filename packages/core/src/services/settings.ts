@@ -100,6 +100,8 @@ export function updateSettings(
       parsed.calendarSyncIntervalMin ?? existing.calendarSyncIntervalMin,
     skipDeclinedAndAllDay:
       parsed.skipDeclinedAndAllDay ?? existing.skipDeclinedAndAllDay,
+    meetingAutoFocusEnabled:
+      parsed.meetingAutoFocusEnabled ?? existing.meetingAutoFocusEnabled,
     lastCalendarSyncAt:
       parsed.lastCalendarSyncAt !== undefined
         ? parsed.lastCalendarSyncAt
@@ -143,12 +145,27 @@ export function updateSettings(
     hotkeys: parsed.hotkeys ?? existing.hotkeys,
     workdayStart: parsed.workdayStart ?? existing.workdayStart,
     workdayEnd: parsed.workdayEnd ?? existing.workdayEnd,
+    workdayEndOverrideDate:
+      parsed.workdayEndOverrideDate !== undefined
+        ? parsed.workdayEndOverrideDate
+        : (existing.workdayEndOverrideDate ?? null),
+    workdayEndOverrideTime:
+      parsed.workdayEndOverrideTime !== undefined
+        ? parsed.workdayEndOverrideTime
+        : (existing.workdayEndOverrideTime ?? null),
     updatedAt: nowIso,
   };
 
   if (updated.workdayStart >= updated.workdayEnd) {
     throw new ValidationError(
       `Workday start '${updated.workdayStart}' must be before workday end '${updated.workdayEnd}'`,
+    );
+  }
+  if (
+    (updated.workdayEndOverrideDate === null) !== (updated.workdayEndOverrideTime === null)
+  ) {
+    throw new ValidationError(
+      'workdayEndOverrideDate and workdayEndOverrideTime must both be set or both null',
     );
   }
 
@@ -165,6 +182,7 @@ export function updateSettings(
         icsFeedUrl: updated.icsFeedUrl,
         calendarSyncIntervalMin: updated.calendarSyncIntervalMin,
         skipDeclinedAndAllDay: updated.skipDeclinedAndAllDay,
+        meetingAutoFocusEnabled: updated.meetingAutoFocusEnabled,
         lastCalendarSyncAt: updated.lastCalendarSyncAt,
         webhookUrl: updated.webhookUrl,
         webhookEvents: updated.webhookEvents,
@@ -181,6 +199,8 @@ export function updateSettings(
         hotkeys: updated.hotkeys,
         workdayStart: updated.workdayStart,
         workdayEnd: updated.workdayEnd,
+        workdayEndOverrideDate: updated.workdayEndOverrideDate,
+        workdayEndOverrideTime: updated.workdayEndOverrideTime,
         updatedAt: updated.updatedAt,
       })
       .where(eq(settings.id, DEFAULT_SETTINGS_ID))

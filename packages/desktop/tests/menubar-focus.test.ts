@@ -191,8 +191,7 @@ describe('@veyra/desktop tray menu descriptors', () => {
     expect(labels).toEqual([
       'Draft Q4 roadmap · 05:05',
       'Open Focus',
-      'Pause Session',
-      'Stop Session',
+      'Pause (Continue Later)',
       'Complete Block',
       '---',
       'Show Veyra',
@@ -210,8 +209,7 @@ describe('@veyra/desktop tray menu descriptors', () => {
     });
     expect(items[1]).toMatchObject({ action: { type: 'open-focus' } });
     expect(items[2]).toMatchObject({ action: { type: 'pause-session' } });
-    expect(items[3]).toMatchObject({ action: { type: 'stop-session' } });
-    expect(items[4]).toMatchObject({
+    expect(items[3]).toMatchObject({
       action: { type: 'complete-block', blockId: 'block-1' },
     });
   });
@@ -282,18 +280,19 @@ describe('@veyra/desktop SSE parsing and filtering', () => {
     expect(step2.remainder).toBe('');
   });
 
-  it('refreshes tray only for focus, session, block, rollover, or unknown events', () => {
+  it('refreshes tray for focus, session, block, calendar, settings, rollover, or unknown events', () => {
     const ts = '2026-11-24T10:00:00.000Z';
     expect(shouldRefreshTrayForEvent({ type: 'focus.started', entity: 'focus_session', timestamp: ts })).toBe(true);
     expect(shouldRefreshTrayForEvent({ type: 'focus.paused', entity: 'focus_session', timestamp: ts })).toBe(true);
     expect(shouldRefreshTrayForEvent({ type: 'block.completed', entity: 'block', timestamp: ts })).toBe(true);
     expect(shouldRefreshTrayForEvent({ type: 'block.created', entity: 'block', timestamp: ts })).toBe(true);
     expect(shouldRefreshTrayForEvent({ type: 'rollover.completed', entity: 'block', timestamp: ts })).toBe(true);
+    expect(shouldRefreshTrayForEvent({ type: 'events.synced', entity: 'calendar_event', timestamp: ts })).toBe(true);
+    expect(shouldRefreshTrayForEvent({ type: 'settings.updated', entity: 'settings', timestamp: ts })).toBe(true);
     expect(shouldRefreshTrayForEvent(null)).toBe(true);
 
     expect(shouldRefreshTrayForEvent({ type: 'daily_note.created', entity: 'daily_note', timestamp: ts })).toBe(false);
-    expect(shouldRefreshTrayForEvent({ type: 'events.synced', entity: 'calendar_event', timestamp: ts })).toBe(false);
-    expect(shouldRefreshTrayForEvent({ type: 'settings.updated', entity: 'settings', timestamp: ts })).toBe(false);
+    expect(shouldRefreshTrayForEvent({ type: 'weekly_review.rule_set', entity: 'weekly_review', timestamp: ts })).toBe(false);
   });
 });
 

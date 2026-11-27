@@ -6,6 +6,7 @@ import { blocks, focusSessions } from '../schema.js';
 import { formatLocalDate, getLocalDayBoundsIso } from '../time.js';
 import {
   type ActivityActor,
+  type AdjustFocusStartResult,
   type Block,
   type CloseFocusResult,
   type CompleteBlockInput,
@@ -14,12 +15,16 @@ import {
   type FocusStatus,
   type ListSessionsFilter,
   type LogSessionInput,
+  type RemoveFocusGapInput,
+  type RemoveFocusGapResult,
   type SplitSessionInput,
   type SplitSessionResult,
   type StartFocusResult,
   type TrimSessionInput,
   completeBlockInputSchema,
+  isoTimestampSchema,
   logSessionInputSchema,
+  removeFocusGapInputSchema,
   splitSessionInputSchema,
   trimSessionInputSchema,
 } from '../types.js';
@@ -34,9 +39,11 @@ import {
 } from './internal.js';
 
 export type {
+  AdjustFocusStartResult,
   CloseFocusResult,
   CompleteBlockResult,
   ListSessionsFilter,
+  RemoveFocusGapResult,
   SplitSessionResult,
   StartFocusResult,
 };
@@ -75,6 +82,23 @@ function getSessionOrThrow(veyraDb: VeyraDb, sessionId: string): FocusSession {
   return row;
 }
 
+function formatSessionRangeForError(startIso: string, endIso: string | null, timezone: string): string {
+  const fmt = new Intl.DateTimeFormat('en-GB', {
+    timeZone: timezone,
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const start = fmt.format(new Date(startIso));
+  if (!endIso) {
+    return `${start} to now`;
+  }
+  const end = fmt.format(new Date(endIso));
+  return `${start} to ${end}`;
+}
+
 function assertNoSessionOverlap(
   veyraDb: VeyraDb,
   startMs: number,
@@ -94,8 +118,11 @@ function assertNoSessionOverlap(
     const sStart = Date.parse(s.startedAt);
     const sEnd = s.endedAt ? Date.parse(s.endedAt) : Number.POSITIVE_INFINITY;
     if (startMs < sEnd && sStart < endMs) {
+      const blk = veyraDb.db.select().from(blocks).where(eq(blocks.id, s.blockId)).get();
+      const label = blk ? `"${blk.title}"` : `block '${s.blockId}'`;
+      const range = formatSessionRangeForError(s.startedAt, s.endedAt, getActiveTimezone(veyraDb));
       throw new ConflictError(
-        `Session interval overlaps with existing session '${s.id}' (${s.startedAt} - ${s.endedAt ?? 'active'})`,
+        `Session interval overlaps with an existing session on ${label} (${range}, id ${s.id}). Delete or trim that session first.`,
       );
     }
   }
@@ -131,12 +158,13 @@ function calculateFocusedTodayMinutes(
 /**
  * Starts a focus session on `blockId`. Enforces the single-focus invariant by
  * automatically closing any currently open session first.
+ * Optionally accepts a past `startedAt` ISO timestamp when starting late.
  */
 export function startFocus(
   veyraDb: VeyraDb,
   blockId: string,
   now?: Date | string,
-  options?: { actor?: ActivityActor },
+  options?: { actor?: ActivityActor; startedAt?: string },
 ): StartFocusResult {
   const block = getActiveBlockOrThrow(veyraDb, blockId);
   const nowDate = resolveNow(now);
@@ -144,11 +172,21 @@ export function startFocus(
   const nowMs = nowDate.getTime();
   const actor = resolveActor(options?.actor);
 
+  let effectiveStartMs = nowMs;
+  if (options?.startedAt !== undefined) {
+    const validStart = parseWithZod(isoTimestampSchema, options.startedAt);
+    effectiveStartMs = Date.parse(validStart);
+    if (effectiveStartMs > nowMs) {
+      throw new ValidationError('Focus start time cannot be in the future');
+    }
+  }
+  const effectiveStartIso = new Date(effectiveStartMs).toISOString();
+
   let closedSession: FocusSession | null = null;
   const startedSession: FocusSession = {
     id: crypto.randomUUID(),
     blockId: block.id,
-    startedAt: nowIso,
+    startedAt: effectiveStartIso,
     endedAt: null,
     note: null,
     updatedAt: nowIso,
@@ -159,19 +197,23 @@ export function startFocus(
     const open = getActiveOpenSession(veyraDb);
     if (open) {
       const openStartMs = Date.parse(open.startedAt);
-      if (nowMs < openStartMs) {
+      if (effectiveStartMs < openStartMs) {
         throw new ValidationError('Cannot close active focus session at a timestamp before it started');
       }
       veyraDb.db
         .update(focusSessions)
-        .set({ endedAt: nowIso, updatedAt: nowIso })
+        .set({ endedAt: effectiveStartIso, updatedAt: nowIso })
         .where(eq(focusSessions.id, open.id))
         .run();
       closedSession = {
         ...open,
-        endedAt: nowIso,
+        endedAt: effectiveStartIso,
         updatedAt: nowIso,
       };
+    }
+
+    if (options?.startedAt !== undefined) {
+      assertNoSessionOverlap(veyraDb, effectiveStartMs, nowMs, open?.id);
     }
 
     veyraDb.db.insert(focusSessions).values(startedSession).run();
@@ -191,6 +233,137 @@ export function startFocus(
   };
 }
 
+/**
+ * Adjusts `startedAt` of the currently active open focus session (e.g. when you forgot to
+ * press start 15 minutes ago). Rejects future timestamps and overlaps with earlier sessions.
+ */
+export function updateActiveFocusStartTime(
+  veyraDb: VeyraDb,
+  startedAt: string,
+  now?: Date | string,
+  options?: { actor?: ActivityActor },
+): AdjustFocusStartResult {
+  const validStart = parseWithZod(isoTimestampSchema, startedAt);
+  const startMs = Date.parse(validStart);
+  const nowDate = resolveNow(now);
+  const nowIso = nowDate.toISOString();
+  const nowMs = nowDate.getTime();
+  const actor = resolveActor(options?.actor);
+
+  if (startMs > nowMs) {
+    throw new ValidationError('Start time cannot be in the future');
+  }
+
+  const open = getActiveOpenSession(veyraDb);
+  if (!open) {
+    throw new NotFoundError('No active focus session to adjust');
+  }
+
+  const block = getActiveBlockOrThrow(veyraDb, open.blockId);
+  const normalizedStartIso = new Date(startMs).toISOString();
+  const updatedSession: FocusSession = {
+    ...open,
+    startedAt: normalizedStartIso,
+    updatedAt: nowIso,
+  };
+
+  veyraDb.sqlite.transaction(() => {
+    assertNoSessionOverlap(veyraDb, startMs, nowMs, open.id);
+    veyraDb.db
+      .update(focusSessions)
+      .set({ startedAt: normalizedStartIso, updatedAt: nowIso })
+      .where(eq(focusSessions.id, open.id))
+      .run();
+    recordActivity(
+      veyraDb,
+      actor,
+      'focus.start_time_adjusted',
+      `Adjusted focus start time on "${block.title}"`,
+      nowIso,
+    );
+  })();
+
+  return {
+    session: updatedSession,
+    block,
+  };
+}
+
+/**
+ * Cuts a gap out of the running focus session (a pause you forgot to log). The open session is
+ * closed at `gapStartAt` and a new open session on the same block starts at `gapEndAt`
+ * (default: now), so the gap counts as neither focus time nor block time. The timer keeps running
+ * from the end of the gap.
+ */
+export function removeActiveFocusGap(
+  veyraDb: VeyraDb,
+  input: RemoveFocusGapInput,
+  now?: Date | string,
+  options?: { actor?: ActivityActor },
+): RemoveFocusGapResult {
+  const parsed = parseWithZod(removeFocusGapInputSchema, input);
+  const nowDate = resolveNow(now);
+  const nowIso = nowDate.toISOString();
+  const nowMs = nowDate.getTime();
+  const actor = resolveActor(options?.actor);
+
+  const open = getActiveOpenSession(veyraDb);
+  if (!open) {
+    throw new NotFoundError('No active focus session to remove a gap from');
+  }
+
+  const gapStartMs = Date.parse(parsed.gapStartAt);
+  const gapEndMs = parsed.gapEndAt !== undefined ? Date.parse(parsed.gapEndAt) : nowMs;
+  if (gapEndMs <= gapStartMs) {
+    throw new ValidationError('The pause must end after it started');
+  }
+  if (gapEndMs > nowMs) {
+    throw new ValidationError('The pause cannot end in the future');
+  }
+  if (gapStartMs <= Date.parse(open.startedAt)) {
+    throw new ValidationError(
+      'The pause must start after the session started. To drop the whole session, cancel it instead.',
+    );
+  }
+
+  const block = getActiveBlockOrThrow(veyraDb, open.blockId);
+  const gapStartIso = new Date(gapStartMs).toISOString();
+  const gapEndIso = new Date(gapEndMs).toISOString();
+
+  const closedSession: FocusSession = {
+    ...open,
+    endedAt: gapStartIso,
+    updatedAt: nowIso,
+  };
+  const startedSession: FocusSession = {
+    id: crypto.randomUUID(),
+    blockId: open.blockId,
+    startedAt: gapEndIso,
+    endedAt: null,
+    note: open.note,
+    updatedAt: nowIso,
+    deletedAt: null,
+  };
+
+  veyraDb.sqlite.transaction(() => {
+    veyraDb.db
+      .update(focusSessions)
+      .set({ endedAt: gapStartIso, updatedAt: nowIso })
+      .where(eq(focusSessions.id, open.id))
+      .run();
+    veyraDb.db.insert(focusSessions).values(startedSession).run();
+    recordActivity(
+      veyraDb,
+      actor,
+      'session.gap_removed',
+      `Removed ${msToRoundedMinutes(gapEndMs - gapStartMs)}m pause from focus on "${block.title}"`,
+      nowIso,
+    );
+  })();
+
+  return { closedSession, startedSession, block };
+}
+
 export function resumeFocus(
   veyraDb: VeyraDb,
   blockId: string,
@@ -200,9 +373,13 @@ export function resumeFocus(
   return startFocus(veyraDb, blockId, now, options);
 }
 
+/**
+ * Pauses the running session. `input.endedAt` ends it earlier than now (for example when you
+ * walked away and only notice later), it must lie between the session start and now.
+ */
 export function pauseFocus(
   veyraDb: VeyraDb,
-  input?: { note?: string | null },
+  input?: { note?: string | null; endedAt?: string },
   now?: Date | string,
   options?: { actor?: ActivityActor },
 ): CloseFocusResult {
@@ -218,13 +395,25 @@ export function pauseFocus(
     throw new ValidationError('Cannot pause focus session at a timestamp before it started');
   }
 
+  let endedIso = nowIso;
+  if (input?.endedAt !== undefined) {
+    const endedMs = Date.parse(parseWithZod(isoTimestampSchema, input.endedAt));
+    if (endedMs > nowDate.getTime()) {
+      throw new ValidationError('Pause time cannot be in the future');
+    }
+    if (endedMs <= Date.parse(open.startedAt)) {
+      throw new ValidationError('Pause time must be after the session started');
+    }
+    endedIso = new Date(endedMs).toISOString();
+  }
+
   const block = getActiveBlockOrThrow(veyraDb, open.blockId);
   const nextNote = input?.note !== undefined ? input.note : open.note;
   const nextResumeNote = input?.note !== undefined ? input.note : block.resumeNote;
 
   const closedSession: FocusSession = {
     ...open,
-    endedAt: nowIso,
+    endedAt: endedIso,
     note: nextNote,
     updatedAt: nowIso,
   };
@@ -690,10 +879,32 @@ export function getFocusStatus(veyraDb: VeyraDb, now?: Date | string): FocusStat
 
   const focusedTodayMinutes = calculateFocusedTodayMinutes(veyraDb, nowDate, timezone);
 
+  const today = formatLocalDate(nowDate, timezone);
+  const { startIso: dayStartIso } = getLocalDayBoundsIso(today, timezone);
+  const dayStartMs = Date.parse(dayStartIso);
+  const nowMs = nowDate.getTime();
+
+  let lastClosedSessionEndedAt: string | null = null;
+  let lastClosedMs = -1;
+  const recentSessions = veyraDb.db
+    .select({ id: focusSessions.id, endedAt: focusSessions.endedAt })
+    .from(focusSessions)
+    .where(isNull(focusSessions.deletedAt))
+    .all();
+  for (const s of recentSessions) {
+    if (!s.endedAt || (activeSession && s.id === activeSession.id)) continue;
+    const endMs = Date.parse(s.endedAt);
+    if (endMs >= dayStartMs && endMs <= nowMs && endMs > lastClosedMs) {
+      lastClosedMs = endMs;
+      lastClosedSessionEndedAt = s.endedAt;
+    }
+  }
+
   return {
     activeSession,
     activeBlock,
     elapsedSeconds,
     focusedTodayMinutes,
+    lastClosedSessionEndedAt,
   };
 }

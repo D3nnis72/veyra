@@ -4,7 +4,6 @@ import type { VeyraDb } from '../db.js';
 import { NotFoundError, ValidationError, parseWithZod } from '../errors.js';
 import {
   blocks,
-  calendarEvents,
   dailyNotes,
   focusSessions,
   goals,
@@ -56,6 +55,7 @@ import {
   ruleKeptSchema,
   updateDailyNoteInputSchema,
 } from '../types.js';
+import { blockToCalendarEvent } from './calendar-events.js';
 import { computeProjectSizeStatsMap, computeWeekdayRoom } from './capacity.js';
 import { updateProject } from './goals-projects.js';
 import {
@@ -747,11 +747,15 @@ export function getWeeklyReview(
     .where(isNull(focusSessions.deletedAt))
     .all();
 
-  const allActiveEvents = veyraDb.db
-    .select()
-    .from(calendarEvents)
-    .where(isNull(calendarEvents.deletedAt))
-    .all();
+  const allActiveEvents = allBlocks
+    .filter(
+      (blk) =>
+        blk.deletedAt === null &&
+        blk.calendarSource !== null &&
+        blk.plannedStartAt !== null &&
+        blk.plannedEndAt !== null,
+    )
+    .map(blockToCalendarEvent);
 
   let totalFocusMs = 0;
   let buildMs = 0;
@@ -931,7 +935,7 @@ export function getWeeklyReview(
 
     let plannedMinutes = 0;
     for (const blk of allBlocks) {
-      if (blk.deletedAt !== null || blk.status === 'dropped') continue;
+      if (blk.deletedAt !== null || blk.status === 'dropped' || blk.calendarSource !== null) continue;
       if (blk.scheduledDate === date) {
         const learnedSize = sizeStatsMap.get(blk.projectId)?.learnedSizeMinutes ?? null;
         plannedMinutes += blk.sizeMinutes ?? learnedSize ?? DEFAULT_BLOCK_SIZE_MINUTES;
@@ -1273,9 +1277,10 @@ export function getWeeklyReview(
     }
   }
 
-  // Goal-linked meetings overlapping this week
+  // Goal-linked meetings overlapping this week (skip ones already listed in completedThisWeek)
+  const completedThisWeekIds = new Set(completedThisWeek.map((blk) => blk.id));
   const weekMeetings = allActiveEvents.filter((ev) => {
-    if (!ev.goalId) return false;
+    if (!ev.goalId || completedThisWeekIds.has(ev.id)) return false;
     const evStart = Date.parse(ev.startAt);
     const evEnd = Date.parse(ev.endAt);
     return evStart < weekEndMs && evEnd > weekStartMs;
@@ -1393,13 +1398,14 @@ export function getWeeklyReview(
   const pureOpsItems = opsItems.filter((item) => !item.isGoalLinked);
   const goalLinkedOpsItems = opsItems.filter((item) => item.isGoalLinked);
 
-  // Chronic carryovers: open non-deleted blocks with carryoverCount >= 3
+  // Chronic carryovers: open non-deleted non-calendar blocks with carryoverCount >= 3
   const chronicCarryovers = veyraDb.db
     .select()
     .from(blocks)
     .where(
       and(
         isNull(blocks.deletedAt),
+        isNull(blocks.calendarSource),
         eq(blocks.status, 'todo'),
         gte(blocks.carryoverCount, 3),
       ),
@@ -1414,6 +1420,7 @@ export function getWeeklyReview(
     .where(
       and(
         isNull(blocks.deletedAt),
+        isNull(blocks.calendarSource),
         eq(blocks.status, 'todo'),
         eq(blocks.bucket, 'later'),
         isNotNull(blocks.revisitAt),

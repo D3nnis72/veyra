@@ -1,31 +1,40 @@
 import { describe, expect, it } from 'vitest';
 import {
-  EMPTY_MENUBAR_FOCUS_STATE,
   applyFocusStatus,
   applyTodayProjects,
+  computeTrayPopoverBounds,
+  EMPTY_MENUBAR_FOCUS_STATE,
 } from '../src/menubar-focus.js';
 import { renderProjectTrayIconPng } from '../src/tray-icon.js';
 
 describe('renderProjectTrayIconPng', () => {
-  it('renders a valid 36x36 RGBA PNG for a project vector icon and monogram fallback', () => {
-    const pngWithIcon = renderProjectTrayIconPng({
+  it('renders a valid 36x36 RGBA PNG that reflects distinct project accent colors', () => {
+    const pngEmerald = renderProjectTrayIconPng({
       name: 'Northstar',
       color: '#2E9E6F',
       icon: 'Layers',
     });
     // PNG signature + 36x36 dimensions in IHDR
-    expect(pngWithIcon.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-    expect(pngWithIcon.readUInt32BE(16)).toBe(36);
-    expect(pngWithIcon.readUInt32BE(20)).toBe(36);
+    expect(pngEmerald.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    expect(pngEmerald.readUInt32BE(16)).toBe(36);
+    expect(pngEmerald.readUInt32BE(20)).toBe(36);
 
-    const pngMonogram = renderProjectTrayIconPng({
+    const pngViolet = renderProjectTrayIconPng({
       name: 'Veyra',
       color: '#8B5CF6',
       icon: null,
     });
-    expect(pngMonogram.readUInt32BE(16)).toBe(36);
-    expect(pngMonogram.readUInt32BE(20)).toBe(36);
-    expect(pngMonogram.equals(pngWithIcon)).toBe(false);
+    expect(pngViolet.readUInt32BE(16)).toBe(36);
+    expect(pngViolet.readUInt32BE(20)).toBe(36);
+    expect(pngViolet.equals(pngEmerald)).toBe(false);
+
+    // Falls back gracefully for invalid hex
+    const pngFallback = renderProjectTrayIconPng({
+      name: 'Fallback',
+      color: 'not-a-color',
+    });
+    expect(pngFallback.readUInt32BE(16)).toBe(36);
+    expect(pngFallback.readUInt32BE(20)).toBe(36);
   });
 
   it('tracks activeProject from Today projects when focusing and clears it when idle', () => {
@@ -54,7 +63,10 @@ describe('renderProjectTrayIconPng', () => {
         orderKey: 'a0',
         status: 'todo',
         carryoverCount: 0,
+        sizeMinutes: null,
         energySignal: null,
+        senseSignal: null,
+        dropReason: null,
         outcomeNote: null,
         resumeNote: null,
         autoSummary: null,
@@ -86,5 +98,39 @@ describe('renderProjectTrayIconPng', () => {
       focusedTodayMinutes: 1,
     });
     expect(cleared.activeProject).toBeNull();
+  });
+});
+
+describe('computeTrayPopoverBounds', () => {
+  it('centers the popover under the tray icon and clamps it within screen workArea', () => {
+    const workArea = { x: 0, y: 25, width: 1512, height: 957 };
+
+    const centered = computeTrayPopoverBounds(
+      { x: 1000, y: 0, width: 28, height: 24 },
+      workArea,
+      300,
+      180,
+    );
+    expect(centered).toEqual({ x: 864, y: 30, width: 300, height: 180 });
+
+    // Clamps to right edge when tray icon sits near the far right of the menu bar
+    const clampedRight = computeTrayPopoverBounds(
+      { x: 1480, y: 0, width: 24, height: 24 },
+      workArea,
+      300,
+      180,
+    );
+    expect(clampedRight.x).toBe(1512 - 300 - 8);
+    expect(clampedRight.y).toBe(30);
+
+    // Clamps to left edge on secondary monitors with negative x offset
+    const secondaryWorkArea = { x: -1920, y: 25, width: 1920, height: 1055 };
+    const clampedLeft = computeTrayPopoverBounds(
+      { x: -1910, y: 0, width: 24, height: 24 },
+      secondaryWorkArea,
+      300,
+      180,
+    );
+    expect(clampedLeft.x).toBe(-1912);
   });
 });

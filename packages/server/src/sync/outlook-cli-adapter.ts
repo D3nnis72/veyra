@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { isValidTimeZone } from '@veyra/core';
+import { type CalendarResponseStatus, isValidTimeZone } from '@veyra/core';
 import { z } from 'zod';
 import {
   type CalendarSyncAdapter,
@@ -32,9 +32,10 @@ const outlookRawEventSchema = z.object({
     .union([
       z.string(),
       z.object({
-        response: z.string().optional(),
+        response: z.string().nullable().optional(),
       }),
     ])
+    .nullable()
     .optional(),
   isCancelled: z.boolean().optional(),
   meetingUrl: z.string().nullable().optional(),
@@ -330,11 +331,13 @@ export class OutlookCliAdapter implements CalendarSyncAdapter {
       const responseStr =
         typeof item.responseStatus === 'string'
           ? item.responseStatus
-          : item.responseStatus?.response;
+          : (item.responseStatus?.response ?? undefined);
+      const responseStatus = normalizeOutlookResponseStatus(responseStr);
+      const isCancelled = item.isCancelled === true;
       const isDeclined =
         item.isDeclined === true ||
-        item.isCancelled === true ||
-        responseStr?.toLowerCase() === 'declined';
+        isCancelled ||
+        responseStatus === 'declined';
 
       const meetingUrl =
         item.meetingUrl ?? item.onlineMeetingUrl ?? item.onlineMeeting?.joinUrl ?? null;
@@ -346,8 +349,25 @@ export class OutlookCliAdapter implements CalendarSyncAdapter {
         endAt,
         isAllDay: item.isAllDay === true,
         isDeclined,
+        isCancelled,
+        ...(responseStatus !== undefined ? { responseStatus } : {}),
         meetingUrl,
       };
     });
   }
+}
+
+function normalizeOutlookResponseStatus(
+  raw: string | undefined,
+): CalendarResponseStatus | undefined {
+  if (!raw) return undefined;
+  const compact = raw.trim().toLowerCase().replace(/[\s_-]+/g, '');
+  if (!compact) return undefined;
+  if (compact === 'organizer') return 'organizer';
+  if (compact === 'accepted') return 'accepted';
+  if (compact === 'tentativelyaccepted' || compact === 'tentative') return 'tentatively_accepted';
+  if (compact === 'declined') return 'declined';
+  if (compact === 'notresponded' || compact === 'needsaction') return 'not_responded';
+  if (compact === 'none') return 'none';
+  return undefined;
 }

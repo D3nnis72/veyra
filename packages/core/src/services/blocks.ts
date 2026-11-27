@@ -288,6 +288,9 @@ export function createBlock(
     seriesId,
     notes: parsed.notes,
     externalLinks: parsed.externalLinks,
+    calendarSource: null,
+    externalEventId: null,
+    meetingUrl: null,
     updatedAt: nowIso,
     deletedAt: null,
   };
@@ -307,6 +310,9 @@ export function getBlock(veyraDb: VeyraDb, id: string): Block {
 export function listBlocks(veyraDb: VeyraDb, filter?: ListBlocksFilter): Block[] {
   const conditions = [isNull(blocks.deletedAt)];
 
+  if (!filter?.includeCalendar) {
+    conditions.push(isNull(blocks.calendarSource));
+  }
   if (filter?.bucket) {
     conditions.push(eq(blocks.bucket, filter.bucket));
   }

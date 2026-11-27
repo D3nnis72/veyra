@@ -1214,6 +1214,7 @@ describe('4-chapter ReviewView & Settings review.completed toggle', () => {
         icsFeedUrl: null,
         calendarSyncIntervalMin: 15,
         skipDeclinedAndAllDay: true,
+        meetingAutoFocusEnabled: true,
         lastCalendarSyncAt: null,
         webhookUrl: 'http://127.0.0.1:4174/hooks/veyra',
         webhookEvents: ['focus.started', 'focus.ended', 'block.completed'],

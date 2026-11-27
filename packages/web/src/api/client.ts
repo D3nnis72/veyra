@@ -1,5 +1,6 @@
 import type {
   ActivityLog,
+  AdjustFocusStartResult,
   ApiErrorPayload,
   Block,
   BlockDetail,
@@ -45,6 +46,7 @@ import type {
   Project,
   ProjectWithStats,
   PublicSettings,
+  RemoveFocusGapResult,
   ReorderBlockInput,
   ReorderGoalInput,
   RoomTodaySummary,
@@ -81,10 +83,16 @@ export interface DesktopClientConfig {
 export type DesktopCommandAction =
   | { type: 'navigate'; route: string; projectId?: string; settingsSection?: string }
   | { type: 'start-focus'; blockId: string }
+  | { type: 'open-focus-complete' }
   | { type: 'open-block'; blockId: string }
   | { type: 'open-create-block'; title?: string }
   | { type: 'open-daily-notes' }
   | { type: 'open-quick-capture' };
+
+export interface AwayReturnEvent {
+  awayStartedAt: string;
+  awayEndedAt: string;
+}
 
 export interface VeyraDesktopBridge {
   isElectron: boolean;
@@ -101,11 +109,16 @@ export interface VeyraDesktopBridge {
   }) => Promise<{ failed: string[] } | undefined | void>;
   closeCaptureWindow: () => Promise<void>;
   closeCommandWindow?: () => Promise<void>;
+  closeFocusLauncherWindow?: () => Promise<void>;
   closeTrayPopover?: () => Promise<void>;
+  hideMainWindow?: () => Promise<void>;
+  reportCaptureTab?: (tab: 'daily-note' | 'inbox' | 'focus') => void;
+  reportRoute?: (route: string) => void;
   resizeTrayPopover?: (height: number) => Promise<void>;
   trayAction?: (action: 'show-window' | 'quick-capture' | 'quick-focus' | 'quit') => Promise<void>;
   focusAndDispatchAction?: (action: DesktopCommandAction) => Promise<void>;
   onCommandAction?: (listener: (action: DesktopCommandAction) => void) => () => void;
+  onAwayReturn?: (listener: (event: AwayReturnEvent) => void) => () => void;
   openExternalUrl: (url: string) => Promise<void>;
 }
 
@@ -164,6 +177,7 @@ export interface TodayResponse {
   completedToday: Block[];
   upcomingEvents: CalendarEvent[];
   todayEvents: CalendarEvent[];
+  meetingAutoFocusEnabled?: boolean;
   dailyNotesCount: number;
   projects: ProjectWithStats[];
   goals: GoalWithStats[];
@@ -263,6 +277,14 @@ export interface TestHookResponse {
 }
 
 export interface FocusStartResponse extends StartFocusResult {
+  focusStatus: FocusStatus;
+}
+
+export interface FocusAdjustStartResponse extends AdjustFocusStartResult {
+  focusStatus: FocusStatus;
+}
+
+export interface FocusGapResponse extends RemoveFocusGapResult {
   focusStatus: FocusStatus;
 }
 
@@ -653,16 +675,35 @@ export const apiClient = {
     return request<FocusStatus>('GET', '/api/focus');
   },
 
-  startFocus(blockId: string): Promise<FocusStartResponse> {
-    return request<FocusStartResponse>('POST', '/api/focus/start', { blockId });
+  startFocus(blockId: string, startedAt?: string): Promise<FocusStartResponse> {
+    return request<FocusStartResponse>(
+      'POST',
+      '/api/focus/start',
+      startedAt ? { blockId, startedAt } : { blockId },
+    );
+  },
+
+  updateFocusStartTime(startedAt: string): Promise<FocusAdjustStartResponse> {
+    return request<FocusAdjustStartResponse>('PATCH', '/api/focus/start-time', { startedAt });
   },
 
   resumeFocus(blockId: string): Promise<FocusStartResponse> {
     return request<FocusStartResponse>('POST', '/api/focus/resume', { blockId });
   },
 
-  pauseFocus(note?: string | null): Promise<FocusCloseResponse> {
-    return request<FocusCloseResponse>('POST', '/api/focus/pause', note !== undefined ? { note } : {});
+  pauseFocus(note?: string | null, endedAt?: string): Promise<FocusCloseResponse> {
+    return request<FocusCloseResponse>('POST', '/api/focus/pause', {
+      ...(note !== undefined ? { note } : {}),
+      ...(endedAt !== undefined ? { endedAt } : {}),
+    });
+  },
+
+  /** Cuts a pause out of the running session; the timer continues from `gapEndAt` (default now). */
+  removeFocusGap(gapStartAt: string, gapEndAt?: string): Promise<FocusGapResponse> {
+    return request<FocusGapResponse>('POST', '/api/focus/gap', {
+      gapStartAt,
+      ...(gapEndAt !== undefined ? { gapEndAt } : {}),
+    });
   },
 
   cancelFocus(): Promise<FocusCloseResponse> {

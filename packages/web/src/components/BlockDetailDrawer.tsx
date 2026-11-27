@@ -16,6 +16,7 @@ import {
   ChevronDown,
   Clock,
   Copy,
+  ExternalLink as ExternalLinkIcon,
   Flame,
   Inbox,
   Link2,
@@ -28,10 +29,11 @@ import {
   Square,
   Target,
   Trash2,
+  Video,
   X,
 } from 'lucide-react';
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { apiClient } from '../api/client';
+import { apiClient, openExternalUrl } from '../api/client';
 import {
   invalidateBlockRelated,
   useBlockDetailQuery,
@@ -51,6 +53,7 @@ import { ProjectBadge } from './ProjectBadge';
 import { SideWorkSection } from './SideWorkSection';
 import {
   addDaysDateString,
+  formatDateHeading,
   formatDuration,
   formatLocalTime,
   formatShortDate,
@@ -63,6 +66,7 @@ export interface BlockDetailDrawerProps {
   blockId: string | null;
   onClose: () => void;
   onStartFocus?: (blockId: string) => void;
+  onCreateFollowUp?: (block: BlockDetail) => void;
 }
 
 interface ParsedChecklistLine {
@@ -128,7 +132,12 @@ const RECURRENCE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'days:[tue,thu]', label: 'Tue / Thu' },
 ];
 
-export function BlockDetailDrawer({ blockId, onClose, onStartFocus }: BlockDetailDrawerProps) {
+export function BlockDetailDrawer({
+  blockId,
+  onClose,
+  onStartFocus,
+  onCreateFollowUp,
+}: BlockDetailDrawerProps) {
   const queryClient = useQueryClient();
   const detailQuery = useBlockDetailQuery(blockId);
   const projectsQuery = useProjectsQuery({ includeArchived: false });
@@ -535,6 +544,18 @@ export function BlockDetailDrawer({ blockId, onClose, onStartFocus }: BlockDetai
     return Math.max(block.totalFocusMinutes, summed);
   }, [block]);
 
+  const isCalendarBlock = Boolean(block?.calendarSource);
+  const calendarTimingLabel = useMemo(() => {
+    if (!block?.calendarSource || !block.plannedStartAt || !block.plannedEndAt) return null;
+    const nowMs = Date.now();
+    const startMs = Date.parse(block.plannedStartAt);
+    const endMs = Date.parse(block.plannedEndAt);
+    if (Number.isNaN(startMs) || Number.isNaN(endMs)) return 'Meeting';
+    if (nowMs >= startMs && nowMs <= endMs) return 'Meeting · Live';
+    if (nowMs > endMs) return 'Meeting · Past';
+    return 'Meeting · Upcoming';
+  }, [block?.calendarSource, block?.plannedStartAt, block?.plannedEndAt]);
+
   const headerActions = block ? (
     <div className="flex items-center gap-1.5 relative" ref={menuRef}>
       {saveState === 'saving' ? (
@@ -543,6 +564,17 @@ export function BlockDetailDrawer({ blockId, onClose, onStartFocus }: BlockDetai
         <span className="text-[11px] text-[#7BE0A0] inline-flex items-center gap-1 mr-1">
           <Check size={11} /> Saved
         </span>
+      ) : null}
+
+      {isCalendarBlock && block.meetingUrl ? (
+        <Button
+          variant="secondary"
+          size="xs"
+          rightIcon={<ExternalLinkIcon size={11} />}
+          onClick={() => openExternalUrl(block.meetingUrl!)}
+        >
+          Open in Teams
+        </Button>
       ) : null}
 
       <button
@@ -636,7 +668,11 @@ export function BlockDetailDrawer({ blockId, onClose, onStartFocus }: BlockDetai
       title={
         block ? (
           <div className="flex items-center gap-2">
-            {currentProject ? (
+            {isCalendarBlock ? (
+              <span className="w-5 h-5 rounded-[5px] bg-[#242424] border border-[#3C3C3C] inline-flex items-center justify-center text-[#9A9A9A] shrink-0">
+                <Video size={11} />
+              </span>
+            ) : currentProject ? (
               <ProjectBadge
                 name={currentProject.name}
                 color={currentProject.color}
@@ -645,7 +681,7 @@ export function BlockDetailDrawer({ blockId, onClose, onStartFocus }: BlockDetai
               />
             ) : null}
             <span className="text-[12.5px] font-medium text-[#9A9A9A] truncate">
-              {currentProject?.name ?? 'Block'}
+              {isCalendarBlock ? (calendarTimingLabel ?? 'Meeting') : (currentProject?.name ?? 'Block')}
             </span>
             {block.status === 'done' ? (
               <Pill tone="energy-up" dot>
@@ -665,38 +701,62 @@ export function BlockDetailDrawer({ blockId, onClose, onStartFocus }: BlockDetai
       headerActions={headerActions}
       footer={
         block ? (
-          <div className="flex items-center justify-between gap-3 flex-wrap text-[12.5px]">
-            <div className="flex items-center gap-4">
+          isCalendarBlock ? (
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11.5px] text-[#6E6E6E]">
+                Source:{' '}
+                <span className="text-[#9A9A9A]">
+                  {(block.calendarSource ?? 'calendar').replace('_', ' ')}
+                </span>
+              </span>
+              {onCreateFollowUp ? (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  leftIcon={<Plus size={13} />}
+                  onClick={() => {
+                    flushPendingEdits();
+                    onCreateFollowUp(block);
+                  }}
+                >
+                  Create Follow-up Block
+                </Button>
+              ) : null}
+            </div>
+          ) : (
+            <div className="flex items-center justify-between gap-3 flex-wrap text-[12.5px]">
+              <div className="flex items-center gap-4">
+                <button
+                  type="button"
+                  onClick={() =>
+                    moveMutation.mutate({ bucket: 'scheduled', scheduledDate: tomorrowStr })
+                  }
+                  disabled={moveMutation.isPending}
+                  className="inline-flex items-center gap-1.5 font-medium text-[#C4C4C4] hover:text-[#EDEDED] transition-colors disabled:opacity-50"
+                >
+                  <CalendarClock size={13} className="text-[#9A9A9A]" />
+                  <span>Move to Tomorrow</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => parkMutation.mutate('2w')}
+                  disabled={parkMutation.isPending}
+                  className="inline-flex items-center gap-1.5 font-medium text-[#9A9A9A] hover:text-[#EDEDED] transition-colors disabled:opacity-50"
+                >
+                  <Archive size={13} className="text-[#6E6E6E]" />
+                  <span>Park in Later (2w)</span>
+                </button>
+              </div>
               <button
                 type="button"
-                onClick={() =>
-                  moveMutation.mutate({ bucket: 'scheduled', scheduledDate: tomorrowStr })
-                }
-                disabled={moveMutation.isPending}
-                className="inline-flex items-center gap-1.5 font-medium text-[#C4C4C4] hover:text-[#EDEDED] transition-colors disabled:opacity-50"
+                onClick={() => dropMutation.mutate(false)}
+                disabled={dropMutation.isPending}
+                className="font-medium text-[#FF9EC5]/85 hover:text-[#FF9EC5] transition-colors disabled:opacity-50"
               >
-                <CalendarClock size={13} className="text-[#9A9A9A]" />
-                <span>Move to Tomorrow</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => parkMutation.mutate('2w')}
-                disabled={parkMutation.isPending}
-                className="inline-flex items-center gap-1.5 font-medium text-[#9A9A9A] hover:text-[#EDEDED] transition-colors disabled:opacity-50"
-              >
-                <Archive size={13} className="text-[#6E6E6E]" />
-                <span>Park in Later (2w)</span>
+                Drop block
               </button>
             </div>
-            <button
-              type="button"
-              onClick={() => dropMutation.mutate(false)}
-              disabled={dropMutation.isPending}
-              className="font-medium text-[#FF9EC5]/85 hover:text-[#FF9EC5] transition-colors disabled:opacity-50"
-            >
-              Drop block
-            </button>
-          </div>
+          )
         ) : null
       }
     >
@@ -722,6 +782,24 @@ export function BlockDetailDrawer({ blockId, onClose, onStartFocus }: BlockDetai
               placeholder="Block title"
               className="w-full bg-transparent font-display text-[22px] font-semibold leading-snug text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none"
             />
+
+            {isCalendarBlock && block.plannedStartAt && block.plannedEndAt ? (
+              <div className="flex items-center gap-2 text-[12.5px] text-[#9A9A9A] tabular-nums -mt-2">
+                <span>
+                  {formatDateHeading(
+                    block.scheduledDate ?? getSessionLocalDate(block.plannedStartAt),
+                  )}
+                </span>
+                <span>·</span>
+                <span>{formatTimeRange(block.plannedStartAt, block.plannedEndAt)}</span>
+                <span>·</span>
+                <span>
+                  {formatDuration(
+                    getSessionDurationMinutes(block.plannedStartAt, block.plannedEndAt),
+                  )}
+                </span>
+              </div>
+            ) : null}
 
             {/* Sleek Custom Property Picker Strip */}
             <div ref={pickerStripRef} className="flex items-center flex-wrap gap-2">
@@ -838,7 +916,8 @@ export function BlockDetailDrawer({ blockId, onClose, onStartFocus }: BlockDetai
                 ) : null}
               </div>
 
-              {/* Unified Schedule / Date Picker */}
+              {/* Unified Schedule / Date Picker (hidden for calendar-owned blocks) */}
+              {!isCalendarBlock ? (
               <div className="relative">
                 <button
                   type="button"
@@ -899,8 +978,10 @@ export function BlockDetailDrawer({ blockId, onClose, onStartFocus }: BlockDetai
                   </div>
                 ) : null}
               </div>
+              ) : null}
 
-              {/* Quiet Due Date Chip */}
+              {/* Quiet Due Date Chip (hidden for calendar-owned blocks) */}
+              {!isCalendarBlock ? (
               <div className="relative">
                 <button
                   type="button"
@@ -953,6 +1034,7 @@ export function BlockDetailDrawer({ blockId, onClose, onStartFocus }: BlockDetai
                   </div>
                 ) : null}
               </div>
+              ) : null}
 
               {/* Ops Toggle Chip */}
               <button
@@ -969,7 +1051,9 @@ export function BlockDetailDrawer({ blockId, onClose, onStartFocus }: BlockDetai
                 <span>{block.isOps ? 'Ops' : '+ Ops'}</span>
               </button>
 
-              {/* Repeat Picker Chip */}
+              {/* Repeat Picker Chip & Size Picker (hidden for calendar-owned blocks) */}
+              {!isCalendarBlock ? (
+              <>
               <div className="relative">
                 <button
                   type="button"
@@ -1014,6 +1098,8 @@ export function BlockDetailDrawer({ blockId, onClose, onStartFocus }: BlockDetai
                 value={block.sizeMinutes}
                 onChange={(next) => updateMutation.mutate({ sizeMinutes: next })}
               />
+              </>
+              ) : null}
             </div>
           </div>
 

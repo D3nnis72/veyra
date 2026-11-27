@@ -1,20 +1,25 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import type { CalendarEvent, EnergySignal, SenseSignal } from '@veyra/core/types';
+import type { CalendarEvent, EnergySignal, SenseSignal, UpdateBlockInput } from '@veyra/core/types';
 import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  Check,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
+  Clock,
+  Flame,
   Minus,
   Pause,
   Play,
-  Square,
+  Search,
+  Target,
   Video,
   X,
 } from 'lucide-react';
 import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { apiClient, isElectronDesktop } from '../api/client';
+import { apiClient, isElectronDesktop, queryKeys } from '../api/client';
 import {
   invalidateBlockRelated,
   useBlockDetailQuery,
@@ -23,8 +28,9 @@ import {
 import { useAppShell } from '../app/AppShellContext';
 import { matchesAnyAccelerator, useHotkeys } from '../app/hotkeys';
 import { Button } from '../components/Button';
-import { GoalChip, GoalKindIconBadge } from '../components/GoalChip';
+import { GoalKindIconBadge } from '../components/GoalChip';
 import { ProjectBadge } from '../components/ProjectBadge';
+import { goalChipStyle } from '../components/goalTint';
 import { formatDuration, formatLocalTime } from '../components/icons';
 
 function formatStopwatchHMS(totalSeconds: number): string {
@@ -36,6 +42,28 @@ function formatStopwatchHMS(totalSeconds: number): string {
   return `${pad(h)}:${pad(m)}:${pad(s)}`;
 }
 
+function isoToLocalHHMM(iso: string): string {
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return '';
+  return `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+}
+
+function localHHMMToTodayIso(hhmm: string): string | null {
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(hhmm.trim());
+  if (!match) return null;
+  const now = new Date();
+  const dt = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    Number(match[1]),
+    Number(match[2]),
+    0,
+    0,
+  );
+  return dt.toISOString();
+}
+
 export function FocusView() {
   const queryClient = useQueryClient();
   const {
@@ -45,7 +73,6 @@ export function FocusView() {
     projects,
     goals,
     navigate,
-    openProject,
     openBlockDrawer,
     openMeetingDrawer,
     closeDrawer,
@@ -60,14 +87,23 @@ export function FocusView() {
   const blockDetailQuery = useBlockDetailQuery(activeBlock?.id ?? null);
   const blockDetail = blockDetailQuery.data?.block;
 
-  const [panelMode, setPanelMode] = useState<'none' | 'pause' | 'complete'>('none');
+  const [panelMode, setPanelMode] = useState<'none' | 'pause' | 'complete' | 'start-time' | 'gap'>('none');
   const [resumeNoteDraft, setResumeNoteDraft] = useState('');
   const [energySignal, setEnergySignal] = useState<EnergySignal | null>('up');
   const [senseSignal, setSenseSignal] = useState<SenseSignal | null>(null);
   const [outcomeDraft, setOutcomeDraft] = useState('');
+  const [startTimeDraft, setStartTimeDraft] = useState('');
+  const [startTimeError, setStartTimeError] = useState<string | null>(null);
+  const [gapFromDraft, setGapFromDraft] = useState('');
+  const [gapToDraft, setGapToDraft] = useState('');
+  const [gapError, setGapError] = useState<string | null>(null);
+  const [openMetaPicker, setOpenMetaPicker] = useState<'project' | 'goal' | null>(null);
+  const [projectSearch, setProjectSearch] = useState('');
 
   const pauseInputRef = useRef<HTMLInputElement>(null);
   const outcomeInputRef = useRef<HTMLInputElement>(null);
+  const metaStripRef = useRef<HTMLDivElement>(null);
+  const projectSearchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setPanelMode('none');
@@ -75,7 +111,46 @@ export function FocusView() {
     setOutcomeDraft('');
     setEnergySignal('up');
     setSenseSignal(null);
+    setStartTimeError(null);
+    setOpenMetaPicker(null);
+    setProjectSearch('');
   }, [activeSession?.id]);
+
+  useEffect(() => {
+    if (!openMetaPicker) return;
+    if (openMetaPicker === 'project') {
+      window.setTimeout(() => projectSearchRef.current?.focus(), 20);
+    }
+    const onPointerDown = (e: MouseEvent) => {
+      if (metaStripRef.current && !metaStripRef.current.contains(e.target as Node)) {
+        setOpenMetaPicker(null);
+        setProjectSearch('');
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        setOpenMetaPicker(null);
+        setProjectSearch('');
+      }
+    };
+    window.addEventListener('mousedown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('mousedown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [openMetaPicker]);
+
+  useEffect(() => {
+    const onOpenComplete = () => {
+      if (activeSession && activeBlock) {
+        setPanelMode('complete');
+      }
+    };
+    window.addEventListener('veyra:focus-open-complete', onOpenComplete);
+    return () => window.removeEventListener('veyra:focus-open-complete', onOpenComplete);
+  }, [activeSession, activeBlock]);
 
   useEffect(() => {
     if (panelMode === 'pause') {
@@ -87,16 +162,6 @@ export function FocusView() {
 
   const pauseMutation = useMutation({
     mutationFn: (note: string | null) => apiClient.pauseFocus(note),
-    onSuccess: () => {
-      invalidateBlockRelated(queryClient, activeBlock?.id);
-      setPanelMode('none');
-      closeDrawer();
-      navigate('today');
-    },
-  });
-
-  const stopMutation = useMutation({
-    mutationFn: () => apiClient.stopFocus(),
     onSuccess: () => {
       invalidateBlockRelated(queryClient, activeBlock?.id);
       setPanelMode('none');
@@ -139,6 +204,130 @@ export function FocusView() {
     },
   });
 
+  const updateBlockMetaMutation = useMutation({
+    mutationFn: (patch: UpdateBlockInput) => apiClient.updateBlock(activeBlock!.id, patch),
+    onSuccess: () => {
+      invalidateBlockRelated(queryClient, activeBlock?.id);
+    },
+  });
+
+  const removeGapMutation = useMutation({
+    mutationFn: (range: { from: string; to: string }) =>
+      apiClient.removeFocusGap(range.from, range.to),
+    onSuccess: (res) => {
+      queryClient.setQueryData(queryKeys.focus, res.focusStatus);
+      invalidateBlockRelated(queryClient, activeBlock?.id);
+      setGapError(null);
+      setPanelMode('none');
+    },
+    onError: (err) => {
+      setGapError(err instanceof Error ? err.message : 'Could not remove the pause');
+    },
+  });
+
+  const updateStartTimeMutation = useMutation({
+    mutationFn: (startedAt: string) => apiClient.updateFocusStartTime(startedAt),
+    onSuccess: (res) => {
+      queryClient.setQueryData(queryKeys.focus, res.focusStatus);
+      invalidateBlockRelated(queryClient, activeBlock?.id);
+      setStartTimeError(null);
+      setPanelMode('none');
+    },
+    onError: (err) => {
+      setStartTimeError(err instanceof Error ? err.message : 'Could not update start time');
+    },
+  });
+
+  const activeProjects = useMemo(
+    () => projects.filter((p) => p.status !== 'archived'),
+    [projects],
+  );
+  const filteredProjects = useMemo(() => {
+    const q = projectSearch.trim().toLowerCase();
+    if (!q) return activeProjects;
+    return activeProjects.filter((p) => p.name.toLowerCase().includes(q));
+  }, [activeProjects, projectSearch]);
+
+  const handleProjectPick = (nextProjectId: string) => {
+    if (!activeBlock) return;
+    const nextProject = activeProjects.find((p) => p.id === nextProjectId);
+    const patch: UpdateBlockInput = { projectId: nextProjectId };
+    if (nextProject && !activeBlock.goalId && nextProject.defaultGoalId) {
+      patch.goalId = nextProject.defaultGoalId;
+    }
+    updateBlockMetaMutation.mutate(patch);
+    setOpenMetaPicker(null);
+    setProjectSearch('');
+  };
+
+  const openStartTimeEditor = () => {
+    if (!activeSession) return;
+    setStartTimeDraft(isoToLocalHHMM(activeSession.startedAt));
+    setStartTimeError(null);
+    setPanelMode((curr) => (curr === 'start-time' ? 'none' : 'start-time'));
+  };
+
+  const openGapEditor = () => {
+    if (!activeSession) return;
+    const now = Date.now();
+    setGapFromDraft(isoToLocalHHMM(new Date(now - 20 * 60_000).toISOString()));
+    setGapToDraft(isoToLocalHHMM(new Date(now).toISOString()));
+    setGapError(null);
+    setPanelMode((curr) => (curr === 'gap' ? 'none' : 'gap'));
+  };
+
+  const applyGapMinutes = (minutes: number) => {
+    const toIso = localHHMMToTodayIso(gapToDraft) ?? new Date().toISOString();
+    setGapFromDraft(isoToLocalHHMM(new Date(Date.parse(toIso) - minutes * 60_000).toISOString()));
+    setGapError(null);
+  };
+
+  const handleGapSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!activeSession) return;
+    const fromIso = localHHMMToTodayIso(gapFromDraft);
+    const toIso = localHHMMToTodayIso(gapToDraft);
+    if (!fromIso || !toIso) {
+      setGapError('Enter both times as HH:MM');
+      return;
+    }
+    if (Date.parse(toIso) <= Date.parse(fromIso)) {
+      setGapError('The pause must end after it started');
+      return;
+    }
+    if (Date.parse(toIso) > Date.now()) {
+      setGapError('The pause cannot end in the future');
+      return;
+    }
+    if (Date.parse(fromIso) <= Date.parse(activeSession.startedAt)) {
+      setGapError(`The pause must start after the session started (${formatLocalTime(activeSession.startedAt)})`);
+      return;
+    }
+    setGapError(null);
+    removeGapMutation.mutate({ from: fromIso, to: toIso });
+  };
+
+  const applyMinutesAgo = (minutesAgo: number) => {
+    const targetIso = new Date(Date.now() - minutesAgo * 60_000).toISOString();
+    setStartTimeError(null);
+    updateStartTimeMutation.mutate(targetIso);
+  };
+
+  const handleStartTimeSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    const targetIso = localHHMMToTodayIso(startTimeDraft);
+    if (!targetIso) {
+      setStartTimeError('Enter a valid time (HH:MM)');
+      return;
+    }
+    if (Date.parse(targetIso) > Date.now()) {
+      setStartTimeError('Start time cannot be in the future');
+      return;
+    }
+    setStartTimeError(null);
+    updateStartTimeMutation.mutate(targetIso);
+  };
+
   // Esc while Pause inline input is open skips note and pauses immediately;
   // Keyboard shortcuts when idle in Focus: P -> Pause, C or ⌘↵ -> Complete, N -> Notes drawer
   useEffect(() => {
@@ -152,7 +341,23 @@ export function FocusView() {
         return;
       }
 
-      if (!activeSession || !activeBlock || panelMode !== 'none') return;
+      if (panelMode === 'gap' && e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        setPanelMode('none');
+        setGapError(null);
+        return;
+      }
+
+      if (panelMode === 'start-time' && e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        setPanelMode('none');
+        setStartTimeError(null);
+        return;
+      }
+
+      if (!activeSession || !activeBlock || panelMode !== 'none' || openMetaPicker !== null) return;
       const target = e.target as HTMLElement | null;
       if (
         target &&
@@ -185,7 +390,7 @@ export function FocusView() {
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [panelMode, pauseMutation, activeSession, activeBlock, activeDrawer, closeDrawer, openBlockDrawer, hotkeys]);
+  }, [panelMode, openMetaPicker, pauseMutation, activeSession, activeBlock, activeDrawer, closeDrawer, openBlockDrawer, hotkeys]);
 
   const currentProject = useMemo(
     () => (activeBlock ? projects.find((p) => p.id === activeBlock.projectId) : undefined),
@@ -342,28 +547,7 @@ export function FocusView() {
           </Button>
         </div>
 
-        <div className="justify-self-center flex items-center gap-2 min-w-0">
-          {currentProject ? (
-            <button
-              type="button"
-              onClick={() => openProject(currentProject.id)}
-              className="veyra-no-drag inline-flex items-center gap-2 px-2.5 py-1 rounded-[8px] hover:bg-[#1C1C1C] transition-colors min-w-0"
-            >
-              <ProjectBadge
-                name={currentProject.name}
-                color={currentProject.color}
-                icon={currentProject.icon}
-                size="sm"
-              />
-              <span className="text-[13px] font-medium text-[#C4C4C4] truncate">
-                {currentProject.name}
-              </span>
-            </button>
-          ) : null}
-          {currentGoal ? (
-            <GoalChip name={currentGoal.name} kind={currentGoal.kind} color={currentGoal.color} />
-          ) : null}
-        </div>
+        <div className="justify-self-center" />
 
         <div className="justify-self-end">
           {soonMeeting ? (
@@ -382,9 +566,162 @@ export function FocusView() {
         </div>
       </header>
 
-      {/* Center Stage: Title, Count-up Stopwatch, Pause/Complete Inline Controls */}
+      {/* Center Stage: Editable Project/Goal/Ops, Title, Count-up Stopwatch, Start Time, Pause/Complete */}
       <div className="flex-1 flex flex-col items-center justify-center px-8 py-10 max-w-[580px] w-full mx-auto space-y-6">
-        <div className="text-center space-y-2 max-w-full">
+        <div className="text-center space-y-3 max-w-full flex flex-col items-center">
+          {/* Editable Project / Goal / Ops Strip directly above the block title */}
+          <div
+            ref={metaStripRef}
+            className="flex items-center justify-center flex-wrap gap-1.5"
+          >
+            {/* Project Picker */}
+            <div className="relative">
+              <button
+                type="button"
+                aria-label="Change focus project"
+                aria-expanded={openMetaPicker === 'project'}
+                onClick={() => {
+                  setProjectSearch('');
+                  setOpenMetaPicker((p) => (p === 'project' ? null : 'project'));
+                }}
+                className="inline-flex items-center gap-1.5 h-7 pl-2 pr-2.5 rounded-[7px] bg-[#1C1C1C] border border-[#2A2A2A] hover:border-[#3C3C3C] text-[12px] font-medium text-[#C4C4C4] hover:text-[#EDEDED] transition-colors"
+              >
+                {currentProject ? (
+                  <ProjectBadge
+                    name={currentProject.name}
+                    color={currentProject.color}
+                    icon={currentProject.icon}
+                    size="xs"
+                  />
+                ) : null}
+                <span className="max-w-[140px] truncate">{currentProject?.name ?? 'Other'}</span>
+                <ChevronDown size={11} className="text-[#6E6E6E]" />
+              </button>
+              {openMetaPicker === 'project' ? (
+                <div className="absolute left-1/2 -translate-x-1/2 top-9 z-30 w-56 rounded-[10px] bg-[#222222] border border-[#3C3C3C] shadow-[var(--shadow-float)] overflow-hidden text-left animate-veyra-fade">
+                  <div className="flex items-center gap-2 px-2.5 h-8 border-b border-[#2E2E2E]">
+                    <Search size={11} className="text-[#6E6E6E] shrink-0" />
+                    <input
+                      ref={projectSearchRef}
+                      type="text"
+                      aria-label="Filter projects"
+                      value={projectSearch}
+                      onChange={(e) => setProjectSearch(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && filteredProjects.length > 0) {
+                          e.preventDefault();
+                          handleProjectPick(filteredProjects[0].id);
+                        }
+                      }}
+                      placeholder="Filter project…"
+                      className="flex-1 bg-transparent text-[12px] text-[#EDEDED] placeholder:text-[#6E6E6E] focus:outline-none"
+                    />
+                  </div>
+                  <div className="max-h-60 overflow-y-auto p-1">
+                    {filteredProjects.map((p) => {
+                      const active = p.id === activeBlock.projectId;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => handleProjectPick(p.id)}
+                          className="w-full px-2.5 py-1.5 rounded-[6px] text-left text-[12.5px] text-[#EDEDED] hover:bg-white/[0.07] flex items-center justify-between gap-2"
+                        >
+                          <span className="flex items-center gap-2 min-w-0">
+                            <ProjectBadge name={p.name} color={p.color} icon={p.icon} size="xs" />
+                            <span className="truncate">{p.name}</span>
+                          </span>
+                          {active ? <Check size={12} className="text-[#AEB8FF] shrink-0" /> : null}
+                        </button>
+                      );
+                    })}
+                    {filteredProjects.length === 0 ? (
+                      <div className="px-2.5 py-2 text-[11.5px] text-[#6E6E6E] text-center">
+                        No matching projects
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            {/* Goal Picker */}
+            <div className="relative">
+              <button
+                type="button"
+                aria-label="Change focus goal"
+                aria-expanded={openMetaPicker === 'goal'}
+                onClick={() => setOpenMetaPicker((p) => (p === 'goal' ? null : 'goal'))}
+                style={currentGoal ? goalChipStyle(currentGoal.color) : undefined}
+                className={[
+                  'inline-flex items-center gap-1.5 h-7 rounded-[7px] border text-[12px] font-medium transition-[color,border-color,filter]',
+                  currentGoal
+                    ? 'pl-1.5 pr-2.5 hover:brightness-125'
+                    : 'px-2.5 bg-[#1C1C1C] border-[#2A2A2A] text-[#9A9A9A] hover:text-[#EDEDED] hover:border-[#3C3C3C]',
+                ].join(' ')}
+              >
+                {currentGoal ? (
+                  <GoalKindIconBadge kind={currentGoal.kind} color={currentGoal.color} size="xs" />
+                ) : (
+                  <Target size={11} className="text-[#6E6E6E]" />
+                )}
+                <span className="max-w-[150px] truncate">{currentGoal?.name ?? '+ Goal'}</span>
+                <ChevronDown size={11} className="opacity-60" />
+              </button>
+              {openMetaPicker === 'goal' ? (
+                <div className="absolute left-1/2 -translate-x-1/2 top-9 z-30 w-56 max-h-64 overflow-y-auto p-1 rounded-[10px] bg-[#222222] border border-[#3C3C3C] shadow-[var(--shadow-float)] text-left animate-veyra-fade">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateBlockMetaMutation.mutate({ goalId: null });
+                      setOpenMetaPicker(null);
+                    }}
+                    className="w-full px-2.5 py-1.5 rounded-[6px] text-left text-[12.5px] text-[#9A9A9A] hover:bg-white/[0.07] flex items-center justify-between gap-2"
+                  >
+                    <span>No goal</span>
+                    {!activeBlock.goalId ? <Check size={12} className="text-[#AEB8FF]" /> : null}
+                  </button>
+                  {goals.map((g) => {
+                    const active = g.id === activeBlock.goalId;
+                    return (
+                      <button
+                        key={g.id}
+                        type="button"
+                        onClick={() => {
+                          updateBlockMetaMutation.mutate({ goalId: g.id });
+                          setOpenMetaPicker(null);
+                        }}
+                        className="w-full px-2.5 py-1.5 rounded-[6px] text-left text-[12.5px] text-[#EDEDED] hover:bg-white/[0.07] flex items-center justify-between gap-2"
+                      >
+                        <span className="flex items-center gap-2 min-w-0">
+                          <GoalKindIconBadge kind={g.kind} color={g.color} size="xs" />
+                          <span className="truncate">{g.name}</span>
+                        </span>
+                        {active ? <Check size={12} className="text-[#AEB8FF] shrink-0" /> : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+
+            {/* Ops Toggle */}
+            <button
+              type="button"
+              aria-label="Toggle focus Ops"
+              onClick={() => updateBlockMetaMutation.mutate({ isOps: !activeBlock.isOps })}
+              className={[
+                'inline-flex items-center gap-1 h-7 px-2.5 rounded-[7px] border text-[12px] font-medium transition-colors',
+                activeBlock.isOps
+                  ? 'bg-[#3A3110] border-[#E8B417]/45 text-[#F2D06B]'
+                  : 'bg-[#1C1C1C] border-[#2A2A2A] text-[#9A9A9A] hover:text-[#EDEDED] hover:border-[#3C3C3C]',
+              ].join(' ')}
+            >
+              <Flame size={11} />
+              <span>{activeBlock.isOps ? 'Ops' : '+ Ops'}</span>
+            </button>
+          </div>
+
           <h1 className="font-display text-[24px] font-semibold leading-snug text-[#EDEDED]">
             {activeBlock.title}
           </h1>
@@ -404,14 +741,48 @@ export function FocusView() {
           ) : null}
         </div>
 
-        {/* Large Tabular Stopwatch */}
-        <div className="flex items-center gap-3.5 select-none">
-          <span className="w-2.5 h-2.5 rounded-full bg-[#4DA3FF] animate-pulse shrink-0" />
-          <div
-            aria-label="Elapsed focus time"
-            className="font-display text-[64px] leading-none font-semibold tracking-[-0.03em] text-[#EDEDED] tabular-nums"
-          >
-            {formatStopwatchHMS(liveElapsedSeconds)}
+        {/* Large Tabular Stopwatch + Live Start Time Adjuster */}
+        <div className="flex flex-col items-center gap-2">
+          <div className="flex items-center gap-3.5 select-none">
+            <span className="w-2.5 h-2.5 rounded-full bg-[#4DA3FF] animate-pulse shrink-0" />
+            <div
+              aria-label="Elapsed focus time"
+              className="font-display text-[64px] leading-none font-semibold tracking-[-0.03em] text-[#EDEDED] tabular-nums"
+            >
+              {formatStopwatchHMS(liveElapsedSeconds)}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              aria-label="Adjust focus start time"
+              onClick={openStartTimeEditor}
+              className={[
+                'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-[7px] text-[12px] tabular-nums transition-colors border',
+                panelMode === 'start-time'
+                  ? 'bg-[#1F2759] border-[#5566F2]/50 text-[#D6DCFF]'
+                  : 'bg-transparent border-transparent text-[#6E6E6E] hover:text-[#C4C4C4] hover:bg-[#1C1C1C] hover:border-[#2A2A2A]',
+              ].join(' ')}
+            >
+              <Clock size={11} />
+              <span>Started {formatLocalTime(activeSession.startedAt)}</span>
+            </button>
+
+            <button
+              type="button"
+              aria-label="Remove a pause you forgot to log"
+              onClick={openGapEditor}
+              className={[
+                'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-[7px] text-[12px] transition-colors border',
+                panelMode === 'gap'
+                  ? 'bg-[#1F2759] border-[#5566F2]/50 text-[#D6DCFF]'
+                  : 'bg-transparent border-transparent text-[#6E6E6E] hover:text-[#C4C4C4] hover:bg-[#1C1C1C] hover:border-[#2A2A2A]',
+              ].join(' ')}
+            >
+              <Pause size={11} />
+              <span>Took a pause?</span>
+            </button>
           </div>
         </div>
 
@@ -422,36 +793,169 @@ export function FocusView() {
           </div>
         ) : null}
 
-        {/* Primary Action Buttons */}
+        {/* Inline Start-Time Adjuster Panel */}
+        {panelMode === 'start-time' ? (
+          <form onSubmit={handleStartTimeSubmit} className="veyra-card w-full max-w-[440px] space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[12px] font-semibold uppercase tracking-[0.06em] text-[#AEB8FF]">
+                Started Earlier?
+              </span>
+              <span className="text-[11.5px] text-[#6E6E6E] tabular-nums">
+                Currently {formatLocalTime(activeSession.startedAt)}
+              </span>
+            </div>
+
+            <div className="flex items-center flex-wrap gap-1.5">
+              {[10, 15, 30, 60].map((mins) => (
+                <Button
+                  key={mins}
+                  type="button"
+                  variant="secondary"
+                  size="xs"
+                  disabled={updateStartTimeMutation.isPending}
+                  onClick={() => applyMinutesAgo(mins)}
+                >
+                  {mins === 60 ? '1h ago' : `${mins}m ago`}
+                </Button>
+              ))}
+              {focusStatus?.lastClosedSessionEndedAt &&
+              Date.parse(focusStatus.lastClosedSessionEndedAt) < Date.now() ? (
+                <Button
+                  type="button"
+                  variant="accent-soft"
+                  size="xs"
+                  disabled={updateStartTimeMutation.isPending}
+                  onClick={() =>
+                    updateStartTimeMutation.mutate(focusStatus.lastClosedSessionEndedAt!)
+                  }
+                >
+                  After last session ({formatLocalTime(focusStatus.lastClosedSessionEndedAt)})
+                </Button>
+              ) : null}
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <input
+                type="time"
+                aria-label="Custom focus start time"
+                value={startTimeDraft}
+                onChange={(e) => setStartTimeDraft(e.target.value)}
+                className="h-9 px-3 rounded-[8px] bg-[#262626] border border-[#3C3C3C] text-[13px] text-[#EDEDED] tabular-nums focus:outline-none focus:border-[#5566F2]"
+              />
+              <Button
+                type="submit"
+                variant="primary"
+                size="sm"
+                disabled={updateStartTimeMutation.isPending}
+              >
+                Apply
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setPanelMode('none');
+                  setStartTimeError(null);
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+
+            {startTimeError ? (
+              <div className="text-[12px] text-[#FF9EC5]">{startTimeError}</div>
+            ) : null}
+          </form>
+        ) : null}
+
+        {/* Inline Forgotten-Pause Panel */}
+        {panelMode === 'gap' ? (
+          <form onSubmit={handleGapSubmit} className="veyra-card w-full max-w-[440px] space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[12px] font-semibold uppercase tracking-[0.06em] text-[#AEB8FF]">
+                Forgot to log a pause?
+              </span>
+              <span className="text-[11.5px] text-[#6E6E6E]">The timer keeps running</span>
+            </div>
+            <p className="text-[12.5px] text-[#9A9A9A]">
+              Pick the time you were away. It is cut out of this session, so it does not count as focus time.
+            </p>
+
+            <div className="flex items-center flex-wrap gap-1.5">
+              <span className="text-[11.5px] text-[#6E6E6E]">It lasted</span>
+              {[10, 15, 20, 30, 60].map((mins) => (
+                <Button
+                  key={mins}
+                  type="button"
+                  variant="secondary"
+                  size="xs"
+                  disabled={removeGapMutation.isPending}
+                  onClick={() => applyGapMinutes(mins)}
+                >
+                  {mins === 60 ? '1h' : `${mins}m`}
+                </Button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <input
+                type="time"
+                aria-label="Pause started at"
+                value={gapFromDraft}
+                onChange={(e) => setGapFromDraft(e.target.value)}
+                className="h-9 px-3 rounded-[8px] bg-[#262626] border border-[#3C3C3C] text-[13px] text-[#EDEDED] tabular-nums focus:outline-none focus:border-[#5566F2]"
+              />
+              <span className="text-[12px] text-[#6E6E6E]">to</span>
+              <input
+                type="time"
+                aria-label="Pause ended at"
+                value={gapToDraft}
+                onChange={(e) => setGapToDraft(e.target.value)}
+                className="h-9 px-3 rounded-[8px] bg-[#262626] border border-[#3C3C3C] text-[13px] text-[#EDEDED] tabular-nums focus:outline-none focus:border-[#5566F2]"
+              />
+              <Button type="submit" variant="primary" size="sm" disabled={removeGapMutation.isPending}>
+                Remove pause
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setPanelMode('none');
+                  setGapError(null);
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+
+            {gapError ? <div className="text-[12px] text-[#FF9EC5]">{gapError}</div> : null}
+          </form>
+        ) : null}
+
+        {/* Primary Action Buttons: Continue later (primary), Complete (secondary), | Cancel (discard) */}
         {panelMode === 'none' ? (
-          <div className="flex items-center gap-3 pt-2">
-            <Button
-              variant="secondary"
-              size="lg"
-              leftIcon={<Pause size={15} />}
-              onClick={() => setPanelMode('pause')}
-            >
-              Pause
-            </Button>
+          <div className="flex items-center gap-2.5 pt-2">
             <Button
               variant="primary"
               size="lg"
-              leftIcon={<CheckCircle2 size={15} />}
-              onClick={() => setPanelMode('complete')}
+              leftIcon={<Pause size={15} />}
+              title="Pause session, keep your time, and continue this block later (P)"
+              onClick={() => setPanelMode('pause')}
             >
-              Complete Block
+              Continue later
             </Button>
             <Button
-              variant="ghost"
+              variant="secondary"
               size="lg"
-              title="Stop without pause note"
-              leftIcon={<Square size={13} />}
-              onClick={() => stopMutation.mutate()}
-              disabled={stopMutation.isPending}
-              className="text-[#9A9A9A]"
+              leftIcon={<CheckCircle2 size={15} />}
+              title="Mark this block done (C)"
+              onClick={() => setPanelMode('complete')}
             >
-              Stop
+              Complete
             </Button>
+            <span aria-hidden="true" className="h-5 w-px bg-[#2A2A2A] mx-1" />
             <Button
               variant="ghost"
               size="lg"
@@ -471,9 +975,9 @@ export function FocusView() {
           <form onSubmit={handlePauseSubmit} className="veyra-card w-full space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-[12px] font-semibold uppercase tracking-[0.06em] text-[#AEB8FF]">
-                Pause &amp; Leave Breadcrumb
+                Pause · Continue Later
               </span>
-              <span className="text-[11.5px] text-[#6E6E6E]">Esc to skip &amp; pause</span>
+              <span className="text-[11.5px] text-[#6E6E6E]">Esc to pause without note</span>
             </div>
             <input
               ref={pauseInputRef}
@@ -492,24 +996,14 @@ export function FocusView() {
               >
                 Keep Focusing
               </Button>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => pauseMutation.mutate(null)}
-                  disabled={pauseMutation.isPending}
-                >
-                  Skip Note
-                </Button>
-                <Button
-                  type="submit"
-                  variant="primary"
-                  size="sm"
-                  disabled={pauseMutation.isPending}
-                >
-                  Pause Session
-                </Button>
-              </div>
+              <Button
+                type="submit"
+                variant="primary"
+                size="sm"
+                disabled={pauseMutation.isPending}
+              >
+                Pause Session
+              </Button>
             </div>
           </form>
         ) : null}

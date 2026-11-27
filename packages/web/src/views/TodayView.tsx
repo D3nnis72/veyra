@@ -99,14 +99,23 @@ function persistLookBackDismissed(date: string): void {
   }
 }
 
-function formatRoomTodayLine(room: RoomTodaySummary): string {
-  const freePart = room.countsFromNow
-    ? `${formatDuration(room.freeTimeLeftMinutes)} free until ${room.workdayEnd}`
-    : `${formatDuration(room.freeTimeLeftMinutes)} free ${room.workdayStart}–${room.workdayEnd}`;
+function computePresetHHMMFromNow(addMinutes: number): string {
+  const now = new Date();
+  const totalMins = Math.min(23 * 60 + 55, now.getHours() * 60 + now.getMinutes() + addMinutes);
+  const rounded = Math.min(23 * 60 + 55, Math.ceil(totalMins / 5) * 5);
+  const hh = String(Math.floor(rounded / 60)).padStart(2, '0');
+  const mm = String(rounded % 60).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+function formatRoomBudgetTail(room: RoomTodaySummary): string {
   const budgetLabel = room.hasLearnedBaseline
     ? `your usual ${room.weekdayLabel} ${formatDuration(room.baselineFocusMinutes)}`
     : `your ${formatDuration(room.baselineFocusMinutes)}`;
-  return `Room today ≈ ${formatDuration(room.roomMinutes)} · ${freePart}, ${formatDuration(room.focusBudgetLeftMinutes)} of ${budgetLabel} focus budget left`;
+  if (room.hasTodayWorkdayEndOverride) {
+    return "· today's end time";
+  }
+  return `, ${formatDuration(room.focusBudgetLeftMinutes)} of ${budgetLabel} focus budget left`;
 }
 
 function canTellSomeone(block: Block): boolean {
@@ -156,6 +165,7 @@ export function TodayView() {
     liveElapsedSeconds,
     projects: shellProjects,
     goals: shellGoals,
+    settings: shellSettings,
     navigate,
     openBlockDrawer,
     openDailyNotesDrawer,
@@ -200,7 +210,10 @@ export function TodayView() {
   const activeBlockId = focusStatus?.activeBlock?.id ?? null;
   const focusedTodayMinutes = focusStatus?.focusedTodayMinutes ?? 0;
 
-  const serverUpNext = useMemo(() => data?.upNext ?? [], [data?.upNext]);
+  const serverUpNext = useMemo(
+    () => (data?.upNext ?? []).filter((b) => b.id !== activeBlockId),
+    [data?.upNext, activeBlockId],
+  );
   // Optimistic order after a drag, held until the refetched server order matches it.
   const [localOrderIds, setLocalOrderIds] = useState<string[] | null>(null);
   const upNext = useMemo(() => {
@@ -229,7 +242,59 @@ export function TodayView() {
   // the inline Drop reason / Undo strip before the user chooses a reason, skips, or undoes.
   const [recentlyDroppedBlocks, setRecentlyDroppedBlocks] = useState<Block[]>([]);
   const [openTellSomeoneBlockId, setOpenTellSomeoneBlockId] = useState<string | null>(null);
+  const [workdayPopoverOpen, setWorkdayPopoverOpen] = useState(false);
+  const [todayEndDraft, setTodayEndDraft] = useState('18:00');
+  const [defaultStartDraft, setDefaultStartDraft] = useState('09:00');
+  const [defaultEndDraft, setDefaultEndDraft] = useState('18:00');
+  const [workdayError, setWorkdayError] = useState<string | null>(null);
+  const workdayPopoverRef = useRef<HTMLDivElement>(null);
   const [dismissedLookBackDates, setDismissedLookBackDates] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (!workdayPopoverOpen) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (workdayPopoverRef.current && !workdayPopoverRef.current.contains(e.target as Node)) {
+        setWorkdayPopoverOpen(false);
+        setWorkdayError(null);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setWorkdayPopoverOpen(false);
+        setWorkdayError(null);
+      }
+    };
+    window.addEventListener('mousedown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('mousedown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [workdayPopoverOpen]);
+
+  const updateWorkdayMutation = useMutation({
+    mutationFn: (patch: Parameters<typeof apiClient.updateSettings>[0]) =>
+      apiClient.updateSettings(patch),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['today'] });
+      void queryClient.invalidateQueries({ queryKey: ['plan'] });
+      void queryClient.invalidateQueries({ queryKey: ['settings'] });
+      void queryClient.invalidateQueries({ queryKey: ['review'] });
+      setWorkdayPopoverOpen(false);
+      setWorkdayError(null);
+    },
+    onError: (err) => {
+      setWorkdayError(err instanceof Error ? err.message : 'Could not update workday hours');
+    },
+  });
+
+  const openWorkdayPopover = () => {
+    setTodayEndDraft(roomToday?.workdayEnd ?? shellSettings?.workdayEnd ?? '18:00');
+    setDefaultStartDraft(shellSettings?.workdayStart ?? roomToday?.workdayStart ?? '09:00');
+    setDefaultEndDraft(shellSettings?.workdayEnd ?? '18:00');
+    setWorkdayError(null);
+    setWorkdayPopoverOpen((prev) => !prev);
+  };
   // Keyboard selection is tracked by block id and only highlighted after arrow-key navigation,
   // so a mouse user never sees a card marked as selected that they did not pick.
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
@@ -467,7 +532,7 @@ export function TodayView() {
   ]);
 
   const drawerSelectedBlockId = activeDrawer?.kind === 'block' ? activeDrawer.blockId : null;
-  const drawerSelectedEventId = activeDrawer?.kind === 'meeting' ? activeDrawer.eventId : null;
+  const drawerSelectedEventId = drawerSelectedBlockId;
   const keyboardSelectedBlockId =
     !drawerSelectedBlockId && keyboardNavActive ? selectedBlockId : null;
 
@@ -526,9 +591,153 @@ export function TodayView() {
           </div>
 
           {roomToday ? (
-            <p className="text-[13px] text-[#9A9A9A] tabular-nums">
-              {formatRoomTodayLine(roomToday)}
-            </p>
+            <div ref={workdayPopoverRef} className="relative">
+              <p
+                data-testid="room-today-line"
+                className="text-[13px] text-[#9A9A9A] tabular-nums flex items-center flex-wrap gap-x-1 gap-y-1"
+              >
+                <span>
+                  Room today ≈ {formatDuration(roomToday.roomMinutes)} ·{' '}
+                  {formatDuration(roomToday.freeTimeLeftMinutes)} free
+                </span>
+                <button
+                  type="button"
+                  aria-label="Set working end time for today"
+                  aria-expanded={workdayPopoverOpen}
+                  onClick={openWorkdayPopover}
+                  className={[
+                    'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-[5px] transition-colors border',
+                    roomToday.hasTodayWorkdayEndOverride
+                      ? 'bg-[#1F2759] border-[#5566F2]/45 text-[#D6DCFF] hover:brightness-115'
+                      : 'bg-transparent border-transparent text-[#C4C4C4] hover:text-[#EDEDED] hover:bg-[#1C1C1C] hover:border-[#2A2A2A]',
+                  ].join(' ')}
+                >
+                  <Clock size={11} className="shrink-0" />
+                  <span>until {roomToday.workdayEnd}</span>
+                </button>
+                <span>{formatRoomBudgetTail(roomToday)}</span>
+              </p>
+
+              {workdayPopoverOpen ? (
+                <div
+                  role="dialog"
+                  aria-label="Workday hours"
+                  className="absolute left-0 top-full mt-2 z-30 w-[330px] rounded-[11px] bg-[#222222] border border-[#3C3C3C] shadow-[var(--shadow-float)] p-3.5 space-y-3.5 animate-veyra-fade"
+                >
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-[#9A9A9A]">
+                        Working until today
+                      </span>
+                      {roomToday.hasTodayWorkdayEndOverride ? (
+                        <button
+                          type="button"
+                          disabled={updateWorkdayMutation.isPending}
+                          onClick={() =>
+                            updateWorkdayMutation.mutate({
+                              workdayEndOverrideDate: null,
+                              workdayEndOverrideTime: null,
+                            })
+                          }
+                          className="text-[11px] text-[#AEB8FF] hover:text-[#D6DCFF]"
+                        >
+                          Reset ({shellSettings?.workdayEnd ?? '18:00'})
+                        </button>
+                      ) : null}
+                    </div>
+
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {[
+                        { label: '+1h', mins: 60 },
+                        { label: '+2h', mins: 120 },
+                        { label: '+3h', mins: 180 },
+                      ].map((preset) => (
+                        <Button
+                          key={preset.label}
+                          type="button"
+                          variant="secondary"
+                          size="xs"
+                          disabled={updateWorkdayMutation.isPending}
+                          onClick={() =>
+                            updateWorkdayMutation.mutate({
+                              workdayEndOverrideDate: dateStr,
+                              workdayEndOverrideTime: computePresetHHMMFromNow(preset.mins),
+                            })
+                          }
+                        >
+                          {preset.label}
+                        </Button>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="time"
+                        aria-label="Today end time"
+                        value={todayEndDraft}
+                        onChange={(e) => setTodayEndDraft(e.target.value)}
+                        className="flex-1 h-8 px-2.5 rounded-[7px] bg-[#171717] border border-[#3C3C3C] text-[12.5px] text-[#EDEDED] tabular-nums focus:outline-none focus:border-[#5566F2]"
+                      />
+                      <Button
+                        type="button"
+                        variant="primary"
+                        size="xs"
+                        disabled={updateWorkdayMutation.isPending}
+                        onClick={() =>
+                          updateWorkdayMutation.mutate({
+                            workdayEndOverrideDate: dateStr,
+                            workdayEndOverrideTime: todayEndDraft,
+                          })
+                        }
+                      >
+                        Set for today
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-[#2E2E2E] space-y-2">
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-[#6E6E6E] block">
+                      Default workday
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="time"
+                        aria-label="Default workday start"
+                        value={defaultStartDraft}
+                        onChange={(e) => setDefaultStartDraft(e.target.value)}
+                        className="w-[96px] h-8 px-2 rounded-[7px] bg-[#171717] border border-[#3C3C3C] text-[12px] text-[#EDEDED] tabular-nums focus:outline-none focus:border-[#5566F2]"
+                      />
+                      <span className="text-[12px] text-[#6E6E6E]">to</span>
+                      <input
+                        type="time"
+                        aria-label="Default workday end"
+                        value={defaultEndDraft}
+                        onChange={(e) => setDefaultEndDraft(e.target.value)}
+                        className="w-[96px] h-8 px-2 rounded-[7px] bg-[#171717] border border-[#3C3C3C] text-[12px] text-[#EDEDED] tabular-nums focus:outline-none focus:border-[#5566F2]"
+                      />
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="xs"
+                        disabled={updateWorkdayMutation.isPending}
+                        onClick={() =>
+                          updateWorkdayMutation.mutate({
+                            workdayStart: defaultStartDraft,
+                            workdayEnd: defaultEndDraft,
+                          })
+                        }
+                      >
+                        Save
+                      </Button>
+                    </div>
+                  </div>
+
+                  {workdayError ? (
+                    <div className="text-[11.5px] text-[#FF9EC5]">{workdayError}</div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
           ) : null}
 
           {data?.weeklyRule ? (
@@ -641,6 +850,30 @@ export function TodayView() {
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
+              {activeBlockId === nextEvent.id ? (
+                <Button
+                  variant="primary"
+                  size="xs"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate('focus');
+                  }}
+                >
+                  Focusing
+                </Button>
+              ) : (
+                <Button
+                  variant="secondary"
+                  size="xs"
+                  leftIcon={<Play size={10} fill="currentColor" />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void startFocusAndNavigate(nextEvent.id);
+                  }}
+                >
+                  Start Focus
+                </Button>
+              )}
               {nextEvent.meetingUrl ? (
                 <Button
                   variant="secondary"

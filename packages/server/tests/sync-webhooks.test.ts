@@ -700,4 +700,172 @@ describe('WebhookDispatcher', () => {
       await server.stop();
     }
   });
+
+  it('filters Outlook CLI sync to accepted/organizer events and supports full block focus lifecycle on synced meetings', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'veyra-outlook-accepted-'));
+    tempDirs.push(tmpDir);
+    const dbPath = path.join(tmpDir, 'veyra.db');
+
+    const fakeCliPath = path.join(tmpDir, 'fake-outlook.mjs');
+    fs.writeFileSync(
+      fakeCliPath,
+      `
+const events = [
+  {
+    externalId: 'accepted-1',
+    title: 'Covestro order confirmation call',
+    startAt: '2026-11-26T10:00:00Z',
+    endAt: '2026-11-26T10:30:00Z',
+    isAllDay: false,
+    isDeclined: false,
+    isCancelled: false,
+    responseStatus: 'accepted',
+    meetingUrl: 'https://teams.microsoft.com/l/meetup-join/covestro',
+  },
+  {
+    externalId: 'organizer-1',
+    title: 'UX Accenture',
+    startAt: '2026-11-26T14:00:00Z',
+    endAt: '2026-11-26T14:45:00Z',
+    isAllDay: false,
+    isDeclined: false,
+    isCancelled: false,
+    responseStatus: 'organizer',
+    meetingUrl: null,
+  },
+  {
+    externalId: 'not-responded-1',
+    title: 'Unanswered Optional Sync',
+    startAt: '2026-11-26T11:00:00Z',
+    endAt: '2026-11-26T11:30:00Z',
+    isAllDay: false,
+    isDeclined: false,
+    isCancelled: false,
+    responseStatus: 'not_responded',
+    meetingUrl: null,
+  },
+  {
+    externalId: 'tentative-1',
+    title: 'Maybe Lunch',
+    startAt: '2026-11-26T12:00:00Z',
+    endAt: '2026-11-26T12:30:00Z',
+    isAllDay: false,
+    isDeclined: false,
+    isCancelled: false,
+    responseStatus: 'tentatively_accepted',
+    meetingUrl: null,
+  },
+  {
+    externalId: 'cancelled-accepted-1',
+    title: 'Cancelled Call',
+    startAt: '2026-11-26T15:00:00Z',
+    endAt: '2026-11-26T15:30:00Z',
+    isAllDay: false,
+    isDeclined: true,
+    isCancelled: true,
+    responseStatus: 'accepted',
+    meetingUrl: null,
+  },
+];
+process.stdout.write(JSON.stringify(events));
+`,
+    );
+
+    const server = createVeyraServer({
+      dbPath,
+      port: 0,
+      host: '127.0.0.1',
+      enableTestClock: true,
+    });
+    const { url: serverUrl } = await server.start();
+
+    try {
+      await fetch(`${serverUrl}/api/settings`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          timezone: 'UTC',
+          calendarSyncMode: 'outlook_cli',
+          outlookCliCommand: `"${process.execPath}" "${fakeCliPath}"`,
+          skipDeclinedAndAllDay: true,
+        }),
+      });
+
+      const syncRes = await fetch(`${serverUrl}/api/events/sync`, {
+        method: 'POST',
+        headers: { 'X-Veyra-Now': '2026-11-26T09:00:00.000Z' },
+      });
+      expect(syncRes.status).toBe(200);
+      const syncJson = (await syncRes.json()) as {
+        result: { createdCount: number; skippedCount: number };
+      };
+      expect(syncJson.result.createdCount).toBe(2);
+      expect(syncJson.result.skippedCount).toBe(3);
+
+      const todayRes = await fetch(`${serverUrl}/api/today`, {
+        headers: { 'X-Veyra-Now': '2026-11-26T09:30:00.000Z' },
+      });
+      const todayJson = (await todayRes.json()) as {
+        upNext: Array<{ id: string }>;
+        todayEvents: Array<{ id: string; title: string }>;
+        completedToday: Array<{ id: string }>;
+        meetingAutoFocusEnabled?: boolean;
+      };
+      expect(todayJson.meetingAutoFocusEnabled).toBe(true);
+      expect(todayJson.upNext).toHaveLength(0);
+      expect(todayJson.todayEvents.map((e) => e.title)).toEqual([
+        'Covestro order confirmation call',
+        'UX Accenture',
+      ]);
+
+      const meetingBlockId = todayJson.todayEvents[0].id;
+
+      // Meeting is directly accessible as a block
+      const blockRes = await fetch(`${serverUrl}/api/blocks/${meetingBlockId}`);
+      expect(blockRes.status).toBe(200);
+      const blockJson = (await blockRes.json()) as {
+        block: { id: string; calendarSource: string; meetingUrl: string };
+      };
+      expect(blockJson.block.calendarSource).toBe('outlook_cli');
+      expect(blockJson.block.meetingUrl).toBe('https://teams.microsoft.com/l/meetup-join/covestro');
+
+      // Focus and complete directly on the calendar block
+      const startRes = await fetch(`${serverUrl}/api/focus/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Veyra-Now': '2026-11-26T10:00:00.000Z' },
+        body: JSON.stringify({ blockId: meetingBlockId }),
+      });
+      expect(startRes.status).toBe(200);
+
+      const completeRes = await fetch(`${serverUrl}/api/focus/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Veyra-Now': '2026-11-26T10:30:00.000Z' },
+        body: JSON.stringify({ blockId: meetingBlockId, outcomeNote: 'Confirmed order' }),
+      });
+      expect(completeRes.status).toBe(200);
+
+      // Completed meeting appears in Today's completedToday and Calendar's sessions (without duplicating plannedBlocks)
+      const afterTodayRes = await fetch(`${serverUrl}/api/today`, {
+        headers: { 'X-Veyra-Now': '2026-11-26T10:35:00.000Z' },
+      });
+      const afterToday = (await afterTodayRes.json()) as {
+        completedToday: Array<{ id: string }>;
+      };
+      expect(afterToday.completedToday.some((b) => b.id === meetingBlockId)).toBe(true);
+
+      const calRes = await fetch(`${serverUrl}/api/calendar?start=2026-11-26&end=2026-11-26`, {
+        headers: { 'X-Veyra-Now': '2026-11-26T10:35:00.000Z' },
+      });
+      const calJson = (await calRes.json()) as {
+        plannedBlocks: Array<{ id: string }>;
+        sessions: Array<{ blockId: string; blockTitle: string }>;
+        events: Array<{ id: string }>;
+      };
+      expect(calJson.plannedBlocks).toHaveLength(0);
+      expect(calJson.events).toHaveLength(2);
+      expect(calJson.sessions.some((s) => s.blockId === meetingBlockId && s.blockTitle === 'Covestro order confirmation call')).toBe(true);
+    } finally {
+      await server.stop();
+    }
+  });
 });

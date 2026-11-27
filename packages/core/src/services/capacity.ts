@@ -1,8 +1,8 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNotNull, isNull } from 'drizzle-orm';
 import type { VeyraDb } from '../db.js';
 import { NotFoundError, ValidationError } from '../errors.js';
 import { generateOrderKey } from '../order-key.js';
-import { blocks, calendarEvents, focusSessions, settings } from '../schema.js';
+import { blocks, focusSessions, settings } from '../schema.js';
 import {
   addDaysToDateString,
   formatLocalDate,
@@ -140,6 +140,8 @@ export type WeekdayRoomMode = 'remaining' | 'fullDay';
 interface WorkdayHours {
   workdayStart: string;
   workdayEnd: string;
+  workdayEndOverrideDate: string | null;
+  workdayEndOverrideTime: string | null;
 }
 
 interface WeekdayRoomContext {
@@ -151,13 +153,20 @@ interface WeekdayRoomContext {
 
 function getActiveWorkday(veyraDb: VeyraDb): WorkdayHours {
   const row = veyraDb.db
-    .select({ workdayStart: settings.workdayStart, workdayEnd: settings.workdayEnd })
+    .select({
+      workdayStart: settings.workdayStart,
+      workdayEnd: settings.workdayEnd,
+      workdayEndOverrideDate: settings.workdayEndOverrideDate,
+      workdayEndOverrideTime: settings.workdayEndOverrideTime,
+    })
     .from(settings)
     .where(eq(settings.id, DEFAULT_SETTINGS_ID))
     .get();
   return {
     workdayStart: row?.workdayStart ?? DEFAULT_WORKDAY_START,
     workdayEnd: row?.workdayEnd ?? DEFAULT_WORKDAY_END,
+    workdayEndOverrideDate: row?.workdayEndOverrideDate ?? null,
+    workdayEndOverrideTime: row?.workdayEndOverrideTime ?? null,
   };
 }
 
@@ -238,9 +247,16 @@ function computeWeekdayRoomWithPreloaded(
 
   const countsFromNow =
     ctx.mode === 'remaining' && formatLocalDate(new Date(nowMs), timezone) === dateStr;
+  const hasTodayWorkdayEndOverride =
+    countsFromNow &&
+    workday.workdayEndOverrideDate === dateStr &&
+    Boolean(workday.workdayEndOverrideTime);
+  const effectiveWorkdayEnd = hasTodayWorkdayEndOverride
+    ? workday.workdayEndOverrideTime!
+    : workday.workdayEnd;
 
   const workdayStartMs = Date.parse(getLocalTimeIso(dateStr, workday.workdayStart, timezone));
-  const workdayEndMs = Date.parse(getLocalTimeIso(dateStr, workday.workdayEnd, timezone));
+  const workdayEndMs = Date.parse(getLocalTimeIso(dateStr, effectiveWorkdayEnd, timezone));
   const rangeStartMs = countsFromNow ? Math.max(nowMs, workdayStartMs) : workdayStartMs;
   const rangeEndMs = workdayEndMs;
 
@@ -257,7 +273,9 @@ function computeWeekdayRoomWithPreloaded(
     ? computeFocusMinutesForDate(allSessions, dateStr, timezone, nowMs)
     : 0;
   const focusBudgetLeftMinutes = Math.max(0, baselineFocusMinutes - focusedTodayMinutes);
-  const roomMinutes = Math.min(focusBudgetLeftMinutes, freeTimeLeftMinutes);
+  const roomMinutes = hasTodayWorkdayEndOverride
+    ? freeTimeLeftMinutes
+    : Math.min(focusBudgetLeftMinutes, freeTimeLeftMinutes);
   const weekdayLabel = WEEKDAY_LABELS[getWeekdayToken(dateStr)];
 
   return {
@@ -269,7 +287,8 @@ function computeWeekdayRoomWithPreloaded(
     meetingMinutes,
     countsFromNow,
     workdayStart: workday.workdayStart,
-    workdayEnd: workday.workdayEnd,
+    workdayEnd: effectiveWorkdayEnd,
+    hasTodayWorkdayEndOverride,
     hasLearnedBaseline,
     weekdayLabel,
   };
@@ -307,10 +326,18 @@ export function computeWeekdayRoom(
   const events =
     eventsOverride ??
     veyraDb.db
-      .select({ startAt: calendarEvents.startAt, endAt: calendarEvents.endAt })
-      .from(calendarEvents)
-      .where(isNull(calendarEvents.deletedAt))
-      .all();
+      .select({ startAt: blocks.plannedStartAt, endAt: blocks.plannedEndAt })
+      .from(blocks)
+      .where(
+        and(
+          isNull(blocks.deletedAt),
+          isNotNull(blocks.calendarSource),
+          isNotNull(blocks.plannedStartAt),
+          isNotNull(blocks.plannedEndAt),
+        ),
+      )
+      .all()
+      .map((row) => ({ startAt: row.startAt!, endAt: row.endAt! }));
 
   return computeWeekdayRoomWithPreloaded(
     dateStr,
@@ -349,7 +376,7 @@ export function computeProjectSizeStatsMap(
       updatedAt: blocks.updatedAt,
     })
     .from(blocks)
-    .where(and(eq(blocks.status, 'done'), isNull(blocks.deletedAt)))
+    .where(and(eq(blocks.status, 'done'), isNull(blocks.deletedAt), isNull(blocks.calendarSource)))
     .all()
     .filter((blk) => {
       const doneMs = Date.parse(blk.updatedAt);
@@ -609,10 +636,18 @@ export function computeTodayCapacity(
     .all();
 
   const allEvents = veyraDb.db
-    .select({ startAt: calendarEvents.startAt, endAt: calendarEvents.endAt })
-    .from(calendarEvents)
-    .where(isNull(calendarEvents.deletedAt))
-    .all();
+    .select({ startAt: blocks.plannedStartAt, endAt: blocks.plannedEndAt })
+    .from(blocks)
+    .where(
+      and(
+        isNull(blocks.deletedAt),
+        isNotNull(blocks.calendarSource),
+        isNotNull(blocks.plannedStartAt),
+        isNotNull(blocks.plannedEndAt),
+      ),
+    )
+    .all()
+    .map((row) => ({ startAt: row.startAt!, endAt: row.endAt! }));
 
   const workday = getActiveWorkday(veyraDb);
   const roomToday = computeWeekdayRoomWithPreloaded(
@@ -837,7 +872,7 @@ export function computeTodayCapacity(
     }
 
     for (const blk of allActiveBlocks) {
-      if (seenNotFit.has(blk.id)) continue;
+      if (seenNotFit.has(blk.id) || blk.calendarSource !== null) continue;
       if (blk.status === 'todo' && blk.bucket === 'scheduled' && blk.scheduledDate === yesterday) {
         seenNotFit.add(blk.id);
         notFitYesterday.push({ id: blk.id, title: blk.title, destination: 'Moved to today' });
@@ -977,10 +1012,18 @@ export function computePlanCapacity(
     .all();
 
   const allEvents = veyraDb.db
-    .select({ startAt: calendarEvents.startAt, endAt: calendarEvents.endAt })
-    .from(calendarEvents)
-    .where(isNull(calendarEvents.deletedAt))
-    .all();
+    .select({ startAt: blocks.plannedStartAt, endAt: blocks.plannedEndAt })
+    .from(blocks)
+    .where(
+      and(
+        isNull(blocks.deletedAt),
+        isNotNull(blocks.calendarSource),
+        isNotNull(blocks.plannedStartAt),
+        isNotNull(blocks.plannedEndAt),
+      ),
+    )
+    .all()
+    .map((row) => ({ startAt: row.startAt!, endAt: row.endAt! }));
 
   // Compute logged focus per project within the displayed week's [firstDay, lastDay] range
   const loggedMsByProject = new Map<string, number>();

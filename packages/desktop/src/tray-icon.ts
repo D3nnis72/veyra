@@ -51,216 +51,115 @@ function parseHexColor(hex: string): [number, number, number] {
   return [59, 75, 216]; // Veyra Indigo fallback
 }
 
-// Crisp 10x10 bitmap glyphs rendered at 2x (20x20 centered inside 36x36 @2x tray badge)
-const ICON_GLYPHS: Record<string, string[]> = {
-  Rocket: [
-    '......####',
-    '.....#####',
-    '....####.#',
-    '...#####..',
-    '..#####...',
-    '.####.....',
-    '.###.#....',
-    '#.##..#...',
-    '##....#...',
-    '#.........',
-  ],
-  Layers: [
-    '....##....',
-    '..######..',
-    '##########',
-    '..######..',
-    '..........',
-    '.##....##.',
-    '..######..',
-    '..........',
-    '.##....##.',
-    '..######..',
-  ],
-  Cpu: [
-    '..#....#..',
-    '.########.',
-    '##......##',
-    '.#..##..#.',
-    '##.####.##',
-    '##.####.##',
-    '.#..##..#.',
-    '##......##',
-    '.########.',
-    '..#....#..',
-  ],
-  Briefcase: [
-    '...####...',
-    '...#..#...',
-    '.########.',
-    '##########',
-    '###.##.###',
-    '##########',
-    '##########',
-    '##########',
-    '##########',
-    '.########.',
-  ],
-  Globe: [
-    '..######..',
-    '.##.##.##.',
-    '##..##..##',
-    '#...##...#',
-    '##########',
-    '##########',
-    '#...##...#',
-    '##..##..##',
-    '.##.##.##.',
-    '..######..',
-  ],
-  Shield: [
-    '....##....',
-    '.########.',
-    '##########',
-    '##......##',
-    '##......##',
-    '##......##',
-    '.##....##.',
-    '..##..##..',
-    '...####...',
-    '....##....',
-  ],
-  Code: [
-    '..........',
-    '..#....#..',
-    '.##....##.',
-    '##......##',
-    '##......##',
-    '##......##',
-    '.##....##.',
-    '..#....#..',
-    '..........',
-    '..........',
-  ],
-  Sparkles: [
-    '....##....',
-    '....##....',
-    '...####...',
-    '..######..',
-    '##########',
-    '##########',
-    '..######..',
-    '...####...',
-    '....##....',
-    '....##....',
-  ],
-};
+/**
+ * Gently lifts dark accent colors so the active menu bar mark stays crisp and
+ * legible on dark macOS menu bars while remaining clearly distinct on light ones.
+ */
+function liftForMenuBar([r, g, b]: [number, number, number]): [number, number, number] {
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  if (luminance < 115) {
+    const t = Math.min(0.35, (115 - luminance) / 180);
+    return [
+      Math.round(r + (255 - r) * t),
+      Math.round(g + (255 - g) * t),
+      Math.round(b + (255 - b) * t),
+    ];
+  }
+  return [r, g, b];
+}
 
-// Minimal 5x7 uppercase letters for monogram fallback when a project has no icon
-const LETTER_BITMAPS: Record<string, string[]> = {
-  A: ['.###.', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],
-  B: ['####.', '#...#', '#...#', '####.', '#...#', '#...#', '####.'],
-  C: ['.####', '#....', '#....', '#....', '#....', '#....', '.####'],
-  D: ['####.', '#...#', '#...#', '#...#', '#...#', '#...#', '####.'],
-  E: ['#####', '#....', '#....', '####.', '#....', '#....', '#####'],
-  F: ['#####', '#....', '#....', '####.', '#....', '#....', '#....'],
-  G: ['.####', '#....', '#....', '#..##', '#...#', '#...#', '.####'],
-  H: ['#...#', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],
-  I: ['.###.', '..#..', '..#..', '..#..', '..#..', '..#..', '.###.'],
-  J: ['..###', '...#.', '...#.', '...#.', '#..#.', '#..#.', '.##..'],
-  K: ['#...#', '#..#.', '#.#..', '##...', '#.#..', '#..#.', '#...#'],
-  L: ['#....', '#....', '#....', '#....', '#....', '#....', '#####'],
-  M: ['#...#', '##.##', '#.#.#', '#...#', '#...#', '#...#', '#...#'],
-  N: ['#...#', '##..#', '#.#.#', '#..##', '#...#', '#...#', '#...#'],
-  O: ['.###.', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'],
-  P: ['####.', '#...#', '#...#', '####.', '#....', '#....', '#....'],
-  Q: ['.###.', '#...#', '#...#', '#...#', '#.#.#', '#..#.', '.##.#'],
-  R: ['####.', '#...#', '#...#', '####.', '#.#..', '#..#.', '#...#'],
-  S: ['.####', '#....', '#....', '.###.', '....#', '....#', '####.'],
-  T: ['#####', '..#..', '..#..', '..#..', '..#..', '..#..', '..#..'],
-  U: ['#...#', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'],
-  V: ['#...#', '#...#', '#...#', '#...#', '#...#', '.#.#.', '..#..'],
-  W: ['#...#', '#...#', '#...#', '#...#', '#.#.#', '##.##', '#...#'],
-  X: ['#...#', '#...#', '.#.#.', '..#..', '.#.#.', '#...#', '#...#'],
-  Y: ['#...#', '#...#', '.#.#.', '..#..', '..#..', '..#..', '..#..'],
-  Z: ['#####', '....#', '...#.', '..#..', '.#...', '#....', '#####'],
-};
+function distToSegment(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  const t = lenSq > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq)) : 0;
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+// Geometric Veyra "V" matching icon.png proportions (flat top caps, rounded tip)
+const V_TOP_Y = -0.54;
+const V_BOT_Y = 0.56;
+const V_SPAN_X = 0.58;
+const V_HALF_WIDTH = 0.145;
+
+function inVeyraMark(x: number, y: number): boolean {
+  if (y < V_TOP_Y) return false;
+  const d = Math.min(
+    distToSegment(x, y, -V_SPAN_X, V_TOP_Y, 0, V_BOT_Y),
+    distToSegment(x, y, 0, V_BOT_Y, V_SPAN_X, V_TOP_Y),
+  );
+  return d <= V_HALF_WIDTH;
+}
 
 const iconBufferCache = new Map<string, Buffer>();
 
 /**
- * Generates a crisp 36×36 (@2x for 18×18 macOS menu bar) colored rounded-square PNG
- * representing the currently focused project (vector icon glyph or initial).
+ * Generates a 4×4 supersampled 36×36 (@2x for 18×18pt macOS menu bar) PNG:
+ * the geometric Veyra "V" tinted in the active project's color paired with a
+ * crisp live indicator dot at the bottom-right.
  */
 export function renderProjectTrayIconPng(spec: ActiveProjectTraySpec): Buffer {
-  const initial = (spec.name.trim().charAt(0) || 'V').toUpperCase();
-  const iconKey = spec.icon && ICON_GLYPHS[spec.icon] ? spec.icon : null;
-  const cacheKey = `${spec.color}:${iconKey ?? initial}`;
+  const rgb = parseHexColor(spec.color);
+  const cacheKey = `${rgb[0]},${rgb[1]},${rgb[2]}`;
   const cached = iconBufferCache.get(cacheKey);
   if (cached) return cached;
 
   const size = 36;
-  const pad = 3; // 30x30 rounded badge inside 36x36 @2x canvas (15pt icon in 18pt macOS slot)
-  const radius = 8;
-  const [r, g, b] = parseHexColor(spec.color);
+  const samples = 4;
+  const totalSamples = samples * samples;
+  const half = size / 2;
+
+  const [lr, lg, lb] = liftForMenuBar(rgb);
+  const topR = Math.min(255, lr + 24);
+  const topG = Math.min(255, lg + 24);
+  const topB = Math.min(255, lb + 24);
+  const dotR = Math.min(255, lr + 42);
+  const dotG = Math.min(255, lg + 42);
+  const dotB = Math.min(255, lb + 42);
 
   const raw = Buffer.alloc(size * (size * 4 + 1));
 
-  const setPixel = (x: number, y: number, pr: number, pg: number, pb: number, pa: number) => {
-    if (x < 0 || x >= size || y < 0 || y >= size) return;
-    const rowStart = y * (size * 4 + 1);
-    const idx = rowStart + 1 + x * 4;
-    raw[idx] = pr;
-    raw[idx + 1] = pg;
-    raw[idx + 2] = pb;
-    raw[idx + 3] = pa;
-  };
+  for (let py = 0; py < size; py++) {
+    const rowStart = py * (size * 4 + 1);
+    raw[rowStart] = 0; // PNG filter type 0
+    const ny = py / size;
+    const vr = topR + (lr - topR) * ny;
+    const vg = topG + (lg - topG) * ny;
+    const vb = topB + (lb - topB) * ny;
 
-  // 1. Draw rounded square background in project's accent color with subtle top highlight
-  const minC = pad;
-  const maxC = size - pad - 1;
-  for (let y = 0; y < size; y++) {
-    raw[y * (size * 4 + 1)] = 0; // PNG filter type 0
-    for (let x = 0; x < size; x++) {
-      if (x < minC || x > maxC || y < minC || y > maxC) continue;
-      let dx = 0;
-      let dy = 0;
-      if (x < minC + radius) dx = minC + radius - x;
-      else if (x > maxC - radius) dx = x - (maxC - radius);
-      if (y < minC + radius) dy = minC + radius - y;
-      else if (y > maxC - radius) dy = y - (maxC - radius);
+    for (let px = 0; px < size; px++) {
+      let vHits = 0;
+      let dotHits = 0;
 
-      const dist = Math.hypot(dx, dy);
-      if (dist > radius + 0.6) continue;
-      const alpha = dist <= radius - 0.5 ? 255 : Math.round(Math.max(0, (radius + 0.6 - dist) / 1.1) * 255);
-      const lift = y === minC ? 18 : 0;
-      setPixel(x, y, Math.min(255, r + lift), Math.min(255, g + lift), Math.min(255, b + lift), alpha);
-    }
-  }
-
-  // 2. Draw centered crisp white glyph (10x10 at 2x = 20x20, or 5x7 initial at 2x = 10x14)
-  if (iconKey) {
-    const glyph = ICON_GLYPHS[iconKey];
-    const ox = 8;
-    const oy = 8;
-    for (let gy = 0; gy < glyph.length; gy++) {
-      for (let gx = 0; gx < glyph[gy].length; gx++) {
-        if (glyph[gy][gx] !== '#') continue;
-        for (let sy = 0; sy < 2; sy++) {
-          for (let sx = 0; sx < 2; sx++) {
-            setPixel(ox + gx * 2 + sx, oy + gy * 2 + sy, 255, 255, 255, 245);
+      for (let sy = 0; sy < samples; sy++) {
+        const y = (py + (sy + 0.5) / samples - half) / half;
+        for (let sx = 0; sx < samples; sx++) {
+          const x = (px + (sx + 0.5) / samples - half) / half;
+          if (inVeyraMark(x + 0.08, y + 0.02)) {
+            vHits++;
+          }
+          if (Math.hypot(x - 0.56, y - 0.52) <= 0.17) {
+            dotHits++;
           }
         }
       }
-    }
-  } else {
-    const glyph = LETTER_BITMAPS[initial] ?? LETTER_BITMAPS.V;
-    const ox = 13;
-    const oy = 11;
-    for (let gy = 0; gy < glyph.length; gy++) {
-      for (let gx = 0; gx < glyph[gy].length; gx++) {
-        if (glyph[gy][gx] !== '#') continue;
-        for (let sy = 0; sy < 2; sy++) {
-          for (let sx = 0; sx < 2; sx++) {
-            setPixel(ox + gx * 2 + sx, oy + gy * 2 + sy, 255, 255, 255, 248);
-          }
-        }
-      }
+
+      const hits = Math.min(totalSamples, vHits + dotHits);
+      if (hits === 0) continue;
+
+      const dotWeight = dotHits / Math.max(1, vHits + dotHits);
+      const idx = rowStart + 1 + px * 4;
+      raw[idx] = Math.round(vr + (dotR - vr) * dotWeight);
+      raw[idx + 1] = Math.round(vg + (dotG - vg) * dotWeight);
+      raw[idx + 2] = Math.round(vb + (dotB - vb) * dotWeight);
+      raw[idx + 3] = Math.round((hits / totalSamples) * 255);
     }
   }
 

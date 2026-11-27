@@ -119,6 +119,7 @@ function IntegrationsSettingsSection() {
   const [icsFeedUrl, setIcsFeedUrl] = useState('');
   const [syncIntervalMin, setSyncIntervalMin] = useState('15');
   const [skipDeclined, setSkipDeclined] = useState(true);
+  const [meetingAutoFocus, setMeetingAutoFocus] = useState(true);
 
   const [webhookUrl, setWebhookUrl] = useState('');
   const [webhookEvents, setWebhookEvents] = useState<WebhookEventName[]>([
@@ -157,6 +158,7 @@ function IntegrationsSettingsSection() {
     setIcsFeedUrl(settings.icsFeedUrl ?? '');
     setSyncIntervalMin(String(settings.calendarSyncIntervalMin));
     setSkipDeclined(settings.skipDeclinedAndAllDay);
+    setMeetingAutoFocus(settings.meetingAutoFocusEnabled);
     setWebhookUrl(settings.webhookUrl ?? '');
     setWebhookEvents(settings.webhookEvents);
     setNotionOauthClientId(settings.notionOauthClientId ?? '');
@@ -311,6 +313,7 @@ function IntegrationsSettingsSection() {
       icsFeedUrl: icsFeedUrl.trim() || null,
       calendarSyncIntervalMin: interval,
       skipDeclinedAndAllDay: skipDeclined,
+      meetingAutoFocusEnabled: meetingAutoFocus,
     });
   };
 
@@ -553,7 +556,7 @@ function IntegrationsSettingsSection() {
               id="skip-declined-toggle"
               checked={skipDeclined}
               onChange={setSkipDeclined}
-              label="Skip declined & all-day"
+              label="Accepted only (skip unaccepted, declined & all-day)"
               size="sm"
             />
           </div>
@@ -566,6 +569,17 @@ function IntegrationsSettingsSection() {
           >
             Save Sync Settings
           </Button>
+        </div>
+
+        <div className="pt-2 border-t border-[#2A2A2A]">
+          <ToggleSwitch
+            id="meeting-auto-focus-toggle"
+            checked={meetingAutoFocus}
+            onChange={setMeetingAutoFocus}
+            label="Auto-start meeting blocks & notify"
+            description="Automatically start focus when an accepted meeting begins if idle; notify to switch if already focusing, and notify when it ends."
+            size="sm"
+          />
         </div>
 
         {syncStatus?.lastError ? (

@@ -10,7 +10,10 @@ import {
   globalShortcut,
   ipcMain,
   Menu,
+  Notification,
   nativeImage,
+  powerMonitor,
+  screen,
   shell,
   Tray,
 } from 'electron';
@@ -28,12 +31,18 @@ import {
 } from './client-config.js';
 import {
   buildTrayMenuDescriptors,
+  computeTrayPopoverBounds,
   formatTrayToolTip,
   hasActiveFocusSession,
   MenuBarFocusController,
   type MenuBarServerTarget,
   type TrayMenuAction,
 } from './menubar-focus.js';
+import { IdleTracker } from './idle-tracker.js';
+import {
+  MeetingFocusScheduler,
+  type MeetingNotificationSpec,
+} from './meeting-focus-scheduler.js';
 import { renderProjectTrayIconPng } from './tray-icon.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -55,6 +64,7 @@ type CaptureTab = 'daily-note' | 'inbox' | 'focus';
 type DesktopCommandAction =
   | { type: 'navigate'; route: string; projectId?: string; settingsSection?: string }
   | { type: 'start-focus'; blockId: string }
+  | { type: 'open-focus-complete' }
   | { type: 'open-block'; blockId: string }
   | { type: 'open-create-block'; title?: string }
   | { type: 'open-daily-notes' }
@@ -63,6 +73,7 @@ type DesktopCommandAction =
 const COMMAND_ACTION_TYPES = new Set<DesktopCommandAction['type']>([
   'navigate',
   'start-focus',
+  'open-focus-complete',
   'open-block',
   'open-create-block',
   'open-daily-notes',
@@ -70,9 +81,14 @@ const COMMAND_ACTION_TYPES = new Set<DesktopCommandAction['type']>([
 ]);
 
 let mainWindow: BrowserWindow | null = null;
+let mainWindowRoute = 'today';
 let captureWindow: BrowserWindow | null = null;
 let lastCaptureTab: CaptureTab = 'daily-note';
 let commandWindow: BrowserWindow | null = null;
+let focusLauncherWindow: BrowserWindow | null = null;
+let trayPopoverWindow: BrowserWindow | null = null;
+let trayPopoverHeight = 164;
+let trayPopoverLastBlurredAt = 0;
 let tray: Tray | null = null;
 let isTrayMenuOpen = false;
 let pendingTrayMenuRefresh = false;
@@ -85,9 +101,41 @@ let clientConfig: PersistedClientConfig | null = null;
 let isQuitting = false;
 let isShuttingDown = false;
 
+const TRAY_POPOVER_WIDTH = 300;
+const TRAY_POPOVER_MIN_HEIGHT = 110;
+const TRAY_POPOVER_MAX_HEIGHT = 360;
+const TRAY_BLUR_DISMISS_GUARD_MS = 180;
+
+const activeNotifications = new Set<Notification>();
+
+function showDesktopNotification(
+  spec: Pick<MeetingNotificationSpec, 'title' | 'body' | 'actionLabel' | 'onClick' | 'onAction'>,
+): void {
+  if (!Notification.isSupported()) return;
+  const notification = new Notification({
+    title: spec.title,
+    body: spec.body,
+    ...(process.platform === 'darwin' && spec.actionLabel
+      ? { actions: [{ type: 'button', text: spec.actionLabel }] }
+      : {}),
+  });
+  activeNotifications.add(notification);
+  notification.on('click', () => {
+    spec.onClick();
+  });
+  notification.on('action', () => {
+    (spec.onAction ?? spec.onClick)();
+  });
+  notification.on('close', () => {
+    activeNotifications.delete(notification);
+  });
+  notification.show();
+}
+
 const menuBarFocus = new MenuBarFocusController({
   onStateChange: () => {
     updateTrayDisplay({ rebuildMenu: true });
+    meetingFocusScheduler.onStateUpdated();
   },
   onTick: () => {
     updateTrayDisplay({ rebuildMenu: true });
@@ -95,6 +143,65 @@ const menuBarFocus = new MenuBarFocusController({
   onError: (context, err) => {
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`Veyra menu bar sync (${context}): ${message}`);
+  },
+});
+
+const meetingFocusScheduler = new MeetingFocusScheduler({
+  getState: () => menuBarFocus.getState(),
+  startFocus: (blockId) => menuBarFocus.startFocus(blockId),
+  showNotification: showDesktopNotification,
+  onOpenFocus: () => {
+    showMainWindow();
+    sendCommandActionToMain({ type: 'navigate', route: 'focus' });
+  },
+  onOpenFocusComplete: () => {
+    showMainWindow();
+    sendCommandActionToMain({ type: 'open-focus-complete' });
+  },
+});
+
+function formatClock(ms: number): string {
+  const dt = new Date(ms);
+  return `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+}
+
+/**
+ * Notices when you walked away while a focus session kept running (idle time, screen lock,
+ * sleep). The web app asks what to do with the away time, this process only reports it and
+ * shows a quiet notification when the window is not in front.
+ */
+const idleTracker = new IdleTracker({
+  getIdleSeconds: () => powerMonitor.getSystemIdleTime(),
+  getActiveSessionStartMs: () => {
+    const startedAt = menuBarFocus.getState().activeSession?.startedAt;
+    const ms = startedAt ? Date.parse(startedAt) : Number.NaN;
+    return Number.isNaN(ms) ? null : ms;
+  },
+  isCoveredByMeeting: (startMs, endMs) =>
+    (menuBarFocus.getState().todayEvents ?? []).some(
+      (event) => Date.parse(event.startAt) <= startMs && Date.parse(event.endAt) >= endMs,
+    ),
+  onReturn: ({ awayStartMs, awayEndMs }) => {
+    const minutes = Math.round((awayEndMs - awayStartMs) / 60_000);
+    const payload = {
+      awayStartedAt: new Date(awayStartMs).toISOString(),
+      awayEndedAt: new Date(awayEndMs).toISOString(),
+    };
+    const send = () => {
+      const win = mainWindow;
+      if (win && !win.isDestroyed()) win.webContents.send('veyra:away-return', payload);
+    };
+    send();
+    if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isFocused()) {
+      showDesktopNotification({
+        title: 'Your focus session kept running',
+        body: `You were away for ${minutes} min (from ${formatClock(awayStartMs)}). Click to decide what to do with that time.`,
+        onClick: () => {
+          showMainWindow();
+          send();
+        },
+      });
+    }
   },
 });
 
@@ -202,6 +309,30 @@ async function stopLocalServer(): Promise<void> {
   const server = embeddedServer;
   embeddedServer = null;
   await server.stop();
+}
+
+function hasAnyVisibleWindow(): boolean {
+  return [
+    mainWindow,
+    captureWindow,
+    commandWindow,
+    focusLauncherWindow,
+    trayPopoverWindow,
+  ].some((win) => Boolean(win && !win.isDestroyed() && win.isVisible()));
+}
+
+/** On macOS, hand focus back to the previous app once every Veyra window is hidden. */
+function restorePreviousAppIfAllHidden(): void {
+  if (process.platform === 'darwin' && !hasAnyVisibleWindow()) {
+    app.hide();
+  }
+}
+
+function hideMainWindow(): void {
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+    mainWindow.hide();
+    restorePreviousAppIfAllHidden();
+  }
 }
 
 function showMainWindow(): void {
@@ -351,7 +482,7 @@ function createCaptureWindow(): BrowserWindow {
   win.webContents.on('before-input-event', (event, input) => {
     if (input.type === 'keyDown' && input.key === 'Escape') {
       event.preventDefault();
-      hideCaptureWindow();
+      hideCaptureWindow(true);
     }
   });
 
@@ -374,12 +505,57 @@ function createCommandWindow(): BrowserWindow {
   win.webContents.on('before-input-event', (event, input) => {
     if (input.type === 'keyDown' && input.key === 'Escape') {
       event.preventDefault();
-      hideCommandWindow();
+      hideCommandWindow(true);
     }
   });
 
   commandWindow = win;
   return win;
+}
+
+function createFocusLauncherWindow(): BrowserWindow {
+  const win = createFloatingWindow({
+    width: 600,
+    height: 430,
+    routePath: '/focus-launcher',
+    onClosed: (closed) => {
+      if (focusLauncherWindow === closed) {
+        focusLauncherWindow = null;
+      }
+    },
+  });
+
+  focusLauncherWindow = win;
+  return win;
+}
+
+function hideFocusLauncherWindow(restoreApp = false): void {
+  if (focusLauncherWindow && !focusLauncherWindow.isDestroyed() && focusLauncherWindow.isVisible()) {
+    focusLauncherWindow.hide();
+    if (restoreApp) restorePreviousAppIfAllHidden();
+  }
+}
+
+function toggleFocusLauncherWindow(): void {
+  if (!focusLauncherWindow || focusLauncherWindow.isDestroyed()) {
+    const win = createFocusLauncherWindow();
+    win.once('ready-to-show', () => {
+      if (!win.isDestroyed()) {
+        showFloatingWindow(win);
+      }
+    });
+    return;
+  }
+
+  if (focusLauncherWindow.isVisible()) {
+    hideFocusLauncherWindow(true);
+    return;
+  }
+
+  hideCaptureWindow();
+  hideCommandWindow();
+  hideTrayPopover();
+  showFloatingWindow(focusLauncherWindow);
 }
 
 function showFloatingWindow(win: BrowserWindow): void {
@@ -405,21 +581,27 @@ function toggleCommandWindow(): void {
   }
 
   if (commandWindow.isVisible()) {
-    commandWindow.hide();
+    hideCommandWindow(true);
     return;
   }
 
   hideCaptureWindow();
+  hideFocusLauncherWindow();
+  hideTrayPopover();
   showFloatingWindow(commandWindow);
 }
 
-function hideCommandWindow(): void {
-  if (commandWindow && !commandWindow.isDestroyed()) {
+function hideCommandWindow(restoreApp = false): void {
+  if (commandWindow && !commandWindow.isDestroyed() && commandWindow.isVisible()) {
     commandWindow.hide();
+    if (restoreApp) restorePreviousAppIfAllHidden();
   }
 }
 
 function sendCommandActionToMain(action: DesktopCommandAction): void {
+  if (action.type === 'navigate' && action.route) {
+    mainWindowRoute = action.route;
+  }
   const win = mainWindow;
   if (!win || win.isDestroyed()) return;
   const send = () => {
@@ -467,7 +649,7 @@ function toggleCaptureWindow(tab: CaptureTab = 'daily-note'): void {
 
   if (captureWindow.isVisible()) {
     if (lastCaptureTab === tab) {
-      captureWindow.hide();
+      hideCaptureWindow(true);
       return;
     }
     lastCaptureTab = tab;
@@ -478,25 +660,174 @@ function toggleCaptureWindow(tab: CaptureTab = 'daily-note'): void {
 
   lastCaptureTab = tab;
   hideCommandWindow();
+  hideFocusLauncherWindow();
+  hideTrayPopover();
   showFloatingWindow(captureWindow);
   dispatchCaptureTab(captureWindow, tab);
 }
 
-function hideCaptureWindow(): void {
-  if (captureWindow && !captureWindow.isDestroyed()) {
+function hideCaptureWindow(restoreApp = false): void {
+  if (captureWindow && !captureWindow.isDestroyed() && captureWindow.isVisible()) {
     captureWindow.hide();
+    if (restoreApp) restorePreviousAppIfAllHidden();
   }
+}
+
+function createTrayPopoverWindow(): BrowserWindow {
+  const win = new BrowserWindow({
+    width: TRAY_POPOVER_WIDTH,
+    height: trayPopoverHeight,
+    frame: false,
+    transparent: false,
+    backgroundColor: '#18181A',
+    roundedCorners: true,
+    hasShadow: true,
+    alwaysOnTop: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    show: false,
+    webPreferences: {
+      preload: getPreloadPath(),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  if (process.platform === 'darwin') {
+    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    win.setAlwaysOnTop(true, 'pop-up-menu');
+  }
+
+  win.on('blur', () => {
+    if (!win.isDestroyed() && win.isVisible()) {
+      trayPopoverLastBlurredAt = Date.now();
+      win.hide();
+    }
+  });
+
+  win.on('close', (event) => {
+    if (!isQuitting) {
+      event.preventDefault();
+      win.hide();
+    }
+  });
+
+  win.on('closed', () => {
+    if (trayPopoverWindow === win) {
+      trayPopoverWindow = null;
+    }
+  });
+
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type === 'keyDown' && input.key === 'Escape') {
+      event.preventDefault();
+      hideTrayPopover();
+    }
+  });
+
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    const safeUrl = isAllowedExternalUrl(url);
+    if (safeUrl) {
+      void shell.openExternal(safeUrl);
+    }
+    return { action: 'deny' };
+  });
+
+  void win.loadURL(`${getRendererBaseUrl()}/tray`);
+  trayPopoverWindow = win;
+  return win;
+}
+
+function positionTrayPopover(win: BrowserWindow): void {
+  const trayBounds = tray && !tray.isDestroyed() ? tray.getBounds() : null;
+  const display =
+    trayBounds && trayBounds.width > 0
+      ? screen.getDisplayMatching(trayBounds)
+      : screen.getPrimaryDisplay();
+  const anchor =
+    trayBounds && trayBounds.width > 0
+      ? trayBounds
+      : {
+          x: display.workArea.x + display.workArea.width - TRAY_POPOVER_WIDTH - 12,
+          y: display.workArea.y,
+          width: 24,
+          height: 0,
+        };
+  const bounds = computeTrayPopoverBounds(
+    anchor,
+    display.workArea,
+    TRAY_POPOVER_WIDTH,
+    trayPopoverHeight,
+  );
+  win.setBounds(bounds, false);
+}
+
+function showTrayPopoverWindow(win: BrowserWindow): void {
+  hideCaptureWindow();
+  hideCommandWindow();
+  hideFocusLauncherWindow();
+  positionTrayPopover(win);
+  win.show();
+  win.focus();
+  void win.webContents
+    .executeJavaScript(`window.dispatchEvent(new Event('veyra:tray-show'));`)
+    .catch(() => {});
+}
+
+function hideTrayPopover(): void {
+  if (trayPopoverWindow && !trayPopoverWindow.isDestroyed() && trayPopoverWindow.isVisible()) {
+    trayPopoverWindow.hide();
+  }
+}
+
+function toggleTrayPopover(): void {
+  if (trayPopoverWindow && !trayPopoverWindow.isDestroyed() && trayPopoverWindow.isVisible()) {
+    trayPopoverWindow.hide();
+    return;
+  }
+
+  if (Date.now() - trayPopoverLastBlurredAt < TRAY_BLUR_DISMISS_GUARD_MS) {
+    return;
+  }
+
+  if (!trayPopoverWindow || trayPopoverWindow.isDestroyed()) {
+    const win = createTrayPopoverWindow();
+    win.once('ready-to-show', () => {
+      if (!win.isDestroyed()) {
+        showTrayPopoverWindow(win);
+      }
+    });
+    return;
+  }
+
+  showTrayPopoverWindow(trayPopoverWindow);
 }
 
 function triggerQuickFocus(): void {
   if (hasActiveFocusSession(menuBarFocus.getState())) {
+    if (
+      mainWindow &&
+      !mainWindow.isDestroyed() &&
+      mainWindow.isVisible() &&
+      mainWindow.isFocused() &&
+      mainWindowRoute === 'focus'
+    ) {
+      hideMainWindow();
+      return;
+    }
     hideCaptureWindow();
     hideCommandWindow();
+    hideFocusLauncherWindow();
+    hideTrayPopover();
     showMainWindow();
     sendCommandActionToMain({ type: 'navigate', route: 'focus' });
     return;
   }
-  toggleCaptureWindow('focus');
+  toggleFocusLauncherWindow();
 }
 
 type GlobalShortcutId = 'quickCapture' | 'quickFocus' | 'globalCommandPalette';
@@ -622,9 +953,7 @@ function handleTrayMenuAction(action: TrayMenuAction): void {
   }
 }
 
-function refreshTrayMenu(nowMs = Date.now()): void {
-  if (!tray || tray.isDestroyed()) return;
-
+function buildNativeTrayMenu(nowMs = Date.now()): Menu {
   const descriptors = buildTrayMenuDescriptors(menuBarFocus.getState(), {
     nowMs,
     captureShortcutLabel: formatShortcutForDisplay(
@@ -667,7 +996,15 @@ function refreshTrayMenu(nowMs = Date.now()): void {
     }
   });
 
-  tray.setContextMenu(menu);
+  return menu;
+}
+
+function refreshTrayMenu(nowMs = Date.now()): void {
+  if (!tray || tray.isDestroyed()) return;
+  // On macOS, left-click opens the interactive tray popover and right-click pops up
+  // the native menu on demand, so we avoid binding a permanent context menu.
+  if (process.platform === 'darwin') return;
+  tray.setContextMenu(buildNativeTrayMenu(nowMs));
 }
 
 function updateTrayDisplay(opts: { rebuildMenu?: boolean } = {}): void {
@@ -677,15 +1014,13 @@ function updateTrayDisplay(opts: { rebuildMenu?: boolean } = {}): void {
   const state = menuBarFocus.getState();
 
   // Keep the macOS menu bar compact: never render timer text next to the icon.
-  // Instead, swap the 18×18 tray icon to the active project's colored badge while focusing.
+  // Instead, tint the Veyra V mark + live dot in the active project's color while focusing.
   if (process.platform === 'darwin') {
     tray.setTitle('');
   }
 
   const nextIconKey = state.activeSession
-    ? state.activeProject
-      ? `project:${state.activeProject.color}:${state.activeProject.icon ?? ''}:${state.activeProject.name}`
-      : 'active:default'
+    ? `active:${state.activeProject?.color ?? '#3B4BD8'}`
     : 'idle';
 
   if (nextIconKey !== lastTrayIconKey) {
@@ -744,6 +1079,17 @@ function createTray(): void {
   lastTrayToolTip = null;
   isTrayMenuOpen = false;
   pendingTrayMenuRefresh = false;
+
+  if (process.platform === 'darwin') {
+    tray.on('click', () => {
+      toggleTrayPopover();
+    });
+    tray.on('right-click', () => {
+      hideTrayPopover();
+      tray?.popUpContextMenu(buildNativeTrayMenu());
+    });
+  }
+
   updateTrayDisplay({ rebuildMenu: true });
 }
 
@@ -754,6 +1100,12 @@ function reloadFloatingWindows(nextUrl: string, previousUrl: string): void {
   }
   if (commandWindow && !commandWindow.isDestroyed()) {
     void commandWindow.loadURL(`${nextUrl}/command`).catch(() => {});
+  }
+  if (focusLauncherWindow && !focusLauncherWindow.isDestroyed()) {
+    void focusLauncherWindow.loadURL(`${nextUrl}/focus-launcher`).catch(() => {});
+  }
+  if (trayPopoverWindow && !trayPopoverWindow.isDestroyed()) {
+    void trayPopoverWindow.loadURL(`${nextUrl}/tray`).catch(() => {});
   }
 }
 
@@ -776,6 +1128,7 @@ function registerIpcHandlers(): void {
         void mainWindow.loadURL(nextUrl).catch(() => {});
       }
       reloadFloatingWindows(nextUrl, previousUrl);
+      meetingFocusScheduler.reset();
       menuBarFocus.configure(getApiServerTarget());
     } else if (updated.remoteUrl) {
       const nextUrl = getRendererBaseUrl();
@@ -783,6 +1136,7 @@ function registerIpcHandlers(): void {
         await mainWindow.loadURL(nextUrl).catch(() => {});
       }
       reloadFloatingWindows(nextUrl, previousUrl);
+      meetingFocusScheduler.reset();
       menuBarFocus.configure(getApiServerTarget());
       await stopLocalServer();
     }
@@ -807,11 +1161,67 @@ function registerIpcHandlers(): void {
   );
 
   ipcMain.handle('veyra:close-capture-window', () => {
-    hideCaptureWindow();
+    hideCaptureWindow(true);
   });
 
   ipcMain.handle('veyra:close-command-window', () => {
-    hideCommandWindow();
+    hideCommandWindow(true);
+  });
+
+  ipcMain.handle('veyra:close-focus-launcher-window', () => {
+    hideFocusLauncherWindow(true);
+  });
+
+  ipcMain.handle('veyra:close-tray-popover', () => {
+    hideTrayPopover();
+  });
+
+  ipcMain.handle('veyra:hide-main-window', () => {
+    hideMainWindow();
+  });
+
+  ipcMain.on('veyra:capture-tab-changed', (_event, tab: unknown) => {
+    if (tab === 'daily-note' || tab === 'inbox' || tab === 'focus') {
+      lastCaptureTab = tab;
+    }
+  });
+
+  ipcMain.on('veyra:route-changed', (_event, nextRoute: unknown) => {
+    if (typeof nextRoute === 'string' && nextRoute.length > 0) {
+      mainWindowRoute = nextRoute;
+    }
+  });
+
+  ipcMain.handle('veyra:resize-tray-popover', (_event, rawHeight: unknown) => {
+    if (typeof rawHeight !== 'number' || !Number.isFinite(rawHeight)) return;
+    const clamped = Math.max(
+      TRAY_POPOVER_MIN_HEIGHT,
+      Math.min(TRAY_POPOVER_MAX_HEIGHT, Math.ceil(rawHeight)),
+    );
+    if (clamped === trayPopoverHeight) return;
+    trayPopoverHeight = clamped;
+    if (trayPopoverWindow && !trayPopoverWindow.isDestroyed()) {
+      positionTrayPopover(trayPopoverWindow);
+    }
+  });
+
+  ipcMain.handle('veyra:tray-action', (_event, action: unknown) => {
+    hideTrayPopover();
+    switch (action) {
+      case 'show-window':
+        showMainWindow();
+        return;
+      case 'quick-capture':
+        toggleCaptureWindow('daily-note');
+        return;
+      case 'quick-focus':
+        triggerQuickFocus();
+        return;
+      case 'quit':
+        isQuitting = true;
+        app.quit();
+        return;
+    }
   });
 
   ipcMain.handle('veyra:focus-and-dispatch-action', (_event, action: unknown) => {
@@ -819,7 +1229,9 @@ function registerIpcHandlers(): void {
       throw new Error('Unsupported command action');
     }
     hideCommandWindow();
+    hideFocusLauncherWindow();
     hideCaptureWindow();
+    hideTrayPopover();
     if (action.type === 'open-quick-capture') {
       toggleCaptureWindow('daily-note');
       return;
@@ -842,6 +1254,8 @@ async function shutdown(): Promise<void> {
   isShuttingDown = true;
   isQuitting = true;
 
+  meetingFocusScheduler.stop();
+  idleTracker.stop();
   menuBarFocus.stop();
 
   try {
@@ -885,6 +1299,13 @@ async function bootstrap(): Promise<void> {
   registerIpcHandlers();
   createTray();
   menuBarFocus.configure(getApiServerTarget());
+  meetingFocusScheduler.start();
+  idleTracker.start();
+  const recheckAfterWake = () => setTimeout(() => idleTracker.poll(), 2000);
+  powerMonitor.on('lock-screen', () => idleTracker.markAway());
+  powerMonitor.on('suspend', () => idleTracker.markAway());
+  powerMonitor.on('unlock-screen', recheckAfterWake);
+  powerMonitor.on('resume', recheckAfterWake);
   const failedShortcuts = registerGlobalShortcuts(
     desiredGlobalShortcuts(clientConfig.cachedShortcut, clientConfig.cachedGlobalHotkeys),
   );
@@ -894,6 +1315,8 @@ async function bootstrap(): Promise<void> {
   createMainWindow();
   createCaptureWindow();
   createCommandWindow();
+  createFocusLauncherWindow();
+  createTrayPopoverWindow();
 }
 
 const useSingleInstanceLock =

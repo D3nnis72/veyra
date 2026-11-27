@@ -257,6 +257,16 @@ export type ProjectVarianceStatus = z.infer<typeof projectVarianceStatusSchema>;
 export const calendarEventSourceSchema = z.enum(['outlook_cli', 'ics', 'manual']);
 export type CalendarEventSource = z.infer<typeof calendarEventSourceSchema>;
 
+export const calendarResponseStatusSchema = z.enum([
+  'organizer',
+  'accepted',
+  'tentatively_accepted',
+  'declined',
+  'not_responded',
+  'none',
+]);
+export type CalendarResponseStatus = z.infer<typeof calendarResponseStatusSchema>;
+
 export const calendarSyncModeSchema = z.enum(['outlook_cli', 'ics', 'manual']);
 export type CalendarSyncMode = z.infer<typeof calendarSyncModeSchema>;
 
@@ -382,6 +392,10 @@ export const blockSchema = z.object({
   seriesId: z.string().nullable(),
   notes: z.string(),
   externalLinks: z.array(externalLinkSchema),
+  /** Non-null when this block was synced from a calendar source (e.g. `outlook_cli`, `ics`, `manual`). */
+  calendarSource: calendarEventSourceSchema.nullable().optional(),
+  externalEventId: z.string().nullable().optional(),
+  meetingUrl: z.string().nullable().optional(),
   updatedAt: z.string(),
   deletedAt: z.string().nullable(),
 });
@@ -411,6 +425,7 @@ export const calendarEventSchema = z.object({
   isOps: z.boolean(),
   notes: z.string(),
   externalLinks: z.array(externalLinkSchema),
+  status: blockStatusSchema.optional(),
   updatedAt: z.string(),
   deletedAt: z.string().nullable(),
 });
@@ -458,6 +473,7 @@ export const settingsSchema = z.object({
   icsFeedUrl: z.string().nullable(),
   calendarSyncIntervalMin: z.number().int().min(1).max(1440),
   skipDeclinedAndAllDay: z.boolean(),
+  meetingAutoFocusEnabled: z.boolean(),
   lastCalendarSyncAt: z.string().nullable(),
   webhookUrl: z.string().nullable(),
   webhookEvents: z.array(webhookEventNameSchema),
@@ -474,6 +490,8 @@ export const settingsSchema = z.object({
   hotkeys: hotkeyOverridesSchema,
   workdayStart: localTimeOfDaySchema,
   workdayEnd: localTimeOfDaySchema,
+  workdayEndOverrideDate: dateOnlySchema.nullable().optional(),
+  workdayEndOverrideTime: localTimeOfDaySchema.nullable().optional(),
   updatedAt: z.string(),
 });
 export type Settings = z.infer<typeof settingsSchema>;
@@ -735,6 +753,13 @@ export const splitSessionInputSchema = z.object({
 });
 export type SplitSessionInput = z.infer<typeof splitSessionInputSchema>;
 
+export const removeFocusGapInputSchema = z.object({
+  gapStartAt: isoTimestampSchema,
+  /** Defaults to "now" when omitted (the away time just ended). */
+  gapEndAt: isoTimestampSchema.optional(),
+});
+export type RemoveFocusGapInput = z.infer<typeof removeFocusGapInputSchema>;
+
 export const normalizedCalendarEventSchema = z.object({
   externalId: z.string().min(1),
   title: z.string().min(1),
@@ -742,6 +767,8 @@ export const normalizedCalendarEventSchema = z.object({
   endAt: z.string().min(1),
   isAllDay: z.boolean().optional(),
   isDeclined: z.boolean().optional(),
+  isCancelled: z.boolean().optional(),
+  responseStatus: calendarResponseStatusSchema.nullable().optional(),
   meetingUrl: z.string().nullable().optional(),
 });
 export type NormalizedCalendarEvent = z.infer<typeof normalizedCalendarEventSchema>;
@@ -798,6 +825,7 @@ export const updateSettingsInputSchema = z.object({
   icsFeedUrl: z.string().nullable().optional(),
   calendarSyncIntervalMin: z.number().int().min(1).max(1440).optional(),
   skipDeclinedAndAllDay: z.boolean().optional(),
+  meetingAutoFocusEnabled: z.boolean().optional(),
   lastCalendarSyncAt: z.string().nullable().optional(),
   webhookUrl: z.string().nullable().optional(),
   webhookEvents: z.array(webhookEventNameSchema).optional(),
@@ -814,6 +842,8 @@ export const updateSettingsInputSchema = z.object({
   hotkeys: hotkeyOverridesSchema.optional(),
   workdayStart: localTimeOfDaySchema.optional(),
   workdayEnd: localTimeOfDaySchema.optional(),
+  workdayEndOverrideDate: dateOnlySchema.nullable().optional(),
+  workdayEndOverrideTime: localTimeOfDaySchema.nullable().optional(),
 });
 export type UpdateSettingsInput = z.infer<typeof updateSettingsInputSchema>;
 
@@ -843,6 +873,8 @@ export interface ListBlocksFilter {
   dueBefore?: string;
   includeDropped?: boolean;
   includeDone?: boolean;
+  /** When true, includes calendar-synced meeting blocks (`calendarSource !== null`). Defaults to false. */
+  includeCalendar?: boolean;
 }
 
 export interface ListSessionsFilter {
@@ -868,6 +900,14 @@ export interface ListActivityFilter {
 
 export interface StartFocusResult {
   closedSession: FocusSession | null;
+  startedSession: FocusSession;
+  block: Block;
+}
+
+export interface RemoveFocusGapResult {
+  /** The part of the running session before the gap, now closed at the gap start. */
+  closedSession: FocusSession;
+  /** The new running session that starts when the gap ends. */
   startedSession: FocusSession;
   block: Block;
 }
@@ -980,6 +1020,8 @@ export interface RoomTodaySummary {
   countsFromNow: boolean;
   workdayStart: string;
   workdayEnd: string;
+  /** True when today uses an explicit today-only workday end override instead of the default workdayEnd. */
+  hasTodayWorkdayEndOverride?: boolean;
   hasLearnedBaseline: boolean;
   weekdayLabel: string;
 }
@@ -1035,6 +1077,13 @@ export interface FocusStatus {
   activeBlock: Block | null;
   elapsedSeconds: number;
   focusedTodayMinutes: number;
+  /** End timestamp of the most recent closed focus session today (for "since last session" backdating). */
+  lastClosedSessionEndedAt?: string | null;
+}
+
+export interface AdjustFocusStartResult {
+  session: FocusSession;
+  block: Block;
 }
 
 export interface EnergyCounts {

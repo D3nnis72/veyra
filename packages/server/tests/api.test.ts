@@ -63,6 +63,44 @@ afterEach(async () => {
 });
 
 describe('@veyra/server REST API', () => {
+  it('POST /api/focus/gap cuts a forgotten pause out of the running session', async () => {
+    const { baseUrl } = await startTestVeyraServer();
+    const json = (now: string, body: unknown) => ({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Veyra-Now': now },
+      body: JSON.stringify(body),
+    });
+
+    const createRes = await fetch(
+      `${baseUrl}/api/blocks`,
+      json('2026-11-27T09:00:00.000Z', {
+        title: 'Strategic Sourcing',
+        bucket: 'scheduled',
+        scheduledDate: '2026-11-27',
+      }),
+    );
+    const { block } = (await createRes.json()) as { block: { id: string } };
+    await fetch(`${baseUrl}/api/focus/start`, json('2026-11-27T09:00:00.000Z', { blockId: block.id }));
+
+    const gapRes = await fetch(
+      `${baseUrl}/api/focus/gap`,
+      json('2026-11-27T10:30:00.000Z', { gapStartAt: '2026-11-27T10:10:00.000Z' }),
+    );
+    expect(gapRes.status).toBe(200);
+    const gap = (await gapRes.json()) as {
+      closedSession: { endedAt: string };
+      startedSession: { startedAt: string; endedAt: string | null };
+      focusStatus: { elapsedSeconds: number; focusedTodayMinutes: number };
+    };
+    expect(gap.closedSession.endedAt).toBe('2026-11-27T10:10:00.000Z');
+    expect(gap.startedSession.startedAt).toBe('2026-11-27T10:30:00.000Z');
+    expect(gap.startedSession.endedAt).toBeNull();
+    expect(gap.focusStatus.focusedTodayMinutes).toBe(70);
+
+    const badRes = await fetch(`${baseUrl}/api/focus/gap`, json('2026-11-27T10:30:00.000Z', {}));
+    expect(badRes.status).toBe(400);
+  });
+
   it('GET /api/health returns 200 { ok: true, version, dbReady: true }', async () => {
     const { baseUrl } = await startTestVeyraServer();
     const res = await fetch(`${baseUrl}/api/health`);

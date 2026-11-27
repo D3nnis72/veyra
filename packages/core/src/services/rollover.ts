@@ -45,6 +45,7 @@ export function runDailyRolloverAndRecurrence(
       .where(
         and(
           isNull(blocks.deletedAt),
+          isNull(blocks.calendarSource),
           eq(blocks.status, 'todo'),
           eq(blocks.bucket, 'scheduled'),
           isNull(blocks.recurrenceRule),
@@ -76,6 +77,7 @@ export function runDailyRolloverAndRecurrence(
       .where(
         and(
           isNull(blocks.deletedAt),
+          isNull(blocks.calendarSource),
           eq(blocks.status, 'todo'),
           eq(blocks.bucket, 'scheduled'),
           isNotNull(blocks.recurrenceRule),
@@ -129,6 +131,7 @@ export function runDailyRolloverAndRecurrence(
       .where(
         and(
           isNull(blocks.deletedAt),
+          isNull(blocks.calendarSource),
           eq(blocks.bucket, 'scheduled'),
           eq(blocks.scheduledDate, today),
         ),

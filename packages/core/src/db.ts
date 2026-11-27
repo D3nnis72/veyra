@@ -2,13 +2,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { type BetterSQLite3Database, drizzle } from 'drizzle-orm/better-sqlite3';
+import { generateOrderKey } from './order-key.js';
 import { schema } from './schema.js';
-import { getHostTimeZone } from './time.js';
+import { formatLocalDate, getHostTimeZone } from './time.js';
 import {
   DEFAULT_GLOBAL_CAPTURE_SHORTCUT,
   DEFAULT_PROJECT_COLOR,
   DEFAULT_SETTINGS_ID,
   SYSTEM_OTHER_PROJECT_ID,
+  normalizeBlockSizeMinutes,
   parseNoteTagsFromContent,
 } from './types.js';
 
@@ -92,6 +94,9 @@ CREATE TABLE IF NOT EXISTS blocks (
   series_id TEXT,
   notes TEXT NOT NULL DEFAULT '',
   external_links TEXT NOT NULL DEFAULT '[]',
+  calendar_source TEXT,
+  external_event_id TEXT,
+  meeting_url TEXT,
   updated_at TEXT NOT NULL,
   deleted_at TEXT
 );
@@ -159,6 +164,7 @@ CREATE TABLE IF NOT EXISTS settings (
   ics_feed_url TEXT,
   calendar_sync_interval_min INTEGER NOT NULL DEFAULT 15,
   skip_declined_and_all_day INTEGER NOT NULL DEFAULT 1,
+  meeting_auto_focus_enabled INTEGER NOT NULL DEFAULT 1,
   last_calendar_sync_at TEXT,
   webhook_url TEXT,
   webhook_events TEXT NOT NULL DEFAULT '[]',
@@ -175,6 +181,8 @@ CREATE TABLE IF NOT EXISTS settings (
   hotkeys TEXT NOT NULL DEFAULT '{}',
   workday_start TEXT NOT NULL DEFAULT '09:00',
   workday_end TEXT NOT NULL DEFAULT '18:00',
+  workday_end_override_date TEXT,
+  workday_end_override_time TEXT,
   updated_at TEXT NOT NULL
 );
 
@@ -289,6 +297,21 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{ table: string; column: string; ddl: stri
     ddl: 'ALTER TABLE blocks ADD COLUMN side_work TEXT',
   },
   {
+    table: 'blocks',
+    column: 'calendar_source',
+    ddl: 'ALTER TABLE blocks ADD COLUMN calendar_source TEXT',
+  },
+  {
+    table: 'blocks',
+    column: 'external_event_id',
+    ddl: 'ALTER TABLE blocks ADD COLUMN external_event_id TEXT',
+  },
+  {
+    table: 'blocks',
+    column: 'meeting_url',
+    ddl: 'ALTER TABLE blocks ADD COLUMN meeting_url TEXT',
+  },
+  {
     table: 'daily_notes',
     column: 'tags',
     ddl: "ALTER TABLE daily_notes ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'",
@@ -362,6 +385,21 @@ const ADDITIVE_COLUMNS: ReadonlyArray<{ table: string; column: string; ddl: stri
     table: 'settings',
     column: 'workday_end',
     ddl: "ALTER TABLE settings ADD COLUMN workday_end TEXT NOT NULL DEFAULT '18:00'",
+  },
+  {
+    table: 'settings',
+    column: 'meeting_auto_focus_enabled',
+    ddl: 'ALTER TABLE settings ADD COLUMN meeting_auto_focus_enabled INTEGER NOT NULL DEFAULT 1',
+  },
+  {
+    table: 'settings',
+    column: 'workday_end_override_date',
+    ddl: 'ALTER TABLE settings ADD COLUMN workday_end_override_date TEXT',
+  },
+  {
+    table: 'settings',
+    column: 'workday_end_override_time',
+    ddl: 'ALTER TABLE settings ADD COLUMN workday_end_override_time TEXT',
   },
 ];
 
@@ -458,6 +496,126 @@ function seedBootstrapRows(sqlite: Database.Database): void {
   );
 }
 
+function applyPostMigrationIndexesAndBackfills(sqlite: Database.Database): void {
+  sqlite.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_blocks_calendar_source_external
+      ON blocks(calendar_source, external_event_id)
+      WHERE calendar_source IS NOT NULL AND external_event_id IS NOT NULL;
+  `);
+
+  migrateLegacyCalendarEventsToBlocks(sqlite);
+}
+
+/**
+ * Idempotently migrates rows from the legacy `calendar_events` table into `blocks`
+ * so existing synced meetings keep their IDs, project/goal assignments, notes, and links.
+ */
+function migrateLegacyCalendarEventsToBlocks(sqlite: Database.Database): void {
+  const hasLegacyTable = sqlite
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'calendar_events'")
+    .get();
+  if (!hasLegacyTable) return;
+
+  const legacyRows = sqlite
+    .prepare(
+      `SELECT id, external_id, title, start_at, end_at, meeting_url, source,
+              project_id, goal_id, is_ops, notes, external_links, updated_at, deleted_at
+         FROM calendar_events`,
+    )
+    .all() as Array<{
+    id: string;
+    external_id: string;
+    title: string;
+    start_at: string;
+    end_at: string;
+    meeting_url: string | null;
+    source: string;
+    project_id: string | null;
+    goal_id: string | null;
+    is_ops: number;
+    notes: string;
+    external_links: string;
+    updated_at: string;
+    deleted_at: string | null;
+  }>;
+
+  if (legacyRows.length === 0) return;
+
+  const tzRow = sqlite
+    .prepare('SELECT timezone FROM settings WHERE id = ?')
+    .get(DEFAULT_SETTINGS_ID) as { timezone?: string } | undefined;
+  const timezone = tzRow?.timezone || getHostTimeZone();
+
+  const existingById = sqlite.prepare('SELECT 1 FROM blocks WHERE id = ?');
+  const existingByExt = sqlite.prepare(
+    'SELECT 1 FROM blocks WHERE calendar_source = ? AND external_event_id = ?',
+  );
+  const projectExists = sqlite.prepare('SELECT 1 FROM projects WHERE id = ?');
+  const goalExists = sqlite.prepare('SELECT 1 FROM goals WHERE id = ?');
+  const insertBlock = sqlite.prepare(`
+    INSERT INTO blocks (
+      id, project_id, goal_id, title, is_ops, bucket, scheduled_date,
+      planned_start_at, planned_end_at, due_date, revisit_at, order_key,
+      status, carryover_count, size_minutes, energy_signal, sense_signal,
+      drop_reason, outcome_note, resume_note, auto_summary, side_work,
+      recurrence_rule, series_id, notes, external_links,
+      calendar_source, external_event_id, meeting_url, updated_at, deleted_at
+    ) VALUES (
+      ?, ?, ?, ?, ?, 'scheduled', ?,
+      ?, ?, NULL, NULL, ?,
+      'todo', 0, ?, NULL, NULL,
+      NULL, NULL, NULL, NULL, NULL,
+      NULL, NULL, ?, ?,
+      ?, ?, ?, ?, ?
+    )
+  `);
+
+  let prevKey: string | null = null;
+  sqlite.transaction(() => {
+    for (const ev of legacyRows) {
+      if (existingById.get(ev.id) || existingByExt.get(ev.source, ev.external_id)) {
+        continue;
+      }
+      const startMs = Date.parse(ev.start_at);
+      const endMs = Date.parse(ev.end_at);
+      const scheduledDate = !Number.isNaN(startMs)
+        ? formatLocalDate(new Date(startMs), timezone)
+        : formatLocalDate(new Date(), timezone);
+      const durationMinutes =
+        !Number.isNaN(startMs) && !Number.isNaN(endMs) && endMs > startMs
+          ? normalizeBlockSizeMinutes(Math.round((endMs - startMs) / 60_000))
+          : 30;
+      const validProjectId =
+        ev.project_id && projectExists.get(ev.project_id)
+          ? ev.project_id
+          : SYSTEM_OTHER_PROJECT_ID;
+      const validGoalId = ev.goal_id && goalExists.get(ev.goal_id) ? ev.goal_id : null;
+      const orderKey = generateOrderKey(prevKey, null);
+      prevKey = orderKey;
+
+      insertBlock.run(
+        ev.id,
+        validProjectId,
+        validGoalId,
+        ev.title,
+        ev.is_ops ? 1 : 0,
+        scheduledDate,
+        ev.start_at,
+        ev.end_at,
+        orderKey,
+        durationMinutes,
+        ev.notes ?? '',
+        ev.external_links ?? '[]',
+        ev.source,
+        ev.external_id,
+        ev.meeting_url ?? null,
+        ev.updated_at,
+        ev.deleted_at,
+      );
+    }
+  })();
+}
+
 /**
  * Opens (or creates) a Veyra SQLite database, enables WAL + foreign keys,
  * applies idempotent DDL migrations, and seeds the singleton `Settings` row
@@ -479,6 +637,7 @@ export function openVeyraDb(dbPath: string): VeyraDb {
   sqlite.exec(MIGRATIONS_SQL);
   applyAdditiveColumnMigrations(sqlite);
   seedBootstrapRows(sqlite);
+  applyPostMigrationIndexesAndBackfills(sqlite);
 
   const db = drizzle(sqlite, { schema });
 

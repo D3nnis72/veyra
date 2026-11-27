@@ -26,7 +26,6 @@ export type ActiveDrawer =
   | { kind: 'block'; blockId: string }
   | { kind: 'goal'; goalId: string }
   | { kind: 'daily-notes'; date?: string }
-  | { kind: 'meeting'; eventId: string }
   | { kind: 'session'; sessionId: string }
   | null;
 

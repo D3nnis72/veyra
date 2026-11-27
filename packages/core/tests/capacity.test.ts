@@ -76,6 +76,7 @@ describe('Task 7: Capacity, Room, Learned Block Sizes, Suggested Order, 8-Week P
       countsFromNow: true,
       workdayStart: '09:00',
       workdayEnd: '18:00',
+      hasTodayWorkdayEndOverride: false,
       hasLearnedBaseline: false,
       weekdayLabel: 'Wednesday',
     });
